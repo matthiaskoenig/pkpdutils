@@ -34,9 +34,11 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
     TerminalMethod,
+    UncertaintyMethod,
 )
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
+from pkpdutils.nca.uncertainty import base_name, bootstrap
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,31 @@ PARAMETER_UNITS: dict[str, str] = {
     "cl_ss": "({dose}) / (({unit}) * ({time}))",
     "flags": "dimensionless",
 }
+
+
+def unit_expression(name: str) -> str:
+    """Unit expression of a result variable, derived variables from their parameter.
+
+    Args:
+        name: name of a variable of the result, e.g. `"auc_last"`, `"auc_last_se"`
+            or `"n"`.
+
+    Returns:
+        The unit expression of `PARAMETER_UNITS`, the one of the parameter a
+        derived variable belongs to, or `"dimensionless"` for `n` and the
+        dimensionless derived variables.
+
+    Raises:
+        KeyError: if the name belongs to no known parameter.
+    """
+    if name in PARAMETER_UNITS:
+        return PARAMETER_UNITS[name]
+    if name == "n" or name.endswith(("_geocv", "_n")):
+        return "dimensionless"
+    base = base_name(name)
+    if base is None or base not in PARAMETER_UNITS:
+        raise KeyError(f"No unit expression for '{name}'")
+    return PARAMETER_UNITS[base]
 
 
 def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
@@ -475,12 +502,20 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     process or, with `options.n_workers`, in a pool of worker processes; a
     steady state analysis (`options.regimen`) is chunked the same way.
 
+    A batch of group curves (`sd` or `se` per point) also carries the
+    uncertainty of every parameter, by default from the parametric bootstrap
+    (`options.uncertainty`, `pkpdutils.nca.uncertainty`): `x_sd`, `x_se`,
+    `x_ci_low`, `x_ci_high` and, for log-normal parameters, `x_geomean`,
+    `x_geocv`. The bootstrap standard error of `lambda_z` replaces the standard
+    error of the slope of the terminal regression in `lambda_z_se`.
+
     Args:
         timecourses: the batch
         options: the options, defaults for `None`
 
     Returns:
-        The parameters over the sample dimensions of the batch.
+        The parameters, their uncertainty variables and the number of subjects
+        `n` over the sample dimensions of the batch.
     """
     options = options or NCAOptions()
     shape = timecourses.sample_shape
@@ -514,7 +549,23 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
         options=options,
     )
 
-    n_flagged = int((values["flags"] != 0).sum())
+    # `flags` is the last variable of the result, the uncertainty variables and
+    # `n` go before it
+    flags = values.pop("flags")
+    method = options.resolve_uncertainty(timecourses.has_uncertainty)
+    if method is UncertaintyMethod.BOOTSTRAP:
+        # the bootstrap standard error of `lambda_z` replaces the standard
+        # error of the slope of the terminal regression in `lambda_z_se`
+        values.update(bootstrap(timecourses, options, values))
+    n_subjects = timecourses.n
+    values["n"] = (
+        np.full(n_rows, np.nan)
+        if n_subjects is None
+        else np.asarray(n_subjects, dtype=np.float64).reshape(n_rows)
+    )
+    values["flags"] = flags
+
+    n_flagged = int((flags != 0).sum())
     if n_flagged:
         logger.info(
             "NCA: %d of %d samples carry flags, see NCAResult.flag_table()",
@@ -545,7 +596,7 @@ def _to_result(
     data_vars: dict[str, Any] = {}
     for name, array in values.items():
         unit, factor = parameter_unit(
-            PARAMETER_UNITS[name],
+            unit_expression(name),
             unit=timecourses.unit,
             time_unit=timecourses.time_unit,
             dose_unit=timecourses.dose_unit,

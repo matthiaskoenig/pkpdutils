@@ -15,6 +15,7 @@ import pandas as pd
 import xarray as xr
 
 from pkpdutils.nca.options import NCAFlag, decode_flags
+from pkpdutils.nca.uncertainty import base_name
 from pkpdutils.units import Q_, Quantity, normalize_clearance, normalize_volume, ureg
 
 
@@ -53,7 +54,11 @@ class NCAResult:
     The dataset has one variable per parameter over the sample dimensions of
     the analysed `Timecourses`, `attrs["units"]` on every variable and the
     integer variable `flags`. A parameter which does not apply to a sample
-    (no dose, no terminal phase, ...) is `NaN`.
+    (no dose, no terminal phase, ...) is `NaN`. The analysis of group curves
+    adds the derived variables of the uncertainty (`x_se`, `x_ci_low`, ...,
+    see `pkpdutils.nca.uncertainty`) and the number of subjects `n`;
+    `parameters` lists the parameters themselves, `derived_variables` the
+    derived ones.
     """
 
     def __init__(self, ds: xr.Dataset) -> None:
@@ -80,7 +85,28 @@ class NCAResult:
 
     @property
     def parameters(self) -> list[str]:
-        """Names of the parameters (the data variables except `flags`)."""
+        """Names of the parameters (the data variables except `flags`, `n` and the derived variables)."""
+        return [
+            str(name)
+            for name in self.ds.data_vars
+            if name not in ("flags", "n") and base_name(str(name)) is None
+        ]
+
+    @property
+    def derived_variables(self) -> list[str]:
+        """Names of the uncertainty and summary variables (`x_se`, `x_ci_low`, ...)."""
+        return [
+            str(name) for name in self.ds.data_vars if base_name(str(name)) is not None
+        ]
+
+    @property
+    def has_uncertainty(self) -> bool:
+        """Whether any parameter carries a standard error."""
+        return any(name.endswith("_se") for name in self.derived_variables)
+
+    @property
+    def _variables(self) -> list[str]:
+        """Names of the data variables except `flags`, in the order of the dataset."""
         return [str(name) for name in self.ds.data_vars if name != "flags"]
 
     def units(self, name: str) -> str:
@@ -136,18 +162,19 @@ class NCAResult:
         return self.ds.sel(indexers)
 
     def to_quantities(self, **indexers: Any) -> dict[str, Quantity]:
-        """The parameters of one sample as pint quantities.
+        """The variables of one sample as pint quantities.
 
         Args:
             **indexers: coordinate label per sample dimension.
 
         Returns:
-            Parameter name to quantity.
+            Variable name to quantity, for the parameters, the derived
+            variables and `n` (every data variable except `flags`).
         """
         sample = self._sample(indexers)
         return {
             name: Q_(float(sample[name].values), self.units(name))
-            for name in self.parameters
+            for name in self._variables
         }
 
     def flags(self, **indexers: Any) -> list[str]:
@@ -163,7 +190,7 @@ class NCAResult:
         return decode_flags(int(sample["flags"].values))
 
     def to_dataframe(self) -> pd.DataFrame:
-        """One row per sample: the sample coordinates, the parameters and the decoded flags.
+        """One row per sample: the sample coordinates, every variable and the decoded flags.
 
         `xarray.Dataset.to_dataframe` refuses a 0-dimensional dataset (no
         sample dimensions), so that case is built as a single-row frame
@@ -174,13 +201,13 @@ class NCAResult:
         """
         if not self.sample_dims:
             row: dict[str, Any] = {
-                name: float(self.ds[name].values) for name in self.parameters
+                name: float(self.ds[name].values) for name in self._variables
             }
             row["flags"] = "|".join(decode_flags(int(self.ds["flags"].values)))
             return pd.DataFrame([row])
         df = self.ds.to_dataframe().reset_index()
         df["flags"] = ["|".join(decode_flags(int(v))) for v in df["flags"]]
-        columns = [*self.sample_dims, *self.parameters, "flags"]
+        columns = [*self.sample_dims, *self._variables, "flags"]
         return df[columns]
 
     def flag_table(self) -> pd.DataFrame:

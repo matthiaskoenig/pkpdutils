@@ -111,3 +111,28 @@ def test_result_requires_flags_and_units() -> None:
     )
     with pytest.raises(ValueError, match="units"):
         NCAResult(ds2)
+
+
+def test_result_parameters_exclude_derived_variables() -> None:
+    ds = xr.Dataset(
+        {
+            "auc_last": (("i",), np.array([1.0]), {"units": "hr*mg/l"}),
+            "auc_last_se": (("i",), np.array([0.1]), {"units": "hr*mg/l"}),
+            "auc_last_geocv": (("i",), np.array([0.1]), {"units": "dimensionless"}),
+            "n": (("i",), np.array([5.0]), {"units": "dimensionless"}),
+            "flags": (("i",), np.array([0]), {"units": "dimensionless"}),
+        },
+        coords={"i": ["a"]},
+    )
+    result = NCAResult(ds)
+    assert result.parameters == ["auc_last"]
+    assert result.derived_variables == ["auc_last_se", "auc_last_geocv"]
+    assert result.has_uncertainty
+    assert list(result.to_dataframe().columns) == [
+        "i",
+        "auc_last",
+        "auc_last_se",
+        "auc_last_geocv",
+        "n",
+        "flags",
+    ]
