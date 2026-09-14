@@ -82,3 +82,44 @@ def test_plot_nca_grid() -> None:
     fig = plot_nca_grid(batch, nca(batch, NCAOptions()), ncols=2)
     assert len([ax for ax in fig.axes if ax.get_visible()]) == 4
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_timecourse_by_broadcasts_coordinate_to_sample_dims() -> None:
+    n_dose, n_individual, n_time = 2, 3, 4
+    time = np.array([0.5, 1.0, 2.0, 4.0])
+    values = np.arange(n_dose * n_individual * n_time, dtype=float).reshape(
+        n_dose, n_individual, n_time
+    )
+    tcs = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("dose", "individual"),
+        coords={"dose": ["low", "high"], "individual": [0, 1, 2]},
+    )
+    # "group" is assigned with dims in the opposite order of the sample
+    # dimensions ("dose", "individual") of the batch, to catch a naive
+    # flatten that ignores the coordinate's own dimension order.
+    group = np.array([[f"g{i}{d}" for d in range(n_dose)] for i in range(n_individual)])
+    tcs.ds = tcs.ds.assign_coords(group=(("individual", "dose"), group))
+    expected = [str(group[i, d]) for d in range(n_dose) for i in range(n_individual)]
+    fig = plot_timecourse(tcs, by="group")
+    labels = [line.get_label() for line in fig.axes[0].get_lines()]
+    assert labels == expected
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_breaks_line_at_nan_without_bridging() -> None:
+    tc = oral()
+    value = tc.value.copy()
+    value[4] = np.nan
+    tc_nan = tc.model_copy(update={"value": value})
+    fig = plot_nca(tc_nan, nca_single(tc_nan))
+    data_line = next(
+        line for line in fig.axes[0].get_lines() if line.get_label() == "data"
+    )
+    # the raw (unmasked) values are plotted, matplotlib breaks the line at the
+    # NaN itself instead of the previous, gap-bridging masked plot
+    assert np.isnan(data_line.get_ydata()).any()
+    matplotlib.pyplot.close(fig)

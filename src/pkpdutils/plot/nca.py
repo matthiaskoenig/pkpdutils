@@ -121,8 +121,8 @@ def draw_nca_panel(
             label="C0",
         )
     ax.plot(
-        t[ok],
-        c[ok],
+        t,
+        c,
         marker=style.data_marker,
         linestyle="-",
         color=style.data_color,

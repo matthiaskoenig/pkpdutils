@@ -3,11 +3,12 @@
 from typing import Any
 
 import matplotlib.pyplot as plt
+import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.timecourse import Timecourse, Timecourses
+from pkpdutils.timecourse import TIME_DIM, Timecourse, Timecourses
 
 
 def _figure_of(ax: Axes | None) -> tuple[Figure, Axes]:
@@ -106,7 +107,9 @@ def plot_timecourse(
         curves = list(timecourses)
         first = curves[0]
         if by is not None:
-            values = timecourses.ds[by].to_numpy().reshape(-1)
+            template = timecourses.ds["value"].isel({TIME_DIM: 0}, drop=True)
+            coord, _ = xr.broadcast(timecourses.ds[by], template)
+            values = coord.transpose(*timecourses.sample_dims).to_numpy().reshape(-1)
             labels = [str(v) for v in values]
         else:
             labels = [tc.label for tc in curves]
