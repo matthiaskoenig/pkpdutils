@@ -11,10 +11,11 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 
 ## Features
 
-- **[Timecourses](timecourses.md)** — `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
-- **[Units](units.md)** — every timecourse and result carries its units, parameters are derived in the units of the input.
-- **[Non-compartmental analysis](nca.md)** — exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
-- **[Plotting](plotting.md)** — timecourses and NCA diagnostics as matplotlib figures.
+- **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
+- **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
+- **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
+- **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
+- **[Plotting](plotting.md)** - timecourses and NCA diagnostics as matplotlib figures.
 
 The methods behind the package are cited in [References](references.md).
 
@@ -52,6 +53,6 @@ If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi
 
 ## Funding
 
-Matthias König is supported by the German Research Foundation (DFG) within the Research Unit Programme FOR 5151 "QuaLiPerF (Quantifying Liver Perfusion-Function Relationship in Complex Resection — A Systems Medicine Approach)" by grant number 436883643 and by grant number 465194077 (Priority Programme SPP 2311, Subproject SimLivA).
+Matthias König is supported by the German Research Foundation (DFG) within the Research Unit Programme FOR 5151 "QuaLiPerF (Quantifying Liver Perfusion-Function Relationship in Complex Resection - A Systems Medicine Approach)" by grant number 436883643 and by grant number 465194077 (Priority Programme SPP 2311, Subproject SimLivA).
 
 Matthias König was supported by the Federal Ministry of Education and Research (BMBF, Germany) within the research network Systems Medicine of the Liver (**LiSyM**, grant number 031L0054).

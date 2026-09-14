@@ -10,11 +10,11 @@
 
 Features include
 
-- **non-compartmental analysis** — exposure, peak, terminal phase, clearance and volume parameters of concentration and effect timecourses, single dose and steady state, with units
-- **uncertainty** — bootstrap and delta method propagation for group timecourses (mean ± SD), summary statistics over individuals
-- **curve fitting** — exponential, Bateman, Emax, dose proportionality and covariate models with standard errors, confidence intervals and model comparison
-- **statistics on parameters** — significance tests, geometric mean ratios, bioequivalence, classification of drug–drug interactions, meta-analysis
-- **figures** — timecourses, NCA diagnostics, fits, parameter distributions, forest and ratio plots
+- **non-compartmental analysis** - exposure, peak, terminal phase, clearance and volume parameters of concentration and effect timecourses, single dose and steady state, with units
+- **uncertainty** - bootstrap and delta method propagation for group timecourses (mean ± SD), summary statistics over individuals
+- **curve fitting** - exponential, Bateman, Emax, dose proportionality and covariate models with standard errors, confidence intervals and model comparison
+- **statistics on parameters** - significance tests, geometric mean ratios, bioequivalence, classification of drug–drug interactions, meta-analysis
+- **figures** - timecourses, NCA diagnostics, fits, parameter distributions, forest and ratio plots
 
 All data structures are [xarray](https://xarray.dev) datasets with [pint](https://pint.readthedocs.io) units, so many timecourses are analysed in one vectorized call.
 
@@ -52,7 +52,7 @@ See [Installation](https://matthiaskoenig.github.io/pkpdutils/installation/) for
 
 ## Funding
 
-Matthias König is supported by the German Research Foundation (DFG) within the Research Unit Programme FOR 5151 "QuaLiPerF (Quantifying Liver Perfusion-Function Relationship in Complex Resection — A Systems Medicine Approach)" by grant number 436883643 and by grant number 465194077 (Priority Programme SPP 2311, Subproject SimLivA).
+Matthias König is supported by the German Research Foundation (DFG) within the Research Unit Programme FOR 5151 "QuaLiPerF (Quantifying Liver Perfusion-Function Relationship in Complex Resection - A Systems Medicine Approach)" by grant number 436883643 and by grant number 465194077 (Priority Programme SPP 2311, Subproject SimLivA).
 
 Matthias König was supported by the Federal Ministry of Education and Research (BMBF, Germany) within the research network Systems Medicine of the Liver (**LiSyM**, grant number 031L0054).
 

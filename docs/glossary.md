@@ -16,7 +16,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `cmax_half`, `tmax_half` | | half maximum during absorption | value, time | [NCA](nca.md) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | [NCA](nca.md) |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_se` | | regression diagnostics | | [NCA](nca.md) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_stderr`: standard error of the slope of the terminal regression) | | [NCA](nca.md) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed | l/h | [NCA](nca.md) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
@@ -30,3 +30,10 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auec_last`, `auec_baseline` | \(\mathrm{AUEC}\) | area under the effect curve, raw and baseline corrected | value·time | [NCA](nca.md) |
 | `emax_baseline`, `time_above` | | baseline corrected maximum, time above a threshold | value, time | [NCA](nca.md) |
 | `flags` | | `NCAFlag` bits | – | [NCA](nca.md) |
+| `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
+| `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
+| `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |
+| `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation over subjects of a parameter `x` (log-normal parameters) | unit of `x`, - | [Uncertainty](uncertainty.md) |
+| `x_median`, `x_q25`, `x_q75`, `x_n` | | median, quartiles and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
+| `n` | | number of subjects (group data) or of samples along the reduced dimension (summary) | – | [Uncertainty](uncertainty.md) |
+| `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |

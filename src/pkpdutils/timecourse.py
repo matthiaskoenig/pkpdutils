@@ -839,7 +839,9 @@ class Timecourses:
         Either all or no curves carry a dose, and all doses need the same route
         and unit; curves with different routes go into separate batches. A batch
         keeps one `n` per sample: an `n` which varies over the time points of a
-        curve is reduced to its maximum and logs a warning.
+        curve is reduced to its maximum and logs a warning. `sd`, `se` and `n`
+        are kept only when every curve carries them; a field which some curves
+        are missing is dropped for the whole batch and logs a warning.
 
         Args:
             timecourses: the curves
@@ -894,6 +896,25 @@ class Timecourses:
                 out[i, : a.size] = a
             return out
 
+        def warn_partial(name: str, arrays: Sequence[Any]) -> None:
+            """Warn when some but not all curves carry an optional field.
+
+            Args:
+                name: name of the field
+                arrays: the field of every curve, `None` where it is missing.
+            """
+            without = [
+                str(label) for label, a in zip(labels, arrays, strict=True) if a is None
+            ]
+            if without and len(without) != len(arrays):
+                logger.warning(
+                    "'%s' is missing for %s, the batch of %d curves carries no '%s'",
+                    name,
+                    without,
+                    len(arrays),
+                    name,
+                )
+
         values = padded([tc.value for tc in timecourses])
         assert values is not None
         time: np.ndarray
@@ -903,6 +924,8 @@ class Timecourses:
             padded_time = padded([tc.time for tc in timecourses])
             assert padded_time is not None
             time = padded_time
+        for name in ("sd", "se", "n"):
+            warn_partial(name, [getattr(tc, name) for tc in timecourses])
         sd = padded([tc.sd for tc in timecourses])
         se = padded([tc.se for tc in timecourses])
         n_values = [tc.n for tc in timecourses]

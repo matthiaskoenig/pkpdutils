@@ -417,6 +417,31 @@ def test_from_timecourses_varying_n_warns(caplog: pytest.LogCaptureFixture) -> N
     assert "'n'" in caplog.text
 
 
+def test_from_timecourses_partial_spread_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    timecourses = [
+        Timecourse(
+            time=T,
+            value=V[0],
+            sd=0.1 * V[0],
+            n=6,
+            time_unit="hr",
+            unit="mg/l",
+            label="a",
+        ),
+        Timecourse(time=T, value=V[1], time_unit="hr", unit="mg/l", label="b"),
+    ]
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.timecourse"):
+        tcs = Timecourses.from_timecourses(timecourses)
+    assert tcs.sd is None
+    assert tcs.se is None
+    assert tcs.n is None
+    assert not tcs.has_uncertainty
+    assert "'sd'" in caplog.text
+    assert "'b'" in caplog.text
+
+
 def test_from_dataset_scan() -> None:
     time = np.linspace(0, 10, 11)
     scan = np.array([1.0, 2.0])

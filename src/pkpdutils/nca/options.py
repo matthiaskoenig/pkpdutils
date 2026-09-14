@@ -66,6 +66,35 @@ class C0Method(StrEnum):
     FIRST_VALUE = "first_value"
 
 
+class UncertaintyMethod(StrEnum):
+    """How the uncertainty of group timecourses is propagated to the parameters."""
+
+    #: no uncertainty variables
+    NONE = "none"
+    #: parametric bootstrap: resample every time point, analyse the replicates
+    BOOTSTRAP = "bootstrap"
+    #: delta method: numerical Jacobian of every parameter with respect to the values
+    DELTA = "delta"
+
+
+class BootstrapSpread(StrEnum):
+    """Which spread the bootstrap resamples every time point with."""
+
+    #: the standard error of the mean: the uncertainty of the group mean curve
+    SE = "se"
+    #: the standard deviation: the spread of individual curves
+    SD = "sd"
+
+
+class BootstrapDistribution(StrEnum):
+    """Distribution the bootstrap draws every time point from."""
+
+    #: normal with the given mean and spread; draws below 0 are set to 0
+    NORMAL = "normal"
+    #: log-normal with the same mean and spread; positive by construction
+    LOGNORMAL = "lognormal"
+
+
 class NCAFlag(IntFlag):
     """Conditions reported per sample in the `flags` variable of a result."""
 
@@ -84,6 +113,9 @@ class NCAFlag(IntFlag):
     BLQ_TRUNCATED = 32
     #: fewer than two valid points; every parameter is NaN
     NO_DATA = 64
+    #: the delta method skipped points at which the terminal window changed; the
+    #: uncertainty of the terminal parameters is incomplete
+    DELTA_WINDOW_CHANGE = 128
 
 
 def decode_flags(value: int) -> list[str]:
@@ -162,6 +194,15 @@ class NCAOptions(BaseModel):
         n_workers: number of worker processes for large batches, `None` for the calling process
         chunk_rows: rows per chunk of the vectorized core, which bounds its
             memory; the pool maps the chunks in order
+        uncertainty: propagation of `sd`/`se` to the parameters; `None` selects
+            `BOOTSTRAP` when the batch carries an uncertainty and `NONE` otherwise
+        n_boot: number of bootstrap replicates
+        seed: seed of the bootstrap random generator; the default `None` draws
+            from a fresh generator, so a bootstrap is not reproducible
+        ci_level: level of the confidence intervals
+        bootstrap_spread: whether the replicates are drawn with `se` or `sd`
+        bootstrap_distribution: normal or log-normal draws
+        delta_step: relative perturbation of a point, in units of its `se`, for the delta method
     """
 
     model_config = ConfigDict(frozen=True)
@@ -177,3 +218,26 @@ class NCAOptions(BaseModel):
     effect_threshold: float | None = None
     n_workers: int | None = Field(default=None, ge=1)
     chunk_rows: int = Field(default=5000, ge=1)
+    uncertainty: UncertaintyMethod | None = None
+    n_boot: int = Field(default=1000, ge=2)
+    seed: int | None = None
+    ci_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+    bootstrap_spread: BootstrapSpread = BootstrapSpread.SE
+    bootstrap_distribution: BootstrapDistribution = BootstrapDistribution.NORMAL
+    delta_step: float = Field(default=0.01, gt=0.0, lt=1.0)
+
+    def resolve_uncertainty(self, has_uncertainty: bool) -> UncertaintyMethod:
+        """The uncertainty method of an analysis.
+
+        Args:
+            has_uncertainty: whether the batch carries `sd` or `se`
+
+        Returns:
+            `uncertainty` when set, else `BOOTSTRAP` for a batch with an
+            uncertainty and `NONE` without.
+        """
+        if self.uncertainty is not None:
+            return self.uncertainty
+        return (
+            UncertaintyMethod.BOOTSTRAP if has_uncertainty else UncertaintyMethod.NONE
+        )

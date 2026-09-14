@@ -86,7 +86,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_se` | | diagnostics of the regression | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_stderr` is the standard error of the slope of the terminal regression) | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose |
@@ -99,7 +99,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 
 Volumes are reported in liter (per kilogram for doses per body weight), clearances in liter per hour; every other unit is derived from the units of the input. Effect timecourses (`Kind.EFFECT`) report `e0`, `emax_obs`, `temax`, `auec_last`, `auec_baseline`, `emax_baseline` and `time_above` instead, see [Pharmacodynamics](pd.md).
 
-Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points).
+Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points), `DELTA_WINDOW_CHANGE` (the delta method skipped points at which the terminal window moved, see [Uncertainty](uncertainty.md)).
 
 ## API
 
@@ -158,7 +158,7 @@ predicted = superposition(
 )
 ```
 
-Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
+Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md); partial areas come from `partial_auc`. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 
 ## References
 

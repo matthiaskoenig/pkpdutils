@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from pkpdutils.nca.auc import auc_aumc, insert_point, pack_valid
+from pkpdutils.nca.auc import auc_aumc, insert_point, interpolate_at, pack_valid
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
@@ -34,9 +34,11 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
     TerminalMethod,
+    UncertaintyMethod,
 )
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
+from pkpdutils.nca.uncertainty import base_name, bootstrap, delta
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -60,7 +62,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "aumc_inf": "({unit}) * ({time}) ** 2",
     "mrt": "{time}",
     "lambda_z": "1 / ({time})",
-    "lambda_z_se": "1 / ({time})",
+    "lambda_z_stderr": "1 / ({time})",
     "lambda_z_intercept": "dimensionless",
     "lambda_z_r2": "dimensionless",
     "lambda_z_r2_adj": "dimensionless",
@@ -92,6 +94,31 @@ PARAMETER_UNITS: dict[str, str] = {
     "cl_ss": "({dose}) / (({unit}) * ({time}))",
     "flags": "dimensionless",
 }
+
+
+def unit_expression(name: str) -> str:
+    """Unit expression of a result variable, derived variables from their parameter.
+
+    Args:
+        name: name of a variable of the result, e.g. `"auc_last"`, `"auc_last_se"`
+            or `"n"`.
+
+    Returns:
+        The unit expression of `PARAMETER_UNITS`, the one of the parameter a
+        derived variable belongs to, or `"dimensionless"` for `n` and the
+        dimensionless derived variables.
+
+    Raises:
+        KeyError: if the name belongs to no known parameter.
+    """
+    if name in PARAMETER_UNITS:
+        return PARAMETER_UNITS[name]
+    if name == "n" or name.endswith(("_geocv", "_n")):
+        return "dimensionless"
+    base = base_name(name)
+    if base is None or base not in PARAMETER_UNITS:
+        raise KeyError(f"No unit expression for '{name}'")
+    return PARAMETER_UNITS[base]
 
 
 def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
@@ -347,7 +374,7 @@ def compute_parameters(
         "aumc_inf": aumc_inf,
         "mrt": mrt,
         "lambda_z": lambda_z,
-        "lambda_z_se": fit.se_slope,
+        "lambda_z_stderr": fit.se_slope,
         "lambda_z_intercept": fit.intercept,
         "lambda_z_r2": fit.r2,
         "lambda_z_r2_adj": fit.r2_adj,
@@ -412,42 +439,35 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
     )
 
 
-def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
-    """Non-compartmental analysis of a batch of timecourses.
+def run_rows(
+    t: np.ndarray,
+    c: np.ndarray,
+    *,
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    dose_duration: np.ndarray | None,
+    route: Route | None,
+    options: NCAOptions,
+) -> dict[str, np.ndarray]:
+    """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
 
-    The rows are analysed in chunks of `options.chunk_rows` rows, in the calling
-    process or, with `options.n_workers`, in a pool of worker processes; a
-    steady state analysis (`options.regimen`) is chunked the same way.
+    The rows are analysed in chunks of at most `options.chunk_rows` rows, which
+    bounds the memory of the vectorized core; with `options.n_workers > 1` the
+    chunks are mapped in order over a `ProcessPoolExecutor`.
 
     Args:
-        timecourses: the batch
-        options: the options, defaults for `None`
+        t: times `(N, n)`
+        c: values `(N, n)`
+        dose_amount: dose per row, `None` without doses
+        dose_time: dose time per row, `None` for 0
+        dose_duration: infusion duration per row, `None` for none
+        route: route of the batch
+        options: the options
 
     Returns:
-        The parameters over the sample dimensions of the batch.
+        One `(N,)` array per parameter and `flags`.
     """
-    options = options or NCAOptions()
-    shape = timecourses.sample_shape
-    n_rows = timecourses.n_samples
-    t = timecourses.times.reshape(n_rows, timecourses.n_time)
-    c = timecourses.values.reshape(n_rows, timecourses.n_time)
-
-    def flat(a: np.ndarray | None) -> np.ndarray | None:
-        """Flatten an optional per sample array to `(n_rows,)`.
-
-        Args:
-            a: the array, or `None`.
-
-        Returns:
-            The flattened array, or `None`.
-        """
-        return None if a is None else np.asarray(a, dtype=np.float64).reshape(n_rows)
-
-    dose_amount = flat(timecourses.dose_amount)
-    dose_time = flat(timecourses.dose_time)
-    dose_duration = flat(timecourses.dose_duration)
-    route = timecourses.route
-
+    n_rows = t.shape[0]
     # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
     # the memory of the vectorized core; the worker pool maps the chunks in order
     n_chunks = max(1, -(-n_rows // options.chunk_rows))
@@ -472,9 +492,84 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     assert all(list(part) == names for part in parts), (
         "the chunks returned different parameters"
     )
-    values = {name: np.concatenate([part[name] for part in parts]) for name in names}
+    return {name: np.concatenate([part[name] for part in parts]) for name in names}
 
-    n_flagged = int((values["flags"] != 0).sum())
+
+def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
+    """Non-compartmental analysis of a batch of timecourses.
+
+    The rows are analysed in chunks of `options.chunk_rows` rows, in the calling
+    process or, with `options.n_workers`, in a pool of worker processes; a
+    steady state analysis (`options.regimen`) is chunked the same way.
+
+    A batch of group curves (`sd` or `se` per point) also carries the
+    uncertainty of every parameter, by default from the parametric bootstrap
+    (`options.uncertainty`, `pkpdutils.nca.uncertainty`): `x_sd`, `x_se`,
+    `x_ci_low`, `x_ci_high`, under `BootstrapSpread.SD` draws also
+    `x_pi_low`, `x_pi_high`, and, for log-normal parameters, `x_geomean`,
+    `x_geocv`. The delta method can add `NCAFlag.DELTA_WINDOW_CHANGE` to the
+    flags of a sample.
+
+    Args:
+        timecourses: the batch
+        options: the options, defaults for `None`
+
+    Returns:
+        The parameters, their uncertainty variables and the number of subjects
+        `n` over the sample dimensions of the batch.
+    """
+    options = options or NCAOptions()
+    shape = timecourses.sample_shape
+    n_rows = timecourses.n_samples
+    t = timecourses.times.reshape(n_rows, timecourses.n_time)
+    c = timecourses.values.reshape(n_rows, timecourses.n_time)
+
+    def flat(a: np.ndarray | None) -> np.ndarray | None:
+        """Flatten an optional per sample array to `(n_rows,)`.
+
+        Args:
+            a: the array, or `None`.
+
+        Returns:
+            The flattened array, or `None`.
+        """
+        return None if a is None else np.asarray(a, dtype=np.float64).reshape(n_rows)
+
+    dose_amount = flat(timecourses.dose_amount)
+    dose_time = flat(timecourses.dose_time)
+    dose_duration = flat(timecourses.dose_duration)
+    route = timecourses.route
+
+    values = run_rows(
+        t,
+        c,
+        dose_amount=dose_amount,
+        dose_time=dose_time,
+        dose_duration=dose_duration,
+        route=route,
+        options=options,
+    )
+
+    # `flags` is the last variable of the result, the uncertainty variables and
+    # `n` go before it
+    flags = values.pop("flags")
+    method = options.resolve_uncertainty(timecourses.has_uncertainty)
+    if method is UncertaintyMethod.BOOTSTRAP:
+        values.update(bootstrap(timecourses, options, values))
+    elif method is UncertaintyMethod.DELTA:
+        uncertainty = delta(timecourses, options, values)
+        # the delta method reports the rows whose terminal window moved
+        flags = flags | uncertainty.pop("flags").astype(flags.dtype)
+        values.update(uncertainty)
+    n_subjects = timecourses.n
+    values["n"] = (
+        np.full(n_rows, np.nan)
+        if n_subjects is None
+        else np.asarray(n_subjects, dtype=np.float64).reshape(n_rows)
+    )
+    values["flags"] = flags
+
+    n_flagged = int((flags != 0).sum())
     if n_flagged:
         logger.info(
             "NCA: %d of %d samples carry flags, see NCAResult.flag_table()",
@@ -505,7 +600,7 @@ def _to_result(
     data_vars: dict[str, Any] = {}
     for name, array in values.items():
         unit, factor = parameter_unit(
-            PARAMETER_UNITS[name],
+            unit_expression(name),
             unit=timecourses.unit,
             time_unit=timecourses.time_unit,
             dose_unit=timecourses.dose_unit,
@@ -541,3 +636,74 @@ def nca_single(timecourse: Timecourse, options: NCAOptions | None = None) -> NCA
     batch = Timecourses.from_timecourses([timecourse], dim="_single")
     result = nca(batch, options)
     return NCAResult(result.ds.isel(_single=0).drop_vars("_single"))
+
+
+def partial_auc(
+    timecourses: Timecourses,
+    t_start: float,
+    t_end: float,
+    options: NCAOptions | None = None,
+) -> xr.DataArray:
+    """Area under the curve of every sample between two times relative to the dose.
+
+    The values at the bounds are interpolated with the trapezoid rule of
+    `options.auc_method` (`pkpdutils.nca.auc.interpolate_at`) and the area is
+    summed with the same rule; a sample whose observed range does not cover
+    `[t_start, t_end]` gives `NaN`. Only `options.auc_method` is used: the area
+    is read from the values as they are, so `lloq`, `blq` and `kind` do not
+    apply and no uncertainty is propagated.
+
+    Args:
+        timecourses: the batch
+        t_start: start of the interval, in the time unit of the batch, relative to the dose
+        t_end: end of the interval, greater than `t_start`
+        options: the options, defaults for `None`
+
+    Returns:
+        The areas over the sample dimensions, named `auc_partial`, with the unit of `auc_last`.
+
+    Raises:
+        ValueError: if `t_end <= t_start`.
+    """
+    if t_end <= t_start:
+        raise ValueError(
+            f"'t_end' ({t_end}) must be greater than 't_start' ({t_start})"
+        )
+    options = options or NCAOptions()
+    n_rows = timecourses.n_samples
+    t = timecourses.times.reshape(n_rows, timecourses.n_time)
+    c = timecourses.values.reshape(n_rows, timecourses.n_time)
+    if timecourses.dose_time is not None:
+        t = (
+            t
+            - np.asarray(timecourses.dose_time, dtype=np.float64).reshape(n_rows)[
+                :, None
+            ]
+        )
+    tp, cp, n_valid = pack_valid(t, c)
+    start = np.full(n_rows, float(t_start))
+    end = np.full(n_rows, float(t_end))
+    c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
+    c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, end, c_end)
+    area, _ = auc_aumc(tp, cp, n_valid, options.auc_method, t_start=start, t_end=end)
+    area = np.where(np.isfinite(c_start) & np.isfinite(c_end), area, np.nan)
+    unit, factor = parameter_unit(
+        PARAMETER_UNITS["auc_last"],
+        unit=timecourses.unit,
+        time_unit=timecourses.time_unit,
+        dose_unit=timecourses.dose_unit,
+    )
+    coords = {
+        d: timecourses.ds[d]
+        for d in timecourses.sample_dims
+        if d in timecourses.ds.coords
+    }
+    return xr.DataArray(
+        (area * factor).reshape(timecourses.sample_shape),
+        dims=timecourses.sample_dims,
+        coords=coords,
+        name="auc_partial",
+        attrs={"units": unit},
+    )
