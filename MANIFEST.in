@@ -1,6 +1,0 @@
-include LICENSE
-include README.rst
-include .env.local
-
-recursive-include src/pkdb_analysis/reports/interactive/template/ *
-recursive-include src/pkdb_analysis/test/data/ *
