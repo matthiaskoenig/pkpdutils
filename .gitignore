@@ -1,25 +1,34 @@
-.ipynb_checkpoints/
-.~lock*
-src/pkdb_analysis.egg-info
-.idea/
-pkdb_analysis.egg-info/
-
+# python
 __pycache__/
-.pytest_cache
 *.pyc
 
-.env
-.env.develop
-.env.production
-results/
+# packaging artifacts (hatchling builds into dist/)
 dist/
-.eggs/
-.tox
+*.egg-info/
+
+# environments, tool caches
+.venv/
+.tox/
+.pytest_cache/
+.ruff_cache/
 .coverage
-.coverage*
 coverage.xml
+# build cache of zensical
+.cache/
 
-# src/pkdb_analysis/test/data/testdata_concise_true.zip
-# src/pkdb_analysis/test/data/testdata_concise_false.zip
+# rendered documentation, built by the `documentation` workflow
+site/
 
-src/pkdb_analysis/pkdb_analysis/reports/interactive/examples/results
+# the lock file is not committed, pkpdutils is a library and pins nothing
+uv.lock
+
+# output of the examples, they write into the working directory
+examples/**/results/
+/results/
+
+# editors, operating system
+.idea/
+.vscode/
+*~
+.DS_Store
+.ipynb_checkpoints/

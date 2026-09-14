@@ -3,11 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pkdb-analysis"
+name = "pkpdutils"
 dynamic = ["version"]
-description = "Python utilities for PK-DB."
+description = "pkpdutils are python utilities for the pharmacokinetic and pharmacodynamic analysis of timecourses and parameters."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
 	{name="Matthias König", email="konigmatt@googlemail.com"},
 ]
@@ -15,65 +17,78 @@ maintainers = [
 	{name="Matthias König", email="konigmatt@googlemail.com"}
 ]
 classifiers = [
-	"Development Status :: 4 - Beta",
-	"Intended Audience :: Science/Research",
-	"License :: OSI Approved :: MIT License",
-	"Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.13",
-	"Programming Language :: Python :: Implementation :: CPython",
-	"Topic :: Scientific/Engineering",
-	"Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 keywords = [
-    "PK-DB",
     "pharmacokinetics",
-    "standardization",
+    "pharmacodynamics",
+    "non-compartmental analysis",
+    "bioequivalence",
+    "drug-drug interaction",
+    "meta-analysis",
 ]
 dependencies = [
-    "requests>=2.24.0",
-	"numpy>=2.2",
-	"depinfo>=0.1.7",
-	"pint>=0.17",
-	"pandas>=1.3",
-	"coloredlogs>=14.0",
-	"openpyxl>=3.0.5",
-	"XlsxWriter>=1.3.7",
-	"pyyaml>=5.3.1",
-	"gspread-pandas>=2.2.3",
-	"matplotlib>=3.4",
-	"altair>=4.1.0",
-	"seaborn>=0.11.1",
-	"scikit-learn>=0.24.2",
-    "IPython",
-    "rich",
+    # numerics, data structures and units
+    "numpy>=2.2.2",
+    "scipy>=1.15.0",
+    "pandas>=2.2.0",
+    "xarray>=2025.1.0",
+    "pint>=0.25.3",
+    "pydantic>=2.10.0",
+    # figures and console output
+    "matplotlib>=3.10.0",
+    "rich>=14.0.0",
 ]
+
 [project.optional-dependencies]
 dev = [
-    "bump-my-version>=1.2.4",
-	"ruff>=0.14.0",
-	"pre-commit>=4.3.0",
-	"mypy>=1.18.2",
+    "bump-my-version>=1.5.1",
+    "ruff>=0.16.6",
+    "pre-commit>=4.6.2",
+    "ty>=0.0.79",
+    "tox>=4.61.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8",
+    "zensical>=0.0.60",
+    "mkdocstrings-python>=2.0.8",
 ]
-test = [
-    "tox>=4.31.0",
-    "pytest>=8.4.2",
-    "pytest-cov>=7.0.0",
-]
 
-[project_urls]
-Homepage = "https://github.com/matthiaskoenig/pkdb_analysis"
-Repository = "https://github.com/matthiaskoenig/pkdb_analysis"
-Documentation = "https://github.com/matthiaskoenig/pkdb_analysis"
-Issues = "https://github.com/matthiaskoenig/pkdb_analysis/issues"
-Download = "https://pypi.org/project/pkdb-analysis"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/pkdb_analysis"]
-
-[tool.hatch.metadata]
-allow-direct-references = true
+[project.urls]
+Homepage = "https://matthiaskoenig.github.io/pkpdutils"
+Documentation = "https://matthiaskoenig.github.io/pkpdutils"
+Repository = "https://github.com/matthiaskoenig/pkpdutils"
+Issues = "https://github.com/matthiaskoenig/pkpdutils/issues"
+Changelog = "https://github.com/matthiaskoenig/pkpdutils/tree/develop/release-notes"
+Download = "https://pypi.org/project/pkpdutils"
 
 [tool.hatch.version]
-path = "./src/pkdb_analysis/__init__.py"
+path = "./src/pkpdutils/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pkpdutils"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# the tests run in parallel (pytest-xdist), `pytest -n 0` runs them in one process
+addopts = "-n auto"
+
+[tool.ty.environment]
+# the package lives in the src layout, the examples are a package at the root of
+# the repository; the checked python version is inferred from
+# `project.requires-python` (i.e. the oldest supported version)
+root = ["./src", "."]
+
+[tool.ty.src]
+include = ["src", "tests", "examples", "scripts"]
+
+[tool.ty.terminal]
+# warnings are failures: keep the codebase free of any diagnostic
+error-on-warning = true
