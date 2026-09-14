@@ -35,7 +35,7 @@
 **FDA drug interaction guidance.** The thresholds of the classification of inhibitors, inducers and sensitive substrates.
 
 > U.S. Food and Drug Administration.
-> **Clinical Drug Interaction Studies — Cytochrome P450 Enzyme- and Transporter-Mediated Drug Interactions. Guidance for Industry.**
+> **Clinical Drug Interaction Studies - Cytochrome P450 Enzyme- and Transporter-Mediated Drug Interactions. Guidance for Industry.**
 > 2020.
 
 **EMA drug interaction guideline.**
