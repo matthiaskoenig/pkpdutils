@@ -1,3 +1,4 @@
+import logging
 from typing import ClassVar
 
 import numpy as np
@@ -198,6 +199,51 @@ def test_to_dataframe_long() -> None:
     assert df["value"].sum() == pytest.approx(V.sum())
 
 
+def test_to_dataframe_with_uncertainty_columns() -> None:
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        sd=0.1 * V,
+        n=np.array([5, 6, 7]),
+    )
+    df = tcs.to_dataframe()
+    assert list(df.columns) == ["individual", "time", "value", "sd", "se", "n"]
+    assert len(df) == 12
+    rows = df[df["individual"] == "b"]
+    np.testing.assert_allclose(rows["time"].to_numpy(), T)
+    np.testing.assert_allclose(rows["value"].to_numpy(), V[1])
+    np.testing.assert_allclose(rows["sd"].to_numpy(), 0.1 * V[1])
+    np.testing.assert_allclose(rows["se"].to_numpy(), 0.1 * V[1] / np.sqrt(6))
+    np.testing.assert_allclose(rows["n"].to_numpy(), 6)
+
+
+def test_to_dataframe_ragged_transposed_times() -> None:
+    # 'times' comes in with the dimensions in the order (time, individual)
+    times = np.array([[0.0, 0.0], [1.0, 2.0], [2.0, 4.0]])
+    values = np.array([[0.0, 0.0], [2.0, 3.0], [1.0, 1.5]])
+    ds = xr.Dataset(
+        data_vars={
+            "value": (("individual", "time"), values.T, {"units": "mg/l"}),
+            "times": (("time", "individual"), times, {"units": "hr"}),
+        },
+        coords={
+            "time": ("time", np.arange(3), {"units": "hr"}),
+            "individual": ("individual", ["a", "b"]),
+        },
+    )
+    tcs = Timecourses(ds)
+    assert tcs.ds["times"].dims == ("individual", "time")
+    df = tcs.to_dataframe()
+    for i, name in enumerate(["a", "b"]):
+        rows = df[df["individual"] == name]
+        np.testing.assert_allclose(rows["time"].to_numpy(), times[:, i])
+        np.testing.assert_allclose(rows["value"].to_numpy(), values[:, i])
+
+
 def test_dataset_validation() -> None:
     ds = xr.Dataset({"foo": (("time",), np.zeros(3))}, coords={"time": [0, 1, 2]})
     with pytest.raises(ValueError, match="value"):
@@ -268,6 +314,107 @@ def test_from_dataframe_two_sample_columns() -> None:
     assert tcs.sample_shape == (2, 2)
     np.testing.assert_allclose(tcs.sel(dose=100, individual="b").value, 100 * T)
     assert tcs.unit == "mg/l" and tcs.time_unit == "hr"
+
+
+def test_from_dataframe_missing_combination() -> None:
+    rows = []
+    for dose in (50, 100):
+        for name in ("a", "b"):
+            if dose == 100 and name == "b":
+                continue  # this combination is not measured
+            for t in T:
+                rows.append(
+                    {"dose": dose, "individual": name, "time": t, "value": dose * t}
+                )
+    tcs = Timecourses.from_dataframe(
+        pd.DataFrame(rows),
+        sample=["dose", "individual"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="dose",
+        dose_unit="mg",
+        route=Route.ORAL,
+    )
+    assert tcs.sample_shape == (2, 2)
+    missing = tcs.sel(dose=100, individual="b")
+    assert missing.dose is None
+    assert np.isnan(missing.value).all()
+    assert len(list(tcs)) == 4
+    for dose_amount, name in ((50, "a"), (50, "b"), (100, "a")):
+        tc = tcs.sel(dose=dose_amount, individual=name)
+        assert tc.dose is not None
+        assert tc.dose.amount == dose_amount
+        np.testing.assert_allclose(tc.value, dose_amount * T)
+
+
+def test_from_timecourses_mixed_doses_raise() -> None:
+    with pytest.raises(ValueError, match="dose") as excinfo:
+        Timecourses.from_timecourses(
+            [
+                Timecourse(
+                    time=T,
+                    value=V[0],
+                    time_unit="hr",
+                    unit="mg/l",
+                    label="a",
+                    dose=Dose(amount=50, unit="mg"),
+                ),
+                Timecourse(time=T, value=V[1], time_unit="hr", unit="mg/l", label="b"),
+            ]
+        )
+    assert "b" in str(excinfo.value)
+
+
+def test_from_timecourses_mixed_routes_raise() -> None:
+    with pytest.raises(ValueError, match="separate batches"):
+        Timecourses.from_timecourses(
+            [
+                Timecourse(
+                    time=T,
+                    value=V[0],
+                    time_unit="hr",
+                    unit="mg/l",
+                    dose=Dose(amount=50, unit="mg", route=Route.ORAL),
+                ),
+                Timecourse(
+                    time=T,
+                    value=V[1],
+                    time_unit="hr",
+                    unit="mg/l",
+                    dose=Dose(amount=50, unit="mg", route=Route.IV_BOLUS),
+                ),
+            ]
+        )
+
+
+def test_from_timecourses_varying_n_warns(caplog: pytest.LogCaptureFixture) -> None:
+    timecourses = [
+        Timecourse(
+            time=T,
+            value=V[0],
+            sd=0.1 * V[0],
+            n=[4, 4, 6, 6],
+            time_unit="hr",
+            unit="mg/l",
+            label="a",
+        ),
+        Timecourse(
+            time=T,
+            value=V[1],
+            sd=0.1 * V[1],
+            n=8,
+            time_unit="hr",
+            unit="mg/l",
+            label="b",
+        ),
+    ]
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.timecourse"):
+        tcs = Timecourses.from_timecourses(timecourses)
+    tcs_n = tcs.n
+    assert tcs_n is not None
+    np.testing.assert_allclose(tcs_n, [6, 8])
+    assert "'a'" in caplog.text
+    assert "'n'" in caplog.text
 
 
 def test_from_dataset_scan() -> None:

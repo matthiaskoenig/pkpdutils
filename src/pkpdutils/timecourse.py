@@ -149,6 +149,21 @@ def _as_float_array(name: str, values: Any) -> np.ndarray:
     return array
 
 
+def _values_equal(a: float | np.ndarray | None, b: float | np.ndarray | None) -> bool:
+    """Compare two optional numbers or arrays, `NaN` equals `NaN`.
+
+    Args:
+        a: the first value, an array, a number or `None`
+        b: the second value, an array, a number or `None`
+
+    Returns:
+        Whether both are `None` or hold the same values.
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    return bool(np.array_equal(a, b, equal_nan=True))
+
+
 class Timecourse(BaseModel):
     """One curve of values over time with units, uncertainty, dose and metadata.
 
@@ -285,6 +300,51 @@ class Timecourse(BaseModel):
         parse_unit(self.time_unit)
         parse_unit(self.unit)
         return self
+
+    def __eq__(self, other: object) -> bool:
+        """Compare two timecourses field by field, `NaN` equals `NaN`.
+
+        The generated comparison of pydantic compares the numpy fields with
+        `==`, which raises for arrays; the array fields are compared with
+        `numpy.array_equal` instead.
+
+        Args:
+            other: the object to compare with.
+
+        Returns:
+            Whether `other` is a timecourse with the same fields;
+            `NotImplemented` for any other type, so that python falls back to
+            the identity comparison.
+        """
+        if not isinstance(other, Timecourse):
+            return NotImplemented
+        arrays = ("time", "value", "sd", "se", "n")
+        for name in arrays:
+            if not _values_equal(getattr(self, name), getattr(other, name)):
+                return False
+        return all(
+            getattr(self, name) == getattr(other, name)
+            for name in type(self).model_fields
+            if name not in arrays
+        )
+
+    def __hash__(self) -> int:
+        """Hash of the immutable fields, equal for equal timecourses.
+
+        The arrays are not hashable, only `size` enters the hash; equal
+        timecourses hash equal, unequal ones may collide.
+        """
+        return hash(
+            (
+                self.time_unit,
+                self.unit,
+                self.substance,
+                self.label,
+                self.tissue,
+                self.dose,
+                self.size,
+            )
+        )
 
     @property
     def size(self) -> int:
@@ -456,14 +516,27 @@ class Timecourses:
       `(*sample_dims, time)` padded with `NaN` and an integer coordinate `time`.
 
     Every variable carries its unit in `attrs["units"]`; the dataset carries
-    `substance`, `route`, `time_unit` and `unit` in its `attrs`. The properties
-    `times` and `values` return the `(*sample_shape, n_time)` arrays every
-    analysis of the package works on; iteration and `sel`/`isel` give single
-    `Timecourse` objects.
+    `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when
+    doses are present. The properties `times` and `values` return the
+    `(*sample_shape, n_time)` arrays every analysis of the package works on;
+    iteration and `sel`/`isel` give single `Timecourse` objects.
+
+    A batch has one route: curves with different routes go into separate
+    batches (a deliberate restriction of the 1.0.0 data model). `n` is one
+    number per sample, not one per time point.
+
+    Several sample dimensions span their cartesian product, which can have
+    combinations without data (no curve was measured for them). Such a sample
+    is all `NaN`; iteration and `sel`/`isel` return a `Timecourse` with `NaN`
+    values and `dose=None` for it.
     """
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a dataset, see the class documentation for its layout.
+
+        Every variable with the `time` dimension (`value`, `sd`, `se`, `times`)
+        is transposed to `(*sample_dims, time)`, so that the arrays and the data
+        frame of the batch are built from one layout.
 
         Raises:
             ValueError: if the dataset does not have the layout.
@@ -472,8 +545,17 @@ class Timecourses:
             raise ValueError("The dataset needs a 'value' variable")
         if TIME_DIM not in ds["value"].dims:
             raise ValueError(f"'value' needs the dimension '{TIME_DIM}'")
-        if ds["value"].dims[-1] != TIME_DIM:
-            ds = ds.transpose(..., TIME_DIM)
+        layout = (*(d for d in ds["value"].dims if d != TIME_DIM), TIME_DIM)
+        if TIMES_VAR in ds and set(ds[TIMES_VAR].dims) != set(ds["value"].dims):
+            raise ValueError(
+                f"'{TIMES_VAR}' needs the dimensions {layout} of 'value', "
+                f"not {tuple(str(d) for d in ds[TIMES_VAR].dims)}"
+            )
+        if any(
+            tuple(ds[name].dims) != tuple(d for d in layout if d in ds[name].dims)
+            for name in ds.data_vars
+        ):
+            ds = ds.transpose(*layout, ...)
         if "units" not in ds["value"].attrs:
             raise ValueError("'value' needs attrs['units']")
         time_var = ds[TIMES_VAR] if TIMES_VAR in ds else ds[TIME_DIM]
@@ -754,6 +836,11 @@ class Timecourses:
         `time` coordinate, otherwise the times are stored per sample and shorter
         curves are padded with `NaN`.
 
+        Either all or no curves carry a dose, and all doses need the same route
+        and unit; curves with different routes go into separate batches. A batch
+        keeps one `n` per sample: an `n` which varies over the time points of a
+        curve is reduced to its maximum and logs a warning.
+
         Args:
             timecourses: the curves
             dim: name of the sample dimension
@@ -764,7 +851,8 @@ class Timecourses:
             The batch.
 
         Raises:
-            ValueError: for an empty sequence or differing units.
+            ValueError: for an empty sequence, differing units, doses on some but
+                not all curves, or doses with different routes or units.
         """
         if not timecourses:
             raise ValueError("At least one timecourse is required")
@@ -821,19 +909,41 @@ class Timecourses:
         n: np.ndarray | None = None
         if all(v is not None for v in n_values):
             maxima: list[float] = []
-            for v in n_values:
+            for label, v in zip(labels, n_values, strict=True):
                 assert v is not None
-                maxima.append(float(np.nanmax(v)))
+                maximum = float(np.nanmax(v))
+                if np.ndim(v) > 0 and float(np.nanmin(v)) != maximum:
+                    logger.warning(
+                        "'n' varies over the time points of '%s', the batch keeps "
+                        "one number per sample, the maximum %s",
+                        label,
+                        maximum,
+                    )
+                maxima.append(maximum)
             n = np.array(maxima)
 
         doses = [tc.dose for tc in timecourses]
+        without_dose = [
+            label for label, d in zip(labels, doses, strict=True) if d is None
+        ]
+        if without_dose and len(without_dose) != len(doses):
+            raise ValueError(
+                "Either all or no timecourses need a dose, there is no dose for "
+                f"{[str(label) for label in without_dose]}"
+            )
         dose: Mapping[str, Any] | None = None
         route: Route | None = None
         if all(d is not None for d in doses):
             routes = {d.route for d in doses if d is not None}
             units = {d.unit for d in doses if d is not None}
-            if len(routes) != 1 or len(units) != 1:
-                raise ValueError("All doses need the same route and unit")
+            if len(routes) != 1:
+                raise ValueError(
+                    "A batch has one route, found "
+                    f"{sorted(r.value for r in routes)}; build separate batches, "
+                    "one per route"
+                )
+            if len(units) != 1:
+                raise ValueError(f"All doses need the same unit, found {sorted(units)}")
             route = routes.pop()
             dose = {
                 "amount": np.array([d.amount for d in doses if d is not None]),
@@ -883,6 +993,11 @@ class Timecourses:
         substance: str = "substance",
     ) -> "Timecourses":
         """Create a batch from a long data frame, one row per sample and time point.
+
+        Several sample columns span their cartesian product; a combination
+        without rows in `df` becomes a sample with `NaN` values, which iteration
+        and `sel`/`isel` return as a `Timecourse` with `NaN` values and
+        `dose=None`.
 
         Args:
             df: the data frame
@@ -1086,16 +1201,20 @@ class Timecourses:
         if "n" in sample:
             data["n"] = float(sample["n"].to_numpy())
         if self.has_dose:
-            duration = float(sample["dose_duration"].to_numpy())
-            route = self.route
-            assert route is not None
-            data["dose"] = Dose(
-                amount=float(sample["dose_amount"].to_numpy()),
-                unit=self.dose_unit or "mg",
-                route=route,
-                time=float(sample["dose_time"].to_numpy()),
-                duration=None if np.isnan(duration) else duration,
-            )
+            amount = float(sample["dose_amount"].to_numpy())
+            if not np.isnan(amount):
+                # a NaN amount marks a sample combination which is not in the
+                # batch (its values are NaN as well), it has no dose
+                duration = float(sample["dose_duration"].to_numpy())
+                route = self.route
+                assert route is not None
+                data["dose"] = Dose(
+                    amount=amount,
+                    unit=self.dose_unit or "mg",
+                    route=route,
+                    time=float(sample["dose_time"].to_numpy()),
+                    duration=None if np.isnan(duration) else duration,
+                )
         return Timecourse(**data)
 
     def isel(self, **indexers: int) -> Timecourse:
@@ -1136,20 +1255,10 @@ class Timecourses:
 
     def to_dataframe(self) -> pd.DataFrame:
         """The batch as a long data frame: the sample coordinates, `time`, `value` and the optional columns."""
-        names = ["value", *[v for v in ("sd", "se") if v in self.ds]]
-        df = self.ds[names].to_dataframe().reset_index()
+        names = ["value", *[v for v in ("sd", "se", "n") if v in self.ds]]
+        dim_order = [*self.sample_dims, TIME_DIM]
+        df = self.ds[names].to_dataframe(dim_order=dim_order).reset_index()
         if TIMES_VAR in self.ds:
-            df[TIME_DIM] = (
-                self.ds[TIMES_VAR].to_dataframe().reset_index()[TIMES_VAR].to_numpy()
-            )
-        if "n" in self.ds:
-            df = df.merge(
-                self.ds["n"].to_dataframe().reset_index(), on=list(self.sample_dims)
-            )
-        columns = [
-            *self.sample_dims,
-            TIME_DIM,
-            *names,
-            *(["n"] if "n" in self.ds else []),
-        ]
-        return df[columns]
+            # the rows are in C order of `dim_order`, as are the padded times
+            df[TIME_DIM] = self.times.ravel()
+        return df[[*dim_order, *names]]

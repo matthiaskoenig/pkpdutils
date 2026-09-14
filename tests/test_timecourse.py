@@ -189,6 +189,38 @@ def test_timecourse_relative_to_dose_without_dose() -> None:
     assert tc.relative_to_dose() is tc
 
 
+def _curve(value: list[float]) -> Timecourse:
+    return Timecourse(
+        time=[0, 1, 2],
+        value=value,
+        sd=[0.0, 0.2, 0.1],
+        n=5,
+        time_unit="hr",
+        unit="mg/l",
+        substance="caffeine",
+        label="a",
+        dose=Dose(amount=100, unit="mg"),
+    )
+
+
+def test_timecourse_equal_and_hash_equal() -> None:
+    tc1 = _curve([0.0, np.nan, 1.0])
+    tc2 = _curve([0.0, np.nan, 1.0])
+    assert tc1 == tc2
+    assert hash(tc1) == hash(tc2)
+    assert len({tc1, tc2}) == 1
+
+
+def test_timecourse_unequal_values() -> None:
+    assert _curve([0.0, np.nan, 1.0]) != _curve([0.0, np.nan, 2.0])
+
+
+def test_timecourse_equality_with_other_type() -> None:
+    tc = _curve([0.0, 1.0, 2.0])
+    assert tc != "not a timecourse"
+    assert (tc == 42) is False
+
+
 def test_timecourse_dataframe_roundtrip() -> None:
     tc = Timecourse(
         time=[0, 1, 2],
