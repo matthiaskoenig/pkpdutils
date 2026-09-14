@@ -113,6 +113,9 @@ class NCAFlag(IntFlag):
     BLQ_TRUNCATED = 32
     #: fewer than two valid points; every parameter is NaN
     NO_DATA = 64
+    #: the delta method skipped points at which the terminal window changed; the
+    #: uncertainty of the terminal parameters is incomplete
+    DELTA_WINDOW_CHANGE = 128
 
 
 def decode_flags(value: int) -> list[str]:
@@ -194,7 +197,8 @@ class NCAOptions(BaseModel):
         uncertainty: propagation of `sd`/`se` to the parameters; `None` selects
             `BOOTSTRAP` when the batch carries an uncertainty and `NONE` otherwise
         n_boot: number of bootstrap replicates
-        seed: seed of the bootstrap random generator, `None` for a fresh one
+        seed: seed of the bootstrap random generator; the default `None` draws
+            from a fresh generator, so a bootstrap is not reproducible
         ci_level: level of the confidence intervals
         bootstrap_spread: whether the replicates are drawn with `se` or `sd`
         bootstrap_distribution: normal or log-normal draws

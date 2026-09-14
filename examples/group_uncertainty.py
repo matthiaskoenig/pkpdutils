@@ -52,9 +52,14 @@ if __name__ == "__main__":
     spread = nca_single(
         group, NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD)
     )
+    # `ci_low`/`ci_high` stay an interval of the estimate, `pi_low`/`pi_high`
+    # are the percentiles of the individual replicates
     console.print(
         spread.to_quantities()["auc_inf_obs_sd"],
         spread.to_quantities()["auc_inf_obs_geocv"],
+        spread.to_quantities()["auc_inf_obs_ci_low"],
+        spread.to_quantities()["auc_inf_obs_pi_low"],
+        spread.to_quantities()["auc_inf_obs_pi_high"],
     )
 
     console.rule("Delta method")

@@ -505,8 +505,10 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     A batch of group curves (`sd` or `se` per point) also carries the
     uncertainty of every parameter, by default from the parametric bootstrap
     (`options.uncertainty`, `pkpdutils.nca.uncertainty`): `x_sd`, `x_se`,
-    `x_ci_low`, `x_ci_high` and, for log-normal parameters, `x_geomean`,
-    `x_geocv`.
+    `x_ci_low`, `x_ci_high`, under `BootstrapSpread.SD` draws also
+    `x_pi_low`, `x_pi_high`, and, for log-normal parameters, `x_geomean`,
+    `x_geocv`. The delta method can add `NCAFlag.DELTA_WINDOW_CHANGE` to the
+    flags of a sample.
 
     Args:
         timecourses: the batch
@@ -555,7 +557,10 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     if method is UncertaintyMethod.BOOTSTRAP:
         values.update(bootstrap(timecourses, options, values))
     elif method is UncertaintyMethod.DELTA:
-        values.update(delta(timecourses, options, values))
+        uncertainty = delta(timecourses, options, values)
+        # the delta method reports the rows whose terminal window moved
+        flags = flags | uncertainty.pop("flags").astype(flags.dtype)
+        values.update(uncertainty)
     n_subjects = timecourses.n
     values["n"] = (
         np.full(n_rows, np.nan)
@@ -644,7 +649,9 @@ def partial_auc(
     The values at the bounds are interpolated with the trapezoid rule of
     `options.auc_method` (`pkpdutils.nca.auc.interpolate_at`) and the area is
     summed with the same rule; a sample whose observed range does not cover
-    `[t_start, t_end]` gives `NaN`.
+    `[t_start, t_end]` gives `NaN`. Only `options.auc_method` is used: the area
+    is read from the values as they are, so `lloq`, `blq` and `kind` do not
+    apply and no uncertainty is propagated.
 
     Args:
         timecourses: the batch

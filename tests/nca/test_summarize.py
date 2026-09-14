@@ -81,8 +81,13 @@ def test_summarize_keeps_other_dims_and_ors_flags() -> None:
     mixed = Timecourses.from_timecourses([*list(tcs), short])
     flags = nca(mixed).summarize("individual").flags()
     assert "TOO_FEW_POINTS" in flags
-    assert (
-        nca(mixed).summarize("individual").to_quantities()["lambda_z_n"].magnitude == 4
+    q = nca(mixed).summarize("individual").to_quantities()
+    # `n` counts the samples along the dimension, `x_n` the finite values of `x`
+    assert q["lambda_z_n"].magnitude == 4
+    assert q["n"].magnitude == 5
+    assert q["lambda_z_n"].magnitude < q["n"].magnitude
+    assert q["lambda_z_se"].magnitude == pytest.approx(
+        q["lambda_z_sd"].magnitude / np.sqrt(q["lambda_z_n"].magnitude)
     )
     with pytest.raises(ValueError, match="dim"):
         result.summarize("study")

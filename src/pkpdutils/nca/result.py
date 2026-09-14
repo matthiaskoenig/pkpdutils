@@ -240,8 +240,15 @@ class NCAResult:
         `x_sd`, `x_se`, the t-based confidence interval `x_ci_low`/`x_ci_high`
         at `ci_level`, `x_median`, `x_q25`, `x_q75`, the count of finite values
         `x_n` and, for log-normal parameters, `x_geomean` and `x_geocv`;
-        `n` is the number of samples along `dim` and `flags` the union of their
-        flags. Derived variables of the input are dropped.
+        `flags` is the union of the flags of the samples. Derived variables of
+        the input are dropped.
+
+        The two counts differ: `n` is the number of samples along `dim`,
+        `x_n` the number of them at which `x` is finite, and every statistic of
+        `x` uses `x_n` (`x_se = x_sd / sqrt(x_n)`, the interval uses
+        `t` with `x_n - 1` degrees of freedom). A parameter which does not
+        apply to every sample (no terminal phase, no dose) therefore has
+        `x_n < n`.
 
         Args:
             dim: the sample dimension to reduce

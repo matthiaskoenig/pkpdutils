@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -6,6 +8,7 @@ from pkpdutils.nca import AUCMethod, NCAOptions, UncertaintyMethod, nca, nca_sin
 from pkpdutils.nca.options import (
     BootstrapDistribution,
     BootstrapSpread,
+    Kind,
     TerminalMethod,
     TerminalPhase,
 )
@@ -34,6 +37,24 @@ def group_curve(cv: float = 0.1, n: float | None = 12, label: str = "g") -> Time
         dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
         substance="x",
         label=label,
+    )
+
+
+TE = np.array([0.0, 1.0, 2.0, 4.0, 6.0, 8.0])
+
+
+def effect_curve(e0: float = -1.0, sd: float = 0.3, n: float | None = 6) -> Timecourse:
+    """A group effect curve whose baseline is negative."""
+    value = np.array([e0, -0.6, 0.1, 0.4, 0.2, -0.3])
+    return Timecourse(
+        time=TE,
+        value=value,
+        sd=np.full(TE.size, sd),
+        n=n,
+        time_unit="hr",
+        unit="dimensionless",
+        substance="effect",
+        label="e",
     )
 
 
@@ -109,7 +130,12 @@ def test_reduce_replicates_layout() -> None:
     assert np.isnan(out["auc_last_sd"][1])
     assert out["auc_last_ci_low"][0] < 100.0 < out["auc_last_ci_high"][0]
     assert out["auc_last_geomean"][0] == pytest.approx(100.0, rel=0.02)
-    assert out["auc_last_geocv"][0] == pytest.approx(np.sqrt(np.expm1(0.1**2)), rel=0.1)
+    # `se` draws give the log variance of the mean, `geocv` is over the
+    # subjects and scales it by `n = 4`
+    assert out["auc_last_geocv"][0] == pytest.approx(
+        np.sqrt(np.expm1(4 * 0.1**2)), rel=0.1
+    )
+    assert np.isnan(out["auc_last_geocv"][1])  # no `n`, no between-subject scale
 
 
 def test_bootstrap_default_for_group_data_and_reproducible() -> None:
@@ -281,3 +307,189 @@ def test_delta_batch_and_no_se() -> None:
     plain = Timecourse(time=T, value=C0 * np.exp(-K * T), time_unit="hr", unit="mg/l")
     with pytest.raises(ValueError, match="se"):
         nca_single(plain, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+
+
+def test_bootstrap_effect_values_are_not_clipped_at_zero() -> None:
+    """Effect values are legitimately negative, clipping at 0 would erase their spread."""
+    options = NCAOptions(kind=Kind.EFFECT, seed=1, n_boot=500)
+    q = nca_single(effect_curve(), options).to_quantities()
+    assert q["e0_se"].magnitude > 0
+    assert q["e0_ci_low"].magnitude < -1.0 < q["e0_ci_high"].magnitude
+    with pytest.raises(ValueError, match="log-normal"):
+        nca_single(
+            effect_curve(),
+            NCAOptions(
+                kind=Kind.EFFECT,
+                seed=1,
+                n_boot=100,
+                bootstrap_distribution=BootstrapDistribution.LOGNORMAL,
+            ),
+        )
+
+
+def test_resample_values_without_clipping() -> None:
+    rng = np.random.default_rng(0)
+    c = np.array([[-1.0]])
+    spread = np.array([[0.3]])
+    draws = resample_values(
+        c, spread, 5000, rng, BootstrapDistribution.NORMAL, clip_at_zero=False
+    )
+    assert draws.min() < 0
+    assert draws.std() == pytest.approx(0.3, abs=0.02)
+
+
+def test_bootstrap_row_without_spread_is_nan() -> None:
+    """A row whose spread is missing everywhere has no uncertainty, not a zero one."""
+    c = C0 * np.exp(-K * T)
+    sd = np.vstack([0.1 * c, np.full(T.size, np.nan)])
+    tcs = Timecourses.from_arrays(
+        T,
+        np.vstack([c, c]),
+        time_unit="hr",
+        unit="mg/l",
+        sd=sd,
+        n=[12.0, 12.0],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = nca(tcs, NCAOptions(seed=2, n_boot=200))
+    for name in ("auc_last_se", "auc_last_sd", "auc_last_ci_low", "auc_last_geocv"):
+        assert np.isfinite(result[name].values[0]), name
+        assert np.isnan(result[name].values[1]), name
+
+
+def test_bootstrap_geocv_is_on_the_between_subject_scale() -> None:
+    """`x_geocv` is the CV over subjects, whichever spread the draws used."""
+    tc = group_curve(n=16)
+    se_draws = nca_single(
+        tc, NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SE)
+    ).to_quantities()["auc_last_geocv"]
+    sd_draws = nca_single(
+        tc, NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SD)
+    ).to_quantities()["auc_last_geocv"]
+    assert se_draws.magnitude == pytest.approx(sd_draws.magnitude, rel=0.15)
+
+
+def test_bootstrap_sd_draws_report_confidence_and_prediction_interval() -> None:
+    """Under `SD` draws the percentiles bound individuals, the interval bounds the estimate."""
+    tc = group_curve(n=16)
+    sd_draws = nca_single(
+        tc,
+        NCAOptions(seed=5, n_boot=2000, bootstrap_spread=BootstrapSpread.SD),
+    )
+    q = sd_draws.to_quantities()
+    ci_width = q["auc_last_ci_high"].magnitude - q["auc_last_ci_low"].magnitude
+    pi_width = q["auc_last_pi_high"].magnitude - q["auc_last_pi_low"].magnitude
+    assert pi_width > ci_width
+    assert q["auc_last_pi_low"].magnitude < q["auc_last_ci_low"].magnitude
+    assert str(q["auc_last_pi_low"].units) == str(q["auc_last"].units)
+    se_draws = nca_single(tc, NCAOptions(seed=5, n_boot=500))
+    assert "auc_last_pi_low" not in se_draws
+    assert "auc_last_pi_high" not in se_draws
+
+
+def noisy_group_curve() -> Timecourse:
+    """A mono-exponential group curve with 5 % log-normal noise on the points."""
+    rng = np.random.default_rng(0)
+    c = C0 * np.exp(-K * T) * rng.lognormal(0.0, 0.05, T.size)
+    return Timecourse(
+        time=T,
+        value=c,
+        sd=0.05 * c,
+        n=12,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+        substance="x",
+        label="noisy",
+    )
+
+
+def test_delta_masks_points_which_flip_the_terminal_window() -> None:
+    """A perturbation which moves the best fit window carries no usable derivative.
+
+    The delta method linearizes a parameter around the observed curve; a step
+    which selects a different terminal window makes the difference quotient a
+    jump instead of a derivative and inflated `lambda_z_se` far beyond the
+    bootstrap. Such points are skipped and the row is flagged, so either the
+    flag is set (the uncertainty of the terminal parameters is incomplete) or
+    the delta value agrees with the bootstrap.
+    """
+    tc = noisy_group_curve()
+    delta_result = nca_single(tc, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    boot = nca_single(
+        tc,
+        NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7),
+    )
+    delta_se = delta_result.to_quantities()["lambda_z_se"].magnitude
+    boot_se = boot.to_quantities()["lambda_z_se"].magnitude
+    agrees = abs(delta_se - boot_se) <= 0.5 * boot_se
+    flagged = "DELTA_WINDOW_CHANGE" in delta_result.flags()
+    assert agrees or flagged
+    # with the default step of 1 % of `se` no perturbation moves the window of
+    # this curve, so the flag stays clear and the two methods agree
+    assert not flagged
+    assert agrees, f"delta {delta_se} vs bootstrap {boot_se}"
+
+
+def test_delta_flags_a_terminal_window_flip() -> None:
+    """A step large enough to move the best fit window is skipped and flagged."""
+    tc = noisy_group_curve_for_flip()
+    delta_result = nca_single(
+        tc, NCAOptions(uncertainty=UncertaintyMethod.DELTA, delta_step=0.05)
+    )
+    assert "DELTA_WINDOW_CHANGE" in delta_result.flags()
+    q = delta_result.to_quantities()
+    boot = nca_single(
+        tc, NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7)
+    ).to_quantities()
+    # without the mask the jump between two regressions inflated `lambda_z_se`
+    # by more than an order of magnitude over the bootstrap
+    assert q["lambda_z_se"].magnitude < 2.0 * boot["lambda_z_se"].magnitude
+    # the areas to the last point do not depend on the terminal window and keep
+    # every point
+    assert q["auc_last_se"].magnitude == pytest.approx(
+        boot["auc_last_se"].magnitude, rel=0.05
+    )
+
+
+def noisy_group_curve_for_flip() -> Timecourse:
+    """A curve whose best fit terminal window is a near tie (seed 1)."""
+    rng = np.random.default_rng(1)
+    c = C0 * np.exp(-K * T) * rng.lognormal(0.0, 0.05, T.size)
+    return Timecourse(
+        time=T,
+        value=c,
+        sd=0.05 * c,
+        n=12,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+        substance="x",
+        label="tie",
+    )
+
+
+def test_bootstrap_lognormal_end_to_end_and_ci_level() -> None:
+    tc = group_curve(cv=0.2)
+    logn = nca_single(
+        tc,
+        NCAOptions(
+            seed=4,
+            n_boot=1000,
+            bootstrap_distribution=BootstrapDistribution.LOGNORMAL,
+        ),
+    ).to_quantities()
+    assert logn["auc_last_se"].magnitude > 0
+    assert logn["auc_last_ci_low"].magnitude > 0
+    narrow = nca_single(
+        tc, NCAOptions(seed=4, n_boot=2000, ci_level=0.8)
+    ).to_quantities()
+    wide = nca_single(
+        tc, NCAOptions(seed=4, n_boot=2000, ci_level=0.95)
+    ).to_quantities()
+    narrow_width = (
+        narrow["auc_last_ci_high"].magnitude - narrow["auc_last_ci_low"].magnitude
+    )
+    wide_width = wide["auc_last_ci_high"].magnitude - wide["auc_last_ci_low"].magnitude
+    assert narrow_width < wide_width

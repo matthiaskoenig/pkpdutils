@@ -31,8 +31,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `emax_baseline`, `time_above` | | baseline corrected maximum, time above a threshold | value, time | [NCA](nca.md) |
 | `flags` | | `NCAFlag` bits | – | [NCA](nca.md) |
 | `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
-| `x_ci_low`, `x_ci_high` | | confidence interval of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
-| `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation of a parameter `x` (log-normal parameters) | unit of `x`, - | [Uncertainty](uncertainty.md) |
+| `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
+| `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |
+| `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation over subjects of a parameter `x` (log-normal parameters) | unit of `x`, - | [Uncertainty](uncertainty.md) |
 | `x_median`, `x_q25`, `x_q75`, `x_n` | | median, quartiles and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
-| `n` | | number of subjects (group data) or of samples (summary) | – | [Uncertainty](uncertainty.md) |
+| `n` | | number of subjects (group data) or of samples along the reduced dimension (summary) | – | [Uncertainty](uncertainty.md) |
 | `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |

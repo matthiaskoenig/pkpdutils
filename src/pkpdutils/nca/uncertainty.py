@@ -16,14 +16,22 @@ subjects `n`. Two methods propagate this uncertainty to the parameters:
 
 The variables of a parameter `x` are `x_sd`, `x_se`, `x_ci_low`, `x_ci_high`
 and, for log-normal parameters, `x_geomean`, `x_geocv`; `n` is the number of
-subjects per sample. Discrete parameters (`tmax`, `tlast`, counts) and the
-diagnostics of the terminal regression carry no uncertainty.
+subjects per sample. `x_sd` and `x_geocv` are always on the between-subject
+scale (the spread of the parameter over subjects), `x_se` is always the
+uncertainty of the parameter of the mean curve, and `x_ci_low`/`x_ci_high` are
+always an interval of that estimate. Discrete parameters (`tmax`, `tlast`,
+counts) and the diagnostics of the terminal regression carry no uncertainty.
 
-The interval of the bootstrap is the percentile interval of the replicates, so
-it is not guaranteed to contain the point estimate of the mean curve: for
-skewed replicates (a parameter which is a strongly non-linear function of the
-values, such as `lambda_z` or `mrt`) the interval is asymmetric around the
-estimate and can exclude it.
+With `BootstrapSpread.SD` the replicates are individual curves, so their
+percentiles bound individuals and not the estimate; they are exported
+separately as `x_pi_low`/`x_pi_high` and the confidence interval is the normal
+approximation `x +- z se` (on the log scale for log-normal parameters).
+
+Under `BootstrapSpread.SE` the interval is the percentile interval of the
+replicates, so it is not guaranteed to contain the point estimate of the mean
+curve: for skewed replicates (a parameter which is a strongly non-linear
+function of the values, such as `lambda_z` or `mrt`) the interval is asymmetric
+around the estimate and can exclude it.
 """
 
 import logging
@@ -32,7 +40,13 @@ import warnings
 import numpy as np
 from scipy.stats import norm
 
-from pkpdutils.nca.options import BootstrapDistribution, BootstrapSpread, NCAOptions
+from pkpdutils.nca.options import (
+    BootstrapDistribution,
+    BootstrapSpread,
+    Kind,
+    NCAFlag,
+    NCAOptions,
+)
 from pkpdutils.timecourse import Timecourses
 
 logger = logging.getLogger(__name__)
@@ -87,12 +101,40 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
+#: parameters which do not depend on the terminal phase (observed points and
+#: the areas to the last point); every other continuous parameter is affected
+#: by a change of the terminal window, see `delta`
+TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
+    {
+        "cmax",
+        "cmin",
+        "clast",
+        "c0",
+        "cmax_half",
+        "auc_last",
+        "aumc_last",
+        "auc_tau",
+        "cmin_ss",
+        "cmax_ss",
+        "ctrough",
+        "cavg",
+        "e0",
+        "emax_obs",
+        "auec_last",
+        "auec_baseline",
+        "emax_baseline",
+        "time_above",
+    }
+)
+
 #: suffixes of the uncertainty variables of a parameter
 UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
     "_sd",
     "_se",
     "_ci_low",
     "_ci_high",
+    "_pi_low",
+    "_pi_high",
     "_geomean",
     "_geocv",
 )
@@ -162,12 +204,16 @@ def resample_values(
     n_boot: int,
     rng: np.random.Generator,
     distribution: BootstrapDistribution,
+    *,
+    clip_at_zero: bool = True,
 ) -> np.ndarray:
     """Draw bootstrap replicates of every time point of every row.
 
-    A normal draw is `C_i + s_i z`, clipped at 0; a log-normal draw has the
-    same mean and spread, `sigma^2 = ln(1 + s_i^2 / C_i^2)` and
-    `mu = ln C_i - sigma^2 / 2` (Efron & Tibshirani 1993, ch. 6).
+    A normal draw is `C_i + s_i z`, clipped at 0 for concentrations; a
+    log-normal draw has the same mean and spread,
+    `sigma^2 = ln(1 + s_i^2 / C_i^2)` and `mu = ln C_i - sigma^2 / 2`
+    (Efron & Tibshirani 1993, ch. 6). A log-normal point whose mean is not
+    positive has no such distribution and is copied unchanged.
 
     Args:
         c: values `(N, n)`
@@ -175,8 +221,12 @@ def resample_values(
             spread is copied
         n_boot: number of replicates `B`
         rng: random generator
-        distribution: normal (draws below 0 set to 0) or log-normal with the
-            same mean and spread
+        distribution: normal or log-normal with the same mean and spread
+        clip_at_zero: whether normal draws below 0 are set to 0; `True` for
+            concentrations, which cannot be negative, and `False` for effects,
+            whose values are legitimately negative. Clipping biases the mean of
+            a point whose spread is large against its value upwards, see
+            `BootstrapDistribution.LOGNORMAL` for an alternative.
 
     Returns:
         The replicates `(N, B, n)`.
@@ -188,7 +238,10 @@ def resample_values(
     with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
         usable = np.isfinite(s) & (s > 0) & np.isfinite(mean)
         if distribution is BootstrapDistribution.NORMAL:
-            draws = np.where(usable, np.maximum(mean + s * z, 0.0), mean)
+            normal = mean + s * z
+            draws = np.where(
+                usable, np.maximum(normal, 0.0) if clip_at_zero else normal, mean
+            )
         else:
             positive = usable & (mean > 0)
             sigma2 = np.log1p((s / mean) ** 2)
@@ -204,17 +257,30 @@ def reduce_replicates(
     spread_kind: BootstrapSpread,
     n_subjects: np.ndarray | None,
     ci_level: float,
+    usable_rows: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Reduce the bootstrap replicates of every continuous parameter to its uncertainty variables.
 
     The spread of the replicates is the standard error of the parameter when
     the points were drawn with `se` and its standard deviation over subjects
     when they were drawn with `sd`; the other one follows from
-    `se = sd / sqrt(n)`. The interval is the percentile interval at `ci_level`,
-    which is asymmetric around the estimate of the mean curve for skewed
-    replicates and is not guaranteed to contain it; the geometric statistics
-    come from the logarithms of the positive replicates,
-    `geocv = sqrt(exp(var(ln x)) - 1)` (Efron & Tibshirani 1993, ch. 13).
+    `se = sd / sqrt(n)`.
+
+    `x_ci_low`/`x_ci_high` are always an interval of the estimate: the
+    percentile interval of the replicates under `se` draws, which is asymmetric
+    around the estimate of the mean curve for skewed replicates and is not
+    guaranteed to contain it, and the normal approximation `x +- z se` (on the
+    log scale, `x exp(+- z se / x)`, for log-normal parameters) under `sd`
+    draws, whose replicates are individual curves. Their percentiles are
+    exported separately as `x_pi_low`/`x_pi_high`, the interval of the
+    individuals.
+
+    `x_geocv` is, like `x_sd`, always the geometric CV over subjects,
+    `geocv = sqrt(exp(var(ln x)) - 1)` (Efron & Tibshirani 1993, ch. 13): from
+    `sd` draws the log variance of the replicates is used as it is, from `se`
+    draws it is the log variance of the mean and is scaled by `n` first
+    (`NaN` without `n`). `x_geomean` comes from the logarithms of the positive
+    replicates.
 
     Args:
         replicates: parameter name to replicates `(N, B)`
@@ -223,19 +289,20 @@ def reduce_replicates(
             is the standard error of the parameter) or `sd` (their spread is
             the standard deviation over subjects)
         n_subjects: subjects per row, `None` or `NaN` when unknown
-        ci_level: level of the percentile interval
+        ci_level: level of the confidence interval
+        usable_rows: rows which carried a usable spread, `None` for all of
+            them; a row without one has no uncertainty and is `NaN` everywhere
 
     Returns:
-        `x_sd`, `x_se`, `x_ci_low`, `x_ci_high` per parameter and `x_geomean`,
-        `x_geocv` for log-normal parameters.
+        `x_sd`, `x_se`, `x_ci_low`, `x_ci_high` per parameter, `x_pi_low`,
+        `x_pi_high` under `sd` draws and `x_geomean`, `x_geocv` for log-normal
+        parameters.
     """
     alpha = 1.0 - ci_level
+    z = float(norm.ppf(1.0 - alpha / 2.0))
     out: dict[str, np.ndarray] = {}
-    sqrt_n = (
-        None
-        if n_subjects is None
-        else np.sqrt(np.asarray(n_subjects, dtype=np.float64))
-    )
+    n_values = None if n_subjects is None else np.asarray(n_subjects, dtype=np.float64)
+    sqrt_n = None if n_values is None else np.sqrt(n_values)
     for name, reps in replicates.items():
         skip = (
             name in DISCRETE_PARAMETERS
@@ -265,7 +332,23 @@ def reduce_replicates(
             else:
                 sd = std
                 se = std / sqrt_n if sqrt_n is not None else np.full_like(std, np.nan)
-            valid = np.isfinite(point[name]) & (count > 1)
+            estimate = point[name]
+            valid = np.isfinite(estimate) & (count > 1)
+            if usable_rows is not None:
+                valid = valid & usable_rows
+            if spread_kind is BootstrapSpread.SD:
+                # the replicates are individual curves: their percentiles bound
+                # the individuals, the interval of the estimate is the normal
+                # approximation around it
+                out[f"{name}_pi_low"] = np.where(valid, low, np.nan)
+                out[f"{name}_pi_high"] = np.where(valid, high, np.nan)
+                if name in LOGNORMAL_PARAMETERS:
+                    rel = se / estimate
+                    low = estimate * np.exp(-z * rel)
+                    high = estimate * np.exp(z * rel)
+                else:
+                    low = estimate - z * se
+                    high = estimate + z * se
             out[f"{name}_sd"] = np.where(valid, sd, np.nan)
             out[f"{name}_se"] = np.where(valid, se, np.nan)
             out[f"{name}_ci_low"] = np.where(valid, low, np.nan)
@@ -275,6 +358,14 @@ def reduce_replicates(
                 logs = np.where(positive, np.log(np.where(positive, reps, 1.0)), np.nan)
                 n_positive = positive.sum(axis=1)
                 log_var = np.nanvar(logs, axis=1, ddof=1)
+                if spread_kind is BootstrapSpread.SE:
+                    # the log variance of the mean curve, scaled to the between
+                    # subject variance; without `n` the scale is unknown
+                    log_var = (
+                        log_var * n_values
+                        if n_values is not None
+                        else np.full_like(log_var, np.nan)
+                    )
                 geometric = valid & (n_positive > 1)
                 out[f"{name}_geomean"] = np.where(
                     geometric, np.exp(np.nanmean(logs, axis=1)), np.nan
@@ -301,19 +392,34 @@ def bootstrap(
         The uncertainty variables per parameter (see `reduce_replicates`).
 
     Raises:
-        ValueError: if the batch has no spread to resample with.
+        ValueError: if the batch has no spread to resample with, or if
+            log-normal draws are requested for effect timecourses.
     """
     # the analysis of the replicates runs through the same core as the original
     # curves, whose module imports this one
     from pkpdutils.nca.nca import run_rows
 
+    if (
+        options.kind is Kind.EFFECT
+        and options.bootstrap_distribution is BootstrapDistribution.LOGNORMAL
+    ):
+        raise ValueError(
+            "log-normal draws need positive values, effect timecourses use NORMAL"
+        )
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     t = timecourses.times.reshape(n_rows, n_time)
     c = timecourses.values.reshape(n_rows, n_time)
     spread = resolve_spread(timecourses, options)
+    with np.errstate(invalid="ignore"):
+        any_usable = (np.isfinite(spread) & (spread > 0)).any(axis=1)
     rng = np.random.default_rng(options.seed)
     draws = resample_values(
-        c, spread, options.n_boot, rng, options.bootstrap_distribution
+        c,
+        spread,
+        options.n_boot,
+        rng,
+        options.bootstrap_distribution,
+        clip_at_zero=options.kind is Kind.CONCENTRATION,
     )
     b = options.n_boot
 
@@ -354,6 +460,7 @@ def bootstrap(
         spread_kind=options.bootstrap_spread,
         n_subjects=n_subjects,
         ci_level=options.ci_level,
+        usable_rows=any_usable,
     )
 
 
@@ -371,13 +478,24 @@ def delta(
     interval `x +- z se`, on the log scale for log-normal parameters; discrete
     parameters and the diagnostics of the terminal regression are skipped.
 
+    A perturbation which selects a different terminal window
+    (`lambda_z_n_points` or `lambda_z_t_first` changes) makes the difference
+    quotient a jump between two regressions instead of a derivative, which
+    inflates the standard error of every terminal parameter. Such points are
+    skipped for every parameter outside `TERMINAL_INDEPENDENT_PARAMETERS` and
+    the row carries `NCAFlag.DELTA_WINDOW_CHANGE`, which says that the
+    uncertainty of its terminal parameters is incomplete; use the bootstrap,
+    which follows the window, for those rows.
+
     Args:
         timecourses: the batch (group curves with `se`, or `sd` and `n`)
         options: `delta_step`, `ci_level`
         point: the parameters of the original curves (`run_rows` output)
 
     Returns:
-        The uncertainty variables per continuous parameter.
+        The uncertainty variables per continuous parameter and, under the key
+        `"flags"`, the flags of the skipped points to be combined with the
+        flags of the analysis.
 
     Raises:
         ValueError: if the batch has no `se` and it cannot be derived.
@@ -437,6 +555,10 @@ def delta(
     any_usable = usable.any(axis=1)
     step = np.where(usable, h, 1.0)
     weight = np.where(usable, se, 0.0)
+    window_changed = _window_changed(point, perturbed, n_rows, n_time) & usable
+    flags = np.where(
+        window_changed.any(axis=1), int(NCAFlag.DELTA_WINDOW_CHANGE), 0
+    ).astype(np.int64)
     out: dict[str, np.ndarray] = {}
     for name, base in point.items():
         skip = (
@@ -447,8 +569,15 @@ def delta(
         if skip:
             continue
         pert = perturbed[name].reshape(n_rows, n_time)
+        # a point at which the terminal window flipped carries no derivative of
+        # the parameters which depend on that window
+        keep = (
+            usable
+            if name in TERMINAL_INDEPENDENT_PARAMETERS
+            else usable & ~window_changed
+        )
         with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
-            derivative = np.where(usable, (pert - base[:, None]) / step, 0.0)
+            derivative = np.where(keep, (pert - base[:, None]) / step, 0.0)
             var = np.sum((derivative * weight) ** 2, axis=1)
             valid = np.isfinite(base) & np.isfinite(var) & any_usable
             x_se = np.where(valid, np.sqrt(np.where(valid, var, 0.0)), np.nan)
@@ -472,4 +601,36 @@ def delta(
         out[f"{name}_se"] = x_se
         out[f"{name}_ci_low"] = np.where(valid, low, np.nan)
         out[f"{name}_ci_high"] = np.where(valid, high, np.nan)
+    out["flags"] = flags
     return out
+
+
+def _window_changed(
+    point: dict[str, np.ndarray],
+    perturbed: dict[str, np.ndarray],
+    n_rows: int,
+    n_time: int,
+) -> np.ndarray:
+    """Points at which a perturbation selected a different terminal window.
+
+    Args:
+        point: the parameters of the original curves
+        perturbed: the parameters of the perturbed curves, `(N * n,)` per name
+        n_rows: number of curves
+        n_time: number of time points per curve
+
+    Returns:
+        A boolean `(N, n)` mask, all `False` without a terminal regression
+        (effect timecourses).
+    """
+    changed = np.zeros((n_rows, n_time), dtype=bool)
+    for name in ("lambda_z_n_points", "lambda_z_t_first"):
+        if name not in point or name not in perturbed:
+            continue
+        base = np.asarray(point[name], dtype=np.float64).reshape(n_rows, 1)
+        pert = np.asarray(perturbed[name], dtype=np.float64).reshape(n_rows, n_time)
+        # two missing windows are equal, a missing and a present one are not
+        both_nan = np.isnan(base) & np.isnan(pert)
+        with np.errstate(invalid="ignore"):
+            changed |= ~(both_nan | (base == pert))
+    return changed
