@@ -101,7 +101,8 @@ def test_timecourse_sorts_uncertainties_with_time() -> None:
         time_unit="hr",
         unit="mg/l",
     )
-    np.testing.assert_allclose(tc.sd, [0.0, 0.2, 0.3])  # ty: ignore[no-matching-overload]
+    assert tc.sd is not None
+    np.testing.assert_allclose(tc.sd, [0.0, 0.2, 0.3])
 
 
 def test_timecourse_duplicate_time() -> None:
@@ -142,15 +143,18 @@ def test_timecourse_derives_se_from_sd() -> None:
     tc = Timecourse(
         time=[0, 1], value=[1, 2], sd=[2.0, 4.0], n=4, time_unit="hr", unit="mg/l"
     )
-    np.testing.assert_allclose(tc.se, [1.0, 2.0])  # ty: ignore[no-matching-overload]
+    assert tc.se is not None
+    np.testing.assert_allclose(tc.se, [1.0, 2.0])
 
 
 def test_timecourse_derives_sd_from_se() -> None:
     tc = Timecourse(
         time=[0, 1], value=[1, 2], se=[1.0, 2.0], n=[4, 9], time_unit="hr", unit="mg/l"
     )
-    np.testing.assert_allclose(tc.sd, [2.0, 6.0])  # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(tc.n, [4, 9])  # ty: ignore[no-matching-overload]
+    assert tc.sd is not None
+    np.testing.assert_allclose(tc.sd, [2.0, 6.0])
+    assert tc.n is not None
+    np.testing.assert_allclose(tc.n, [4, 9])
 
 
 def test_timecourse_sd_without_n_keeps_se_none() -> None:
@@ -202,8 +206,10 @@ def test_timecourse_dataframe_roundtrip() -> None:
         df, time_unit="hr", unit="mg/l", sd="sd", n="n", substance="caffeine"
     )
     np.testing.assert_allclose(tc2.value, tc.value)
-    np.testing.assert_allclose(tc2.sd, tc.sd)  # ty: ignore[no-matching-overload]
-    np.testing.assert_allclose(tc2.n, 5)  # ty: ignore[no-matching-overload]
+    assert tc2.sd is not None and tc.sd is not None
+    np.testing.assert_allclose(tc2.sd, tc.sd)
+    assert tc2.n is not None
+    np.testing.assert_allclose(tc2.n, 5)
 
 
 def test_timecourse_from_dataframe_columns() -> None:
