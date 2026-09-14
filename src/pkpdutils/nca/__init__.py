@@ -5,7 +5,7 @@
 `docs/nca.md`.
 """
 
-from pkpdutils.nca.nca import nca, nca_single
+from pkpdutils.nca.nca import nca, nca_single, partial_auc
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
@@ -40,5 +40,6 @@ __all__ = [
     "decode_flags",
     "nca",
     "nca_single",
+    "partial_auc",
     "superposition",
 ]

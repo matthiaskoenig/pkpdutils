@@ -13,6 +13,7 @@ from pkpdutils.nca import (
     nca,
     nca_single,
 )
+from pkpdutils.nca.nca import run_rows
 
 K, C0 = 0.5, 10.0
 T_DENSE = np.linspace(0, 20, 401)
@@ -317,3 +318,22 @@ def test_terminal_manual_points() -> None:
     slope, _ = np.polyfit(tc.time[8:], np.log(tc.value[8:]), 1)
     assert q["lambda_z"].magnitude == pytest.approx(-slope)
     assert q["lambda_z_n_points"].magnitude == 4
+
+
+def test_run_rows_matches_nca_flags_and_shapes() -> None:
+    tc = oral_timecourse()
+    batch = Timecourses.from_timecourses([tc, tc])
+    values = run_rows(
+        batch.times,
+        batch.values,
+        dose_amount=batch.dose_amount,
+        dose_time=batch.dose_time,
+        dose_duration=batch.dose_duration,
+        route=batch.route,
+        options=NCAOptions(),
+    )
+    result = nca(batch)
+    assert set(values) == {*result.parameters, "flags", "n"} - {"n"}
+    for name in result.parameters:
+        assert values[name].shape == (2,)
+    np.testing.assert_array_equal(values["flags"], result["flags"].values)

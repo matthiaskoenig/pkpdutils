@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from pkpdutils.nca.auc import auc_aumc, insert_point, pack_valid
+from pkpdutils.nca.auc import auc_aumc, insert_point, interpolate_at, pack_valid
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
@@ -412,6 +412,62 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
     )
 
 
+def run_rows(
+    t: np.ndarray,
+    c: np.ndarray,
+    *,
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    dose_duration: np.ndarray | None,
+    route: Route | None,
+    options: NCAOptions,
+) -> dict[str, np.ndarray]:
+    """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
+
+    The rows are analysed in chunks of at most `options.chunk_rows` rows, which
+    bounds the memory of the vectorized core; with `options.n_workers > 1` the
+    chunks are mapped in order over a `ProcessPoolExecutor`.
+
+    Args:
+        t: times `(N, n)`
+        c: values `(N, n)`
+        dose_amount: dose per row, `None` without doses
+        dose_time: dose time per row, `None` for 0
+        dose_duration: infusion duration per row, `None` for none
+        route: route of the batch
+        options: the options
+
+    Returns:
+        One `(N,)` array per parameter and `flags`.
+    """
+    n_rows = t.shape[0]
+    # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
+    # the memory of the vectorized core; the worker pool maps the chunks in order
+    n_chunks = max(1, -(-n_rows // options.chunk_rows))
+    jobs = [
+        (
+            t[rows],
+            c[rows],
+            None if dose_amount is None else dose_amount[rows],
+            None if dose_time is None else dose_time[rows],
+            None if dose_duration is None else dose_duration[rows],
+            route,
+            options,
+        )
+        for rows in np.array_split(np.arange(n_rows), n_chunks)
+    ]
+    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
+            parts = list(pool.map(_compute_chunk, jobs))
+    else:
+        parts = [_compute_chunk(job) for job in jobs]
+    names = list(parts[0])
+    assert all(list(part) == names for part in parts), (
+        "the chunks returned different parameters"
+    )
+    return {name: np.concatenate([part[name] for part in parts]) for name in names}
+
+
 def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
     """Non-compartmental analysis of a batch of timecourses.
 
@@ -448,31 +504,15 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     dose_duration = flat(timecourses.dose_duration)
     route = timecourses.route
 
-    # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
-    # the memory of the vectorized core; the worker pool maps the chunks in order
-    n_chunks = max(1, -(-n_rows // options.chunk_rows))
-    jobs = [
-        (
-            t[rows],
-            c[rows],
-            None if dose_amount is None else dose_amount[rows],
-            None if dose_time is None else dose_time[rows],
-            None if dose_duration is None else dose_duration[rows],
-            route,
-            options,
-        )
-        for rows in np.array_split(np.arange(n_rows), n_chunks)
-    ]
-    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
-            parts = list(pool.map(_compute_chunk, jobs))
-    else:
-        parts = [_compute_chunk(job) for job in jobs]
-    names = list(parts[0])
-    assert all(list(part) == names for part in parts), (
-        "the chunks returned different parameters"
+    values = run_rows(
+        t,
+        c,
+        dose_amount=dose_amount,
+        dose_time=dose_time,
+        dose_duration=dose_duration,
+        route=route,
+        options=options,
     )
-    values = {name: np.concatenate([part[name] for part in parts]) for name in names}
 
     n_flagged = int((values["flags"] != 0).sum())
     if n_flagged:
@@ -541,3 +581,72 @@ def nca_single(timecourse: Timecourse, options: NCAOptions | None = None) -> NCA
     batch = Timecourses.from_timecourses([timecourse], dim="_single")
     result = nca(batch, options)
     return NCAResult(result.ds.isel(_single=0).drop_vars("_single"))
+
+
+def partial_auc(
+    timecourses: Timecourses,
+    t_start: float,
+    t_end: float,
+    options: NCAOptions | None = None,
+) -> xr.DataArray:
+    """Area under the curve of every sample between two times relative to the dose.
+
+    The values at the bounds are interpolated with the trapezoid rule of
+    `options.auc_method` (`pkpdutils.nca.auc.interpolate_at`) and the area is
+    summed with the same rule; a sample whose observed range does not cover
+    `[t_start, t_end]` gives `NaN`.
+
+    Args:
+        timecourses: the batch
+        t_start: start of the interval, in the time unit of the batch, relative to the dose
+        t_end: end of the interval, greater than `t_start`
+        options: the options, defaults for `None`
+
+    Returns:
+        The areas over the sample dimensions, named `auc_partial`, with the unit of `auc_last`.
+
+    Raises:
+        ValueError: if `t_end <= t_start`.
+    """
+    if t_end <= t_start:
+        raise ValueError(
+            f"'t_end' ({t_end}) must be greater than 't_start' ({t_start})"
+        )
+    options = options or NCAOptions()
+    n_rows = timecourses.n_samples
+    t = timecourses.times.reshape(n_rows, timecourses.n_time)
+    c = timecourses.values.reshape(n_rows, timecourses.n_time)
+    if timecourses.dose_time is not None:
+        t = (
+            t
+            - np.asarray(timecourses.dose_time, dtype=np.float64).reshape(n_rows)[
+                :, None
+            ]
+        )
+    tp, cp, n_valid = pack_valid(t, c)
+    start = np.full(n_rows, float(t_start))
+    end = np.full(n_rows, float(t_end))
+    c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
+    c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, end, c_end)
+    area, _ = auc_aumc(tp, cp, n_valid, options.auc_method, t_start=start, t_end=end)
+    area = np.where(np.isfinite(c_start) & np.isfinite(c_end), area, np.nan)
+    unit, factor = parameter_unit(
+        PARAMETER_UNITS["auc_last"],
+        unit=timecourses.unit,
+        time_unit=timecourses.time_unit,
+        dose_unit=timecourses.dose_unit,
+    )
+    coords = {
+        d: timecourses.ds[d]
+        for d in timecourses.sample_dims
+        if d in timecourses.ds.coords
+    }
+    return xr.DataArray(
+        (area * factor).reshape(timecourses.sample_shape),
+        dims=timecourses.sample_dims,
+        coords=coords,
+        name="auc_partial",
+        attrs={"units": unit},
+    )
