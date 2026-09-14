@@ -48,7 +48,7 @@
 - [ ] **Step 1: Create the branch**
 
 ```bash
-git switch -c nca develop
+git switch nca   # the branch exists and holds this plan
 mkdir -p src/pkpdutils/nca tests/nca && touch tests/nca/__init__.py
 ```
 
