@@ -9,13 +9,16 @@ time_unit)` converted to `liter / hour` (or per kilogram), a volume converted
 to `liter` (or per kilogram), see `pkpdutils.units`.
 """
 
+import warnings
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import xarray as xr
+from scipy.stats import t as student_t
 
 from pkpdutils.nca.options import NCAFlag, decode_flags
-from pkpdutils.nca.uncertainty import base_name
+from pkpdutils.nca.uncertainty import LOGNORMAL_PARAMETERS, base_name
 from pkpdutils.units import Q_, Quantity, normalize_clearance, normalize_volume, ureg
 
 
@@ -229,3 +232,113 @@ class NCAResult:
             if flag.value:
                 df[flag.name] = (values & flag.value) != 0
         return df.drop(columns=["flags"])
+
+    def summarize(self, dim: str, ci_level: float = 0.95) -> "NCAResult":
+        """Summarize the parameters of individual samples over one sample dimension.
+
+        For every parameter `x` the summary carries the arithmetic mean `x`,
+        `x_sd`, `x_se`, the t-based confidence interval `x_ci_low`/`x_ci_high`
+        at `ci_level`, `x_median`, `x_q25`, `x_q75`, the count of finite values
+        `x_n` and, for log-normal parameters, `x_geomean` and `x_geocv`;
+        `n` is the number of samples along `dim` and `flags` the union of their
+        flags. Derived variables of the input are dropped.
+
+        Args:
+            dim: the sample dimension to reduce
+            ci_level: level of the confidence interval of the mean
+
+        Returns:
+            The summary over the remaining sample dimensions.
+
+        Raises:
+            ValueError: if `dim` is not a sample dimension of the result.
+        """
+        if dim not in self.sample_dims:
+            raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
+        alpha = 1.0 - ci_level
+        data_vars: dict[str, Any] = {}
+        for name in self.parameters:
+            da = self.ds[name].transpose(..., dim)
+            values = da.to_numpy().astype(np.float64)
+            dims = tuple(str(d) for d in da.dims if d != dim)
+            units = self.units(name)
+            with (
+                np.errstate(invalid="ignore", divide="ignore"),
+                warnings.catch_warnings(),
+            ):
+                warnings.simplefilter("ignore", RuntimeWarning)
+                finite = np.isfinite(values)
+                count = finite.sum(axis=-1).astype(np.float64)
+                filled = np.where(finite, values, np.nan)
+                mean = np.nanmean(filled, axis=-1)
+                sd = np.where(count > 1, np.nanstd(filled, axis=-1, ddof=1), np.nan)
+                se = sd / np.sqrt(count)
+                tq = student_t.ppf(1.0 - alpha / 2.0, np.maximum(count - 1.0, 1.0))
+                low, high = mean - tq * se, mean + tq * se
+                median = np.nanmedian(filled, axis=-1)
+                q25, q75 = np.nanpercentile(filled, [25, 75], axis=-1)
+                mean = np.where(count > 0, mean, np.nan)
+                median = np.where(count > 0, median, np.nan)
+            data_vars[name] = (dims, mean, {"units": units})
+            data_vars[f"{name}_sd"] = (dims, sd, {"units": units})
+            data_vars[f"{name}_se"] = (dims, se, {"units": units})
+            data_vars[f"{name}_ci_low"] = (
+                dims,
+                np.where(count > 1, low, np.nan),
+                {"units": units},
+            )
+            data_vars[f"{name}_ci_high"] = (
+                dims,
+                np.where(count > 1, high, np.nan),
+                {"units": units},
+            )
+            data_vars[f"{name}_median"] = (dims, median, {"units": units})
+            data_vars[f"{name}_q25"] = (
+                dims,
+                np.where(count > 0, q25, np.nan),
+                {"units": units},
+            )
+            data_vars[f"{name}_q75"] = (
+                dims,
+                np.where(count > 0, q75, np.nan),
+                {"units": units},
+            )
+            data_vars[f"{name}_n"] = (dims, count, {"units": "dimensionless"})
+            if name in LOGNORMAL_PARAMETERS:
+                with (
+                    np.errstate(invalid="ignore", divide="ignore"),
+                    warnings.catch_warnings(),
+                ):
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    logs = np.where(
+                        finite & (values > 0),
+                        np.log(np.where(values > 0, values, 1.0)),
+                        np.nan,
+                    )
+                    n_pos = np.isfinite(logs).sum(axis=-1)
+                    geomean = np.where(
+                        n_pos > 0, np.exp(np.nanmean(logs, axis=-1)), np.nan
+                    )
+                    geocv = np.where(
+                        n_pos > 1,
+                        np.sqrt(np.expm1(np.nanvar(logs, axis=-1, ddof=1))),
+                        np.nan,
+                    )
+                data_vars[f"{name}_geomean"] = (dims, geomean, {"units": units})
+                data_vars[f"{name}_geocv"] = (dims, geocv, {"units": "dimensionless"})
+        flags = self.ds["flags"].transpose(..., dim)
+        remaining = tuple(str(d) for d in flags.dims if d != dim)
+        data_vars["n"] = (
+            remaining,
+            np.full(flags.shape[:-1], float(self.ds.sizes[dim])),
+            {"units": "dimensionless"},
+        )
+        data_vars["flags"] = (
+            remaining,
+            np.bitwise_or.reduce(flags.to_numpy().astype(np.int64), axis=-1),
+            {"units": "dimensionless"},
+        )
+        coords = {d: self.ds[d] for d in remaining if d in self.ds.coords}
+        return NCAResult(
+            xr.Dataset(data_vars=data_vars, coords=coords, attrs=dict(self.ds.attrs))
+        )
