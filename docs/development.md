@@ -202,8 +202,8 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
 1. branch off `develop`: `git switch -c release/x.y.z develop`
 2. write the release notes for the version in `release-notes/x.y.z.md`
 3. make sure everything passes: `tox run-parallel`, `ruff check`, `tox r -e ty`
-4. check the version bump: `uvx bump-my-version bump [major|minor|patch] --dry-run -vv`
-5. bump the version: `uvx bump-my-version bump [major|minor|patch]`, which updates `src/pkpdutils/__init__.py` and `CITATION.cff` and commits. It does not create the tag; a squash or rebase merge would rewrite the commit and leave the tag behind on a commit which is not part of `develop`
+4. check the version bump: `uvx bump-my-version bump [dev|major|minor|patch] --dry-run -vv`. A development version (`x.y.z.devN`) is finalized with `uvx bump-my-version bump dev`, which drops the `.devN` suffix (`1.0.0.dev0` becomes `1.0.0`); `major`, `minor` and `patch` start the next development cycle instead (`1.0.0.dev0` becomes `2.0.0.dev0`, `1.1.0.dev0`, `1.0.1.dev0`)
+5. bump the version: `uvx bump-my-version bump [dev|major|minor|patch]`, which updates `src/pkpdutils/__init__.py` and `CITATION.cff` and commits. Use `dev` to release the current development version and `major|minor|patch` to open the next one. It does not create the tag; a squash or rebase merge would rewrite the commit and leave the tag behind on a commit which is not part of `develop`
 6. push the branch, open the pull request against `develop` and merge it once the checks are green
 7. tag the merged commit on `develop` and push the tag:
 

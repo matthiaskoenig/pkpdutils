@@ -8,7 +8,7 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 
 **Group data.** Publications report the mean curve of a group with the standard deviation or the standard error and the number of subjects. A `Timecourse` carries these as `sd`, `se` and `n`; the missing one of `sd` and `se` is derived from the other with \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\). The uncertainty analyses of the package propagate them to the parameters, see [Uncertainty](uncertainty.md).
 
-**Doses and routes.** A `Dose` has an `amount` with a dose unit (an amount or an amount per body weight, see [Units](units.md)), a `Route`, the `time` of the administration and, for an infusion, its `duration`. The route decides which parameters an analysis can report: after an intravenous bolus the clearance and the volume are absolute (`cl`, `vz`), after an extravascular dose they are relative to the unknown fraction absorbed (`cl_f`, `vz_f`), and an infusion shifts the mean residence time by half its duration. `Route.ORAL` stands for every extravascular route.
+**Doses and routes.** A `Dose` has an `amount` with a dose unit (an amount or an amount per body weight, see [Units](units.md)), a `Route`, the `time` of the administration and, for an infusion, its `duration`. The route decides which parameters an analysis can report: after an intravenous bolus the clearance and the volume are absolute (`cl`, `vz`), after an extravascular dose they are relative to the unknown fraction absorbed (`cl_f`, `vz_f`), and an infusion shifts the mean residence time by half its duration. `Route.ORAL` stands for every extravascular route. A batch has one route and either all or none of its curves carry a dose; curves with different routes go into separate batches, which keeps the route a property of the whole batch and every analysis unambiguous.
 
 **Batches.** `Timecourses` wraps an [xarray](https://xarray.dev) dataset with a `time` dimension and any number of *sample dimensions*: the individuals of a study, the groups of a publication, the doses of a dose escalation, the dimensions of a simulation scan. Every analysis of the package is vectorized over the sample dimensions and returns a dataset over the same dimensions, so the parameters of a thousand curves are one call. Curves with different sampling times are stored per sample and padded with `NaN`, the `times` and `values` properties return the padded `(samples..., time)` arrays.
 
@@ -20,12 +20,12 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 | --- | --- | --- |
 | `value` | `(*sample, time)` | the values, `NaN` for missing points |
 | `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
-| `n` | `(*sample)` | number of subjects of group data (optional) |
+| `n` | `(*sample)` | number of subjects of group data (optional), one number per sample; an `n` which varies over the time points of a curve is reduced to its maximum with a warning |
 | `dose_amount`, `dose_time`, `dose_duration` | `(*sample)` | the doses (optional), `dose_duration` is `NaN` without infusion |
 | `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
 | `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
 
-Every variable carries `attrs["units"]`; the dataset carries `substance`, `route`, `time_unit` and `unit` in its `attrs`. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results.
+Every variable carries `attrs["units"]`; the dataset carries `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when doses are present. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results. Several sample dimensions span their cartesian product: a combination without data is a sample of `NaN` values, which iteration and `sel`/`isel` return as a `Timecourse` with `NaN` values and without a dose.
 
 ## API
 

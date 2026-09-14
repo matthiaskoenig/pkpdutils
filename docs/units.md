@@ -14,7 +14,7 @@ A dose is an amount, in mass (`mg`, `g`) or in substance (`mmol`, `µmol`), or s
 
 ## Custom units
 
-The registry defines `none` (dimensionless count, for data without a unit), `percent` and `IU` (international units, a dimension of its own) in addition to the pint defaults.
+The registry defines `none` (dimensionless count, for data without a unit) and `IU` (international units, a dimension of its own) in addition to the pint defaults, which already know `percent`.
 
 ## API
 

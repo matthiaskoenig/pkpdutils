@@ -38,7 +38,7 @@ python -m examples.timecourses
 
 `develop` is the default branch and takes every change through a pull request; direct pushes are rejected by the rulesets in `.github/rulesets/` (applied with `.github/rulesets/apply.sh`), which require the `tests`, `ruff`, `ty` and `docs` checks. `main` only tracks the latest release and is fast-forwarded by the `sync-main` job of the release workflow, never by hand.
 
-Release steps are in `docs/development.md`: the release is prepared on a branch, `uvx bump-my-version bump [major|minor|patch]` updates `src/pkpdutils/__init__.py` and `CITATION.cff` and commits without tagging, and the tag is created on `develop` after the pull request was merged, which triggers the PyPI release workflow.
+Release steps are in `docs/development.md`: the release is prepared on a branch, `uvx bump-my-version bump [dev|major|minor|patch]` updates `src/pkpdutils/__init__.py` and `CITATION.cff` and commits without tagging, and the tag is created on `develop` after the pull request was merged, which triggers the PyPI release workflow. A development version is finalized with `uvx bump-my-version bump dev` (`1.0.0.dev0` becomes `1.0.0`), while `major|minor|patch` start the next development cycle.
 
 Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`, configured in `zensical.toml`, built into the gitignored `site/`. The API reference is rendered from the docstrings by mkdocstrings; a page in `docs/api/` is just `::: pkpdutils.<module>`. Formulas use `pymdownx.arithmatex` with MathJax. `scripts/llms_txt.py` runs after the build and writes `llms.txt`, `llms-full.txt` and the markdown of every page into `site/`.
 
