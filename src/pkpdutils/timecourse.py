@@ -26,11 +26,13 @@ tc = Timecourse(
 """
 
 import logging
+from collections.abc import Iterator, Mapping, Sequence
 from enum import StrEnum
 from typing import Any, Self
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pkpdutils.units import Q_, Quantity, check_dose_unit, is_per_bodyweight, parse_unit
@@ -387,3 +389,540 @@ class Timecourse(BaseModel):
         if n is not None:
             data["n"] = df[n].to_numpy()
         return cls(**data)
+
+
+#: name of the time dimension of a `Timecourses` dataset
+TIME_DIM = "time"
+
+#: name of the per sample time variable of a `Timecourses` dataset with ragged grids
+TIMES_VAR = "times"
+
+
+class Timecourses:
+    """A batch of timecourses as an `xarray.Dataset`.
+
+    The dataset has the dimension `time` and any number of sample dimensions,
+    e.g. `individual`, `group`, `study`, or the dimensions of a simulation
+    scan. Its variables are
+
+    - `value` over `(*sample_dims, time)`, the values; `NaN` marks missing points,
+    - `sd`, `se` over the same dimensions and `n` over the sample dimensions,
+      for group data (optional),
+    - `dose_amount`, `dose_time`, `dose_duration` over the sample dimensions
+      (optional; `dose_duration` is `NaN` without infusion),
+    - the coordinate `time` with the shared sampling grid, or, when the samples
+      have different sampling times, the variable `times` over
+      `(*sample_dims, time)` padded with `NaN` and an integer coordinate `time`.
+
+    Every variable carries its unit in `attrs["units"]`; the dataset carries
+    `substance`, `route`, `time_unit` and `unit` in its `attrs`. The properties
+    `times` and `values` return the `(*sample_shape, n_time)` arrays every
+    analysis of the package works on; iteration and `sel`/`isel` give single
+    `Timecourse` objects.
+    """
+
+    def __init__(self, ds: xr.Dataset) -> None:
+        """Wrap a dataset, see the class documentation for its layout.
+
+        Raises:
+            ValueError: if the dataset does not have the layout.
+        """
+        if "value" not in ds:
+            raise ValueError("The dataset needs a 'value' variable")
+        if TIME_DIM not in ds["value"].dims:
+            raise ValueError(f"'value' needs the dimension '{TIME_DIM}'")
+        if ds["value"].dims[-1] != TIME_DIM:
+            ds = ds.transpose(..., TIME_DIM)
+        if "units" not in ds["value"].attrs:
+            raise ValueError("'value' needs attrs['units']")
+        time_var = ds[TIMES_VAR] if TIMES_VAR in ds else ds[TIME_DIM]
+        if "units" not in time_var.attrs:
+            raise ValueError("the time coordinate needs attrs['units']")
+        self.ds: xr.Dataset = ds
+
+    # --- layout -------------------------------------------------------------
+
+    @property
+    def sample_dims(self) -> tuple[str, ...]:
+        """The dimensions other than `time`."""
+        return tuple(str(d) for d in self.ds["value"].dims if d != TIME_DIM)
+
+    @property
+    def sample_shape(self) -> tuple[int, ...]:
+        """The shape of the sample dimensions."""
+        return tuple(int(self.ds.sizes[d]) for d in self.sample_dims)
+
+    @property
+    def n_samples(self) -> int:
+        """Number of timecourses."""
+        return int(np.prod(self.sample_shape, dtype=int)) if self.sample_shape else 1
+
+    @property
+    def n_time(self) -> int:
+        """Number of time points (the length of the padded grid for ragged data)."""
+        return int(self.ds.sizes[TIME_DIM])
+
+    @property
+    def time_unit(self) -> str:
+        """Unit of the times."""
+        time_var = self.ds[TIMES_VAR] if TIMES_VAR in self.ds else self.ds[TIME_DIM]
+        return str(time_var.attrs["units"])
+
+    @property
+    def unit(self) -> str:
+        """Unit of the values."""
+        return str(self.ds["value"].attrs["units"])
+
+    @property
+    def substance(self) -> str:
+        """Name of the substance or effect."""
+        return str(self.ds.attrs.get("substance", "substance"))
+
+    @property
+    def route(self) -> Route | None:
+        """Route of the doses, `None` without dose information."""
+        route = self.ds.attrs.get("route")
+        return None if route is None else Route(route)
+
+    @property
+    def has_uncertainty(self) -> bool:
+        """Whether `sd` or `se` is present."""
+        return "sd" in self.ds or "se" in self.ds
+
+    @property
+    def has_dose(self) -> bool:
+        """Whether doses are present."""
+        return "dose_amount" in self.ds
+
+    # --- arrays -------------------------------------------------------------
+
+    @property
+    def times(self) -> np.ndarray:
+        """Times as an array of shape `(*sample_shape, n_time)`."""
+        if TIMES_VAR in self.ds:
+            return self.ds[TIMES_VAR].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+        grid = self.ds[TIME_DIM].to_numpy().astype(np.float64)
+        return np.broadcast_to(grid, (*self.sample_shape, grid.size)).copy()
+
+    @property
+    def values(self) -> np.ndarray:
+        """Values as an array of shape `(*sample_shape, n_time)`."""
+        return self.ds["value"].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+
+    def _optional(self, name: str) -> np.ndarray | None:
+        """Return a variable as an array transposed to `(*sample_dims[, time])`, or `None` if absent.
+
+        Args:
+            name: name of the data variable.
+
+        Returns:
+            The array, or `None` when `name` is not a variable of the dataset.
+        """
+        if name not in self.ds:
+            return None
+        da = self.ds[name]
+        if TIME_DIM in da.dims:
+            return da.transpose(*self.sample_dims, TIME_DIM).to_numpy()
+        return da.transpose(*self.sample_dims).to_numpy()
+
+    @property
+    def sd(self) -> np.ndarray | None:
+        """Standard deviations, `None` without."""
+        return self._optional("sd")
+
+    @property
+    def se(self) -> np.ndarray | None:
+        """Standard errors, `None` without."""
+        return self._optional("se")
+
+    @property
+    def n(self) -> np.ndarray | None:
+        """Number of subjects per sample, `None` without."""
+        return self._optional("n")
+
+    @property
+    def dose_amount(self) -> np.ndarray | None:
+        """Dose amounts per sample, `None` without doses."""
+        return self._optional("dose_amount")
+
+    @property
+    def dose_time(self) -> np.ndarray | None:
+        """Dose times per sample, `None` without doses."""
+        return self._optional("dose_time")
+
+    @property
+    def dose_duration(self) -> np.ndarray | None:
+        """Infusion durations per sample (`NaN` without infusion), `None` without doses."""
+        return self._optional("dose_duration")
+
+    @property
+    def dose_unit(self) -> str | None:
+        """Unit of the doses, `None` without doses."""
+        if not self.has_dose:
+            return None
+        return str(self.ds["dose_amount"].attrs["units"])
+
+    # --- construction -------------------------------------------------------
+
+    @classmethod
+    def from_arrays(
+        cls,
+        time: Any,
+        values: Any,
+        *,
+        time_unit: str,
+        unit: str,
+        dims: Sequence[str] = ("individual",),
+        coords: Mapping[str, Any] | None = None,
+        sd: Any | None = None,
+        se: Any | None = None,
+        n: Any | None = None,
+        dose: Dose | Mapping[str, Any] | None = None,
+        route: Route | None = None,
+        substance: str = "substance",
+    ) -> "Timecourses":
+        """Create a batch from arrays.
+
+        Args:
+            time: the sampling grid shared by all samples (1-D), or the times per
+                sample with the shape of `values`
+            values: values of shape `(*sample_shape, n_time)`
+            time_unit: unit of the times
+            unit: unit of the values
+            dims: names of the sample dimensions, one per leading axis of `values`
+            coords: coordinate values per sample dimension (labels of the samples)
+            sd: standard deviations with the shape of `values`
+            se: standard errors with the shape of `values`
+            n: number of subjects, one number or an array of shape `sample_shape`
+            dose: one `Dose` for all samples, or a mapping with `amount`
+                (array of shape `sample_shape`), `unit`, and optionally `time`
+                and `duration` arrays; the route is then given by `route`
+            route: route of the doses when `dose` is a mapping
+            substance: name of the substance or effect
+
+        Returns:
+            The batch.
+
+        Raises:
+            ValueError: if the shapes do not fit.
+        """
+        values_arr = np.asarray(values, dtype=np.float64)
+        dims = tuple(dims)
+        if values_arr.ndim != len(dims) + 1:
+            raise ValueError(
+                f"'values' has shape {values_arr.shape}, expected {len(dims) + 1} axes for dims {dims} + time"
+            )
+        sample_shape = values_arr.shape[:-1]
+        n_time = values_arr.shape[-1]
+        all_dims = (*dims, TIME_DIM)
+        parse_unit(time_unit)
+        parse_unit(unit)
+
+        time_arr = np.asarray(time, dtype=np.float64)
+        data_vars: dict[str, Any] = {"value": (all_dims, values_arr, {"units": unit})}
+        coordinates: dict[str, Any] = dict(coords or {})
+        if time_arr.ndim == 1:
+            if time_arr.size != n_time:
+                raise ValueError(
+                    f"'time' has length {time_arr.size}, 'values' has shape {values_arr.shape}"
+                )
+            coordinates[TIME_DIM] = (TIME_DIM, time_arr, {"units": time_unit})
+        else:
+            if time_arr.shape != values_arr.shape:
+                raise ValueError(
+                    f"'time' has shape {time_arr.shape}, 'values' has shape {values_arr.shape}"
+                )
+            data_vars[TIMES_VAR] = (all_dims, time_arr, {"units": time_unit})
+            coordinates[TIME_DIM] = (TIME_DIM, np.arange(n_time), {"units": time_unit})
+
+        for name, raw in (("sd", sd), ("se", se)):
+            if raw is None:
+                continue
+            arr = np.asarray(raw, dtype=np.float64)
+            if arr.shape != values_arr.shape:
+                raise ValueError(
+                    f"'{name}' has shape {arr.shape}, 'values' has shape {values_arr.shape}"
+                )
+            data_vars[name] = (all_dims, arr, {"units": unit})
+        if n is not None:
+            n_arr = np.broadcast_to(
+                np.asarray(n, dtype=np.float64), sample_shape
+            ).copy()
+            data_vars["n"] = (dims, n_arr, {"units": "dimensionless"})
+            if "sd" in data_vars and "se" not in data_vars:
+                data_vars["se"] = (
+                    all_dims,
+                    data_vars["sd"][1] / np.sqrt(n_arr)[..., None],
+                    {"units": unit},
+                )
+            elif "se" in data_vars and "sd" not in data_vars:
+                data_vars["sd"] = (
+                    all_dims,
+                    data_vars["se"][1] * np.sqrt(n_arr)[..., None],
+                    {"units": unit},
+                )
+
+        attrs: dict[str, Any] = {
+            "substance": substance,
+            "time_unit": time_unit,
+            "unit": unit,
+        }
+        if isinstance(dose, Dose):
+            attrs["route"] = dose.route.value
+            amount = np.full(sample_shape, dose.amount)
+            dose_time = np.full(sample_shape, dose.time)
+            duration = np.full(
+                sample_shape, np.nan if dose.duration is None else dose.duration
+            )
+            data_vars["dose_amount"] = (dims, amount, {"units": dose.unit})
+            data_vars["dose_time"] = (dims, dose_time, {"units": time_unit})
+            data_vars["dose_duration"] = (dims, duration, {"units": time_unit})
+        elif dose is not None:
+            if route is None:
+                raise ValueError("'route' is required when 'dose' is given as arrays")
+            dose_unit = str(dose["unit"])
+            check_dose_unit(dose_unit)
+            attrs["route"] = route.value
+            amount = np.broadcast_to(
+                np.asarray(dose["amount"], dtype=np.float64), sample_shape
+            ).copy()
+            dose_time = np.broadcast_to(
+                np.asarray(dose.get("time", 0.0), dtype=np.float64), sample_shape
+            ).copy()
+            duration = np.broadcast_to(
+                np.asarray(dose.get("duration", np.nan), dtype=np.float64), sample_shape
+            ).copy()
+            data_vars["dose_amount"] = (dims, amount, {"units": dose_unit})
+            data_vars["dose_time"] = (dims, dose_time, {"units": time_unit})
+            data_vars["dose_duration"] = (dims, duration, {"units": time_unit})
+
+        ds = xr.Dataset(data_vars=data_vars, coords=coordinates, attrs=attrs)
+        return cls(ds)
+
+    @classmethod
+    def from_timecourses(
+        cls,
+        timecourses: Sequence[Timecourse],
+        dim: str = "individual",
+        labels: Sequence[Any] | None = None,
+    ) -> "Timecourses":
+        """Create a batch from single timecourses along one sample dimension.
+
+        The timecourses must share `time_unit`, `unit`, `substance` and the route
+        of their doses. If all sampling grids are equal the grid becomes the
+        `time` coordinate, otherwise the times are stored per sample and shorter
+        curves are padded with `NaN`.
+
+        Args:
+            timecourses: the curves
+            dim: name of the sample dimension
+            labels: coordinate labels of the samples, the `label` of every
+                timecourse (or its index when missing) by default
+
+        Returns:
+            The batch.
+
+        Raises:
+            ValueError: for an empty sequence or differing units.
+        """
+        if not timecourses:
+            raise ValueError("At least one timecourse is required")
+        first = timecourses[0]
+        for tc in timecourses[1:]:
+            if tc.time_unit != first.time_unit or tc.unit != first.unit:
+                raise ValueError(
+                    f"All timecourses need the same units: '{first.time_unit}'/'{first.unit}' "
+                    f"and '{tc.time_unit}'/'{tc.unit}'"
+                )
+            if tc.substance != first.substance:
+                raise ValueError("All timecourses need the same substance")
+
+        if labels is None:
+            labels = [
+                tc.label if tc.label is not None else i
+                for i, tc in enumerate(timecourses)
+            ]
+        n_time = max(tc.size for tc in timecourses)
+        shared = all(
+            tc.size == first.size and np.array_equal(tc.time, first.time)
+            for tc in timecourses
+        )
+
+        def padded(arrays: Sequence[np.ndarray | None]) -> np.ndarray | None:
+            """Stack ragged 1-D arrays into a `(len(arrays), n_time)` array padded with `NaN`.
+
+            Args:
+                arrays: the arrays to stack, one per sample.
+
+            Returns:
+                The padded array, or `None` when any element of `arrays` is `None`.
+            """
+            if any(a is None for a in arrays):
+                return None
+            out = np.full((len(arrays), n_time), np.nan)
+            for i, a in enumerate(arrays):
+                assert a is not None
+                out[i, : a.size] = a
+            return out
+
+        values = padded([tc.value for tc in timecourses])
+        assert values is not None
+        time: np.ndarray
+        if shared:
+            time = first.time
+        else:
+            padded_time = padded([tc.time for tc in timecourses])
+            assert padded_time is not None
+            time = padded_time
+        sd = padded([tc.sd for tc in timecourses])
+        se = padded([tc.se for tc in timecourses])
+        n_values = [tc.n for tc in timecourses]
+        n: np.ndarray | None = None
+        if all(v is not None for v in n_values):
+            maxima: list[float] = []
+            for v in n_values:
+                assert v is not None
+                maxima.append(float(np.nanmax(v)))
+            n = np.array(maxima)
+
+        doses = [tc.dose for tc in timecourses]
+        dose: Mapping[str, Any] | None = None
+        route: Route | None = None
+        if all(d is not None for d in doses):
+            routes = {d.route for d in doses if d is not None}
+            units = {d.unit for d in doses if d is not None}
+            if len(routes) != 1 or len(units) != 1:
+                raise ValueError("All doses need the same route and unit")
+            route = routes.pop()
+            dose = {
+                "amount": np.array([d.amount for d in doses if d is not None]),
+                "unit": units.pop(),
+                "time": np.array([d.time for d in doses if d is not None]),
+                "duration": np.array(
+                    [
+                        np.nan if d.duration is None else d.duration
+                        for d in doses
+                        if d is not None
+                    ]
+                ),
+            }
+
+        return cls.from_arrays(
+            time,
+            values,
+            time_unit=first.time_unit,
+            unit=first.unit,
+            dims=(dim,),
+            coords={dim: list(labels)},
+            sd=sd,
+            se=se,
+            n=n,
+            dose=dose,
+            route=route,
+            substance=first.substance,
+        )
+
+    # --- access -------------------------------------------------------------
+
+    def __len__(self) -> int:
+        """Number of timecourses."""
+        return self.n_samples
+
+    def _timecourse(self, sample: xr.Dataset, label: Any) -> Timecourse:
+        """Build the `Timecourse` of a dataset without sample dimensions.
+
+        Args:
+            sample: the dataset indexed down to a single sample.
+            label: label of the sample, `None` without sample dimensions.
+
+        Returns:
+            The timecourse.
+        """
+        time = (
+            sample[TIMES_VAR].to_numpy()
+            if TIMES_VAR in sample
+            else sample[TIME_DIM].to_numpy().astype(np.float64)
+        )
+        value = sample["value"].to_numpy()
+        mask = ~np.isnan(time)
+        data: dict[str, Any] = {
+            "time": time[mask],
+            "value": value[mask],
+            "time_unit": self.time_unit,
+            "unit": self.unit,
+            "substance": self.substance,
+            "label": None if label is None else str(label),
+        }
+        for name in ("sd", "se"):
+            if name in sample:
+                data[name] = sample[name].to_numpy()[mask]
+        if "n" in sample:
+            data["n"] = float(sample["n"].to_numpy())
+        if self.has_dose:
+            duration = float(sample["dose_duration"].to_numpy())
+            route = self.route
+            assert route is not None
+            data["dose"] = Dose(
+                amount=float(sample["dose_amount"].to_numpy()),
+                unit=self.dose_unit or "mg",
+                route=route,
+                time=float(sample["dose_time"].to_numpy()),
+                duration=None if np.isnan(duration) else duration,
+            )
+        return Timecourse(**data)
+
+    def isel(self, **indexers: int) -> Timecourse:
+        """One timecourse by integer position on every sample dimension."""
+        missing = set(self.sample_dims) - set(indexers)
+        if missing:
+            raise ValueError(
+                f"isel needs an index for every sample dimension, missing {sorted(missing)}"
+            )
+        sample = self.ds.isel(indexers)
+        label = self._label(sample)
+        return self._timecourse(sample, label)
+
+    def sel(self, **indexers: Any) -> Timecourse:
+        """One timecourse by coordinate label on every sample dimension."""
+        missing = set(self.sample_dims) - set(indexers)
+        if missing:
+            raise ValueError(
+                f"sel needs a label for every sample dimension, missing {sorted(missing)}"
+            )
+        sample = self.ds.sel(indexers)
+        label = self._label(sample)
+        return self._timecourse(sample, label)
+
+    def _label(self, sample: xr.Dataset) -> Any:
+        """Label of a selected sample: the coordinates of the sample dimensions joined by `|`."""
+        parts = [str(sample[d].values) for d in self.sample_dims if d in sample.coords]
+        if not parts:
+            return None
+        return parts[0] if len(parts) == 1 else "|".join(parts)
+
+    def __iter__(self) -> Iterator[Timecourse]:
+        """Iterate over the timecourses in C order of the sample dimensions."""
+        for index in np.ndindex(*self.sample_shape):
+            yield self.isel(
+                **dict(zip(self.sample_dims, (int(i) for i in index), strict=True))
+            )
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """The batch as a long data frame: the sample coordinates, `time`, `value` and the optional columns."""
+        names = ["value", *[v for v in ("sd", "se") if v in self.ds]]
+        df = self.ds[names].to_dataframe().reset_index()
+        if TIMES_VAR in self.ds:
+            df[TIME_DIM] = (
+                self.ds[TIMES_VAR].to_dataframe().reset_index()[TIMES_VAR].to_numpy()
+            )
+        if "n" in self.ds:
+            df = df.merge(
+                self.ds["n"].to_dataframe().reset_index(), on=list(self.sample_dims)
+            )
+        columns = [
+            *self.sample_dims,
+            TIME_DIM,
+            *names,
+            *(["n"] if "n" in self.ds else []),
+        ]
+        return df[columns]
