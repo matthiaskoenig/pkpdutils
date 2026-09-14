@@ -15,3 +15,7 @@ An example writes what it creates into the current working directory. No example
 | path | content |
 | --- | --- |
 | `examples/timecourses.py` | creating `Timecourse` and `Timecourses` objects from arrays, data frames and a simulation-like dataset |
+| `examples/nca_single.py` | non-compartmental analysis of one curve, default and pkdb_analysis-compatible options, the diagnostic figure |
+| `examples/nca_batch.py` | NCA of a `(dose, individual)` batch, results as a data frame, curve and grid figures |
+| `examples/steady_state.py` | superposition of a single dose curve and the steady state parameters of a dosing interval |
+| `examples/nca_from_sbmlsim.py` | NCA of a simulation scan dataset (`Timecourses.from_dataset`), with or without sbmlsim installed |

@@ -5,6 +5,7 @@ xarray dataset), see `pkpdutils.timecourse`; units are pint quantities of the
 shared registry `ureg`, see `pkpdutils.units`.
 """
 
+from pkpdutils.nca import NCAOptions, NCAResult, TerminalPhase, nca, nca_single
 from pkpdutils.timecourse import Dose, DosingRegimen, Route, Timecourse, Timecourses
 from pkpdutils.units import Q_, Quantity, ureg
 
@@ -14,10 +15,15 @@ __all__ = [
     "Q_",
     "Dose",
     "DosingRegimen",
+    "NCAOptions",
+    "NCAResult",
     "Quantity",
     "Route",
+    "TerminalPhase",
     "Timecourse",
     "Timecourses",
     "__version__",
+    "nca",
+    "nca_single",
     "ureg",
 ]
