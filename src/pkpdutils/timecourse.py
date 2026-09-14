@@ -911,10 +911,12 @@ class Timecourses:
         sample = list(sample)
         if not sample:
             raise ValueError("'sample' needs at least one column")
-        groups = df.groupby(sample, sort=True, dropna=False)
+        # a single column groups by the column itself (scalar keys, no
+        # deprecation warning); several columns need the list form (tuple keys)
+        groups = df.groupby(
+            sample[0] if len(sample) == 1 else sample, sort=True, dropna=False
+        )
         keys = list(groups.groups)
-        if len(sample) == 1:
-            keys = [k[0] if isinstance(k, tuple) else k for k in keys]
         # from_timecourses decides between a shared grid and per sample grids
         timecourses = [
             Timecourse.from_dataframe(
@@ -945,7 +947,10 @@ class Timecourses:
             assert isinstance(k, tuple)
             tuple_keys.append(k)
         index = pd.MultiIndex.from_tuples(tuple_keys, names=sample)
-        ds = flat.ds.assign_coords(_sample=index).unstack("_sample")
+        mindex_coords = xr.Coordinates.from_pandas_multiindex(index, "_sample")
+        ds = (
+            flat.ds.drop_vars("_sample").assign_coords(mindex_coords).unstack("_sample")
+        )
         ds.attrs.update(flat.ds.attrs)
         for name in ds.data_vars:
             ds[name].attrs.update(flat.ds[name].attrs)
