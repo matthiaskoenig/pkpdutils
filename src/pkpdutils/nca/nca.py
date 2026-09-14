@@ -83,6 +83,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "time_above": "{time}",
     "auc_tau": "({unit}) * ({time})",
     "cmin_ss": "{unit}",
+    "cmax_ss": "{unit}",
     "ctrough": "{unit}",
     "cavg": "{unit}",
     "fluctuation": "dimensionless",
@@ -327,8 +328,7 @@ def compute_parameters(
     with np.errstate(invalid="ignore"):
         distance = np.where(before_max, np.abs(cp - 0.5 * cmax[:, None]), np.inf)
     ihalf = distance.argmin(axis=1)
-    iv = route is not None and route.is_iv
-    has_half = has_data & (imax > 0) & (not iv)
+    has_half = has_data & (imax > 0) & (route is Route.ORAL)
     cmax_half = np.where(has_half, _take(cp, ihalf), nan)
     tmax_half = np.where(has_half, _take(tp, ihalf), nan)
 
@@ -357,7 +357,7 @@ def compute_parameters(
     }
     if route is Route.IV_BOLUS:
         out["c0"] = c0
-    if route is None or not route.is_iv:
+    if route is Route.ORAL:
         out["cmax_half"] = cmax_half
         out["tmax_half"] = tmax_half
     if dose_amount is not None and route is not None:
@@ -376,7 +376,10 @@ def compute_parameters(
 
 
 def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
-    """Worker entry: `compute_parameters` on a chunk of rows.
+    """Worker entry: the parameters of a chunk of rows.
+
+    The steady state analysis runs through the same entry, so a batch with a
+    `regimen` is chunked and parallelized like a single dose batch.
 
     Args:
         args: the arguments of `compute_parameters` as a tuple.
@@ -385,6 +388,19 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
         The parameters of the rows of the chunk.
     """
     t, c, dose_amount, dose_time, dose_duration, route, options = args
+    if options.regimen is not None:
+        # the steady state analysis imports this module, so the import is local
+        from pkpdutils.nca.steady_state import compute_steady_state
+
+        return compute_steady_state(
+            t,
+            c,
+            dose_amount=dose_amount,
+            dose_time=dose_time,
+            dose_duration=dose_duration,
+            route=route,
+            options=options,
+        )
     return compute_parameters(
         t,
         c,
@@ -398,6 +414,10 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
 
 def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
     """Non-compartmental analysis of a batch of timecourses.
+
+    The rows are analysed in chunks of `options.chunk_rows` rows, in the calling
+    process or, with `options.n_workers`, in a pool of worker processes; a
+    steady state analysis (`options.regimen`) is chunked the same way.
 
     Args:
         timecourses: the batch
@@ -428,48 +448,31 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     dose_duration = flat(timecourses.dose_duration)
     route = timecourses.route
 
-    if options.regimen is not None:
-        # the steady state analysis imports this module, so the import is local
-        from pkpdutils.nca.steady_state import compute_steady_state
-
-        values = compute_steady_state(
-            t,
-            c,
-            dose_amount=dose_amount,
-            dose_time=dose_time,
-            dose_duration=dose_duration,
-            route=route,
-            options=options,
+    # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
+    # the memory of the vectorized core; the worker pool maps the chunks in order
+    n_chunks = max(1, -(-n_rows // options.chunk_rows))
+    jobs = [
+        (
+            t[rows],
+            c[rows],
+            None if dose_amount is None else dose_amount[rows],
+            None if dose_time is None else dose_time[rows],
+            None if dose_duration is None else dose_duration[rows],
+            route,
+            options,
         )
-    elif options.n_workers is not None and options.n_workers > 1 and n_rows > 1:
-        chunks = np.array_split(np.arange(n_rows), min(options.n_workers, n_rows))
-        jobs = [
-            (
-                t[rows],
-                c[rows],
-                None if dose_amount is None else dose_amount[rows],
-                None if dose_time is None else dose_time[rows],
-                None if dose_duration is None else dose_duration[rows],
-                route,
-                options,
-            )
-            for rows in chunks
-        ]
-        with ProcessPoolExecutor(max_workers=len(jobs)) as pool:
+        for rows in np.array_split(np.arange(n_rows), n_chunks)
+    ]
+    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
             parts = list(pool.map(_compute_chunk, jobs))
-        values = {
-            name: np.concatenate([part[name] for part in parts]) for name in parts[0]
-        }
     else:
-        values = compute_parameters(
-            t,
-            c,
-            dose_amount=dose_amount,
-            dose_time=dose_time,
-            dose_duration=dose_duration,
-            route=route,
-            options=options,
-        )
+        parts = [_compute_chunk(job) for job in jobs]
+    names = list(parts[0])
+    assert all(list(part) == names for part in parts), (
+        "the chunks returned different parameters"
+    )
+    values = {name: np.concatenate([part[name] for part in parts]) for name in names}
 
     n_flagged = int((values["flags"] != 0).sum())
     if n_flagged:

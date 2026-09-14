@@ -28,6 +28,7 @@ def test_defaults() -> None:
     assert options.regimen is None
     assert options.effect_threshold is None
     assert options.n_workers is None
+    assert options.chunk_rows == 5000
 
 
 def test_terminal_last_n_requires_n_points() -> None:
@@ -60,6 +61,8 @@ def test_options_validation() -> None:
         NCAOptions(extrapolation_warning=1.5)
     with pytest.raises(ValueError):
         NCAOptions(n_workers=0)
+    with pytest.raises(ValueError):
+        NCAOptions(chunk_rows=0)
     regimen = DosingRegimen(dose=Dose(amount=100, unit="mg"), interval=12)
     assert NCAOptions(regimen=regimen).regimen is regimen
 

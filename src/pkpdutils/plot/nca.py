@@ -82,9 +82,9 @@ def draw_nca_panel(
             alpha=style.alpha,
             label="extrapolated",
         )
-        t_fit = np.linspace(
-            values.get("lambda_z_t_first", t[ok][0]), tlast + 3.0 * thalf, 50
-        )
+    t_first = values.get("lambda_z_t_first", np.nan)
+    if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_first):
+        t_fit = np.linspace(t_first, tlast + 3.0 * thalf, 50)
         ax.plot(
             t_fit,
             np.exp(intercept - lambda_z * t_fit),
@@ -93,7 +93,6 @@ def draw_nca_panel(
             linewidth=style.linewidth,
             label=f"lambda_z = {lambda_z:.3g}",
         )
-        t_first = values.get("lambda_z_t_first", np.nan)
         used = ok & (t >= t_first) & (t <= tlast) & (c > 0)
         ax.plot(
             t[used],

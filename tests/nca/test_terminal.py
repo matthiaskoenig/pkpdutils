@@ -60,6 +60,21 @@ def test_best_fit_skips_absorption_phase() -> None:
     assert fit.t_first[0] > t[0, tmax_idx[0]]
 
 
+def test_best_fit_start_snaps_to_a_regressable_point() -> None:
+    # the zero at t = 2 cannot be regressed: the window of the suffix sums that
+    # starts there is the window starting at t = 3, so the reported first point
+    # must be t = 3 and not the excluded zero
+    t = np.array([[0, 1, 2, 3, 4, 5]], dtype=float)
+    c = np.array([[10.0, 8.0, 0.0, 4.0, 2.0, 1.0]])
+    tp, cp, n_valid = pack_valid(t, c)
+    fit = terminal_fit(tp, cp, n_valid, np.array([0]), TerminalPhase())
+    assert fit.t_first[0] == pytest.approx(3.0)
+    assert fit.n_points[0] == 3
+    slope = np.polyfit([3.0, 4.0, 5.0], np.log([4.0, 2.0, 1.0]), 1)[0]
+    assert fit.slope[0] == pytest.approx(slope)
+    assert tp[0, fit.start[0]] == pytest.approx(3.0)
+
+
 def test_last_n_and_all_after_tmax() -> None:
     t = np.array([[0, 1, 2, 3, 4, 5, 6]], dtype=float)
     c = np.array([[1, 5, 4, 3, 2.2, 1.5, 1.1]])

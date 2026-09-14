@@ -1,10 +1,12 @@
 """Non-compartmental analysis of a simulation result.
 
 The result of an sbmlsim parameter scan is an `XResult`, an xarray dataset with
-the `_time` dimension and one dimension per scan dimension. `Timecourses.from_xresult`
-turns it into a batch, `nca` analyses every simulated curve at once. sbmlsim is
-not a dependency of pkpdutils: without it the example builds a dataset of the
-same shape and analyses that.
+the `_time` dimension and one dimension per scan dimension; `Timecourses.from_xresult`
+turns such a result into a batch and `nca` analyses every simulated curve at once.
+sbmlsim is not a dependency of pkpdutils, so this example builds a dataset of the
+same shape and reads it with `Timecourses.from_dataset`; with a real `XResult` the
+call is `Timecourses.from_xresult(xresult, "[Cve]", dose=..., substance=...)`, which
+takes the units from the result instead of the `unit` and `time_unit` arguments.
 
 Run from the root of the repository with `python -m examples.nca_from_sbmlsim`.
 """

@@ -80,7 +80,7 @@ class NCAFlag(IntFlag):
     NO_MAX = 8
     #: the maximum is the first point of an extravascular curve
     NO_ABSORPTION = 16
-    #: values below `lloq` were removed
+    #: values below `lloq` were replaced
     BLQ_TRUNCATED = 32
     #: fewer than two valid points; every parameter is NaN
     NO_DATA = 64
@@ -160,6 +160,8 @@ class NCAOptions(BaseModel):
         regimen: dosing regimen of a steady state analysis, `None` for single dose
         effect_threshold: threshold of `time_above` for effect timecourses, `None` for none
         n_workers: number of worker processes for large batches, `None` for the calling process
+        chunk_rows: rows per chunk of the vectorized core, which bounds its
+            memory; the pool maps the chunks in order
     """
 
     model_config = ConfigDict(frozen=True)
@@ -174,3 +176,4 @@ class NCAOptions(BaseModel):
     regimen: DosingRegimen | None = None
     effect_threshold: float | None = None
     n_workers: int | None = Field(default=None, ge=1)
+    chunk_rows: int = Field(default=5000, ge=1)

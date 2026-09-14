@@ -264,6 +264,32 @@ def test_batch_two_sample_dims_and_workers() -> None:
     np.testing.assert_array_equal(parallel["flags"].values, serial["flags"].values)
 
 
+def test_cmax_half_only_for_oral() -> None:
+    no_dose = Timecourse(
+        time=[0.5, 1, 2, 4, 8], value=[1, 2, 1.5, 1.0, 0.5], time_unit="hr", unit="mg/l"
+    )
+    result = nca_single(no_dose)
+    assert "cmax_half" not in result and "tmax_half" not in result
+    oral = nca_single(oral_timecourse())
+    assert "cmax_half" in oral and "tmax_half" in oral
+    iv = nca_single(iv_timecourse())
+    assert "cmax_half" not in iv and "tmax_half" not in iv
+
+
+def test_chunking_matches_one_chunk() -> None:
+    curves = [oral_timecourse(ka) for ka in (0.8, 1.0, 2.0, 4.0, 6.0)]
+    batch = Timecourses.from_timecourses(curves, dim="individual")
+    one = nca(batch, NCAOptions(chunk_rows=5000))
+    chunked = nca(batch, NCAOptions(chunk_rows=2))
+    parallel = nca(batch, NCAOptions(n_workers=2, chunk_rows=2))
+    for other in (chunked, parallel):
+        for name in one.parameters:
+            np.testing.assert_allclose(
+                other[name].values, one[name].values, equal_nan=True
+            )
+        np.testing.assert_array_equal(other["flags"].values, one["flags"].values)
+
+
 def test_effect_kind() -> None:
     t = np.array([0, 1, 2, 4, 6, 8.0])
     e = np.array([10, 14, 20, 16, 12, 10.0])

@@ -82,6 +82,21 @@ def test_auc_until_t_end() -> None:
     assert auc[0] == pytest.approx(2.0)
 
 
+def test_auc_between_t_start_and_t_end() -> None:
+    t = np.array([[-1.0, 0.0, 1.0, 2.0, 3.0]])
+    c = np.array([[1.0, 1.0, 1.0, 1.0, 1.0]])
+    tp, cp, n_valid = pack_valid(t, c)
+    start, end = np.array([0.0]), np.array([2.0])
+    auc, aumc = auc_aumc(tp, cp, n_valid, AUCMethod.LINEAR, t_start=start, t_end=end)
+    assert auc[0] == pytest.approx(2.0)  # without t_start the segment [-1, 0] adds 1
+    assert aumc[0] == pytest.approx(0.5 + 1.5)  # dt (t1 c1 + t2 c2) / 2 per segment
+    # a segment starting before t_start is dropped as a whole
+    partial, _ = auc_aumc(
+        tp, cp, n_valid, AUCMethod.LINEAR, t_start=np.array([-0.5]), t_end=end
+    )
+    assert partial[0] == pytest.approx(2.0)
+
+
 def test_interpolate_at() -> None:
     t = np.array([[0.0, 1.0, 2.0, 4.0], [0.0, 2.0, np.nan, np.nan]])
     c = np.array([[0.0, 4.0, 2.0, 1.0], [1.0, 3.0, np.nan, np.nan]])

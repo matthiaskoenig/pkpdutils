@@ -22,8 +22,8 @@ The names used for the variables of the result datasets, with their symbols and 
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and maximum | value·time/dose, value/dose | [NCA](nca.md) |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over a dosing interval | value·time | [NCA](nca.md) |
-| `cmin_ss`, `ctrough`, `cavg` | | minimum, trough and average over the interval | value | [NCA](nca.md) |
-| `fluctuation`, `swing` | | peak–trough fluctuation and swing | – | [NCA](nca.md) |
+| `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, trough and average over the interval | value | [NCA](nca.md) |
+| `fluctuation`, `swing` | | peak–trough fluctuation and swing over the interval | – | [NCA](nca.md) |
 | `accumulation_ratio` | \(R\) | accumulation at steady state | – | [NCA](nca.md) |
 | `cl_ss` | \(\mathrm{CL}_\mathrm{ss}\) | clearance at steady state | l/h | [NCA](nca.md) |
 | `e0`, `emax_obs`, `temax` | | baseline, maximum effect and its time | value, value, time | [NCA](nca.md) |

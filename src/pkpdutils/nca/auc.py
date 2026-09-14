@@ -90,25 +90,34 @@ def auc_aumc(
     cp: np.ndarray,
     n_valid: np.ndarray,
     method: AUCMethod,
+    t_start: np.ndarray | None = None,
     t_end: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Area and first moment of every row, optionally only up to a time.
+    """Area and first moment of every row, optionally only over a time window.
+
+    A segment counts as a whole or not at all, so the window covers the intended
+    interval exactly when a point of the packed arrays lies on each of its
+    bounds; `interpolate_at` and `insert_point` add such a point.
 
     Args:
         tp: packed times `(N, n)`
         cp: packed values `(N, n)`
         n_valid: valid points per row
         method: trapezoid rule
+        t_start: per row, only segments starting at or after this time count
         t_end: per row, only segments ending at or before this time count
 
     Returns:
         `auc` and `aumc` of shape `(N,)`.
     """
     area, moment = segment_areas(tp, cp, n_valid, method)
+    keep = np.ones(area.shape, dtype=bool)
+    if t_start is not None:
+        keep &= tp[:, :-1] >= t_start[:, None]
     if t_end is not None:
-        keep = tp[:, 1:] <= t_end[:, None]
-        area = np.where(keep, area, 0.0)
-        moment = np.where(keep, moment, 0.0)
+        keep &= tp[:, 1:] <= t_end[:, None]
+    area = np.where(keep, area, 0.0)
+    moment = np.where(keep, moment, 0.0)
     return area.sum(axis=1), moment.sum(axis=1)
 
 

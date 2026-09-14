@@ -12,7 +12,7 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Clearance and volume.** With the dose \(D\), the clearance \(\mathrm{CL} = D / \mathrm{AUC}_{0\text{-}\infty}\) is the volume of plasma cleared of drug per time and the volume of distribution \(V_z = \mathrm{CL} / \lambda_z\) is the apparent volume the dose would occupy at the plasma concentration. After an extravascular dose the fraction absorbed \(F\) is unknown and both are reported relative to it as \(\mathrm{CL}/F\) (`cl_f`) and \(V_z/F\) (`vz_f`). The mean residence time \(\mathrm{MRT} = \mathrm{AUMC}_{0\text{-}\infty} / \mathrm{AUC}_{0\text{-}\infty}\) is the average time a molecule stays in the body (after an infusion of duration \(T\), minus \(T/2\)); the steady state volume \(V_\mathrm{ss} = \mathrm{CL} \cdot \mathrm{MRT}\) is reported for intravenous doses.
 
-**Steady state.** Under repeated dosing every dosing interval \(\tau\) looks the same once steady state is reached, and with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation and the swing, and the accumulation ratio [^rt].
+**Steady state.** Under repeated dosing every dosing interval \(\tau\) looks the same once steady state is reached, and with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation and the swing, and the accumulation ratio [^rt]. The interval starts at the dose: the value at the dose and the value at \(\tau\) are interpolated and inserted, so a pre-dose sample adds no area and a sample after \(\tau\) does not enter \(C_\mathrm{max,ss}\) or \(C_\mathrm{min,ss}\). After an intravenous bolus the interval starts at the back-extrapolated \(C_0\); for any other route the area from the dose to the first sample after it is not counted, so a curve whose first sample is well after the dose underestimates \(\mathrm{AUC}_{0\text{-}\tau}\).
 
 **Routes.** A batch has one route. `IV_BOLUS` reports \(C_0\), \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\); `IV_INFUSION` corrects the \(\mathrm{MRT}\) by half the duration; `ORAL` (any extravascular route) reports \(\mathrm{CL}/F\), \(V_z/F\) and the half maximum during absorption (`cmax_half`, `tmax_half`).
 
@@ -62,8 +62,8 @@ Steady state over the interval \([0, \tau]\) (the value at \(\tau\) is interpola
 
 \[
 C_\mathrm{avg} = \frac{\mathrm{AUC}_{0\text{-}\tau}}{\tau}, \quad
-\mathrm{fluctuation} = \frac{C_\mathrm{max} - C_\mathrm{min,ss}}{C_\mathrm{avg}}, \quad
-\mathrm{swing} = \frac{C_\mathrm{max} - C_\mathrm{min,ss}}{C_\mathrm{min,ss}}, \quad
+\mathrm{fluctuation} = \frac{C_\mathrm{max,ss} - C_\mathrm{min,ss}}{C_\mathrm{avg}}, \quad
+\mathrm{swing} = \frac{C_\mathrm{max,ss} - C_\mathrm{min,ss}}{C_\mathrm{min,ss}}, \quad
 R_\mathrm{pred} = \frac{1}{1 - e^{-\lambda_z \tau}}, \quad
 R_\mathrm{obs} = \frac{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss}}{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{single}}
 \]
@@ -92,7 +92,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose |
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over the dosing interval | value·time | regimen |
-| `cmin_ss`, `ctrough`, `cavg` | | minimum, value at \(\tau\), average over the interval | value | regimen |
+| `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, value at \(\tau\), average over the interval | value | regimen |
 | `fluctuation`, `swing`, `accumulation_ratio` | | see Math | – | regimen |
 | `cl_ss` | \(\mathrm{CL}_\mathrm{ss}\) | \(D / \mathrm{AUC}_{0\text{-}\tau}\) | → l/h | regimen, dose |
 | `flags` | | `NCAFlag` bits, see below | – | |
@@ -158,7 +158,7 @@ predicted = superposition(
 )
 ```
 
-Large batches run in worker processes with `NCAOptions(n_workers=4)`; the analysis itself is vectorized, so this only pays off for many thousands of curves. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
+Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 
 ## References
 

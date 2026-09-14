@@ -139,18 +139,17 @@ def terminal_fit(
         # suffix sums with everything before the first selected point excluded
         stats = window_statistics(tp, np.where(selected, y, 0.0), selected)
         start = np.where(selected.any(axis=1), selected.argmax(axis=1), 0)
-        return _collect(tp, stats, start, selected.any(axis=1), phase, flags)
+        return _collect(tp, stats, start, selected.any(axis=1), phase, flags, selected)
 
-    # windows may only start at or after the maximum; `exclude_cmax` additionally
-    # excludes the point of the maximum itself from the window
+    # with `exclude_cmax` a window may only start after the point of the maximum,
+    # otherwise it may start anywhere in the row, also before the maximum
     first_allowed = tmax_idx + 1 if phase.exclude_cmax else np.zeros_like(tmax_idx)
     stats = window_statistics(tp, y, regressable)
     if phase.method is TerminalMethod.BEST_FIT:
         count_ok = (idx >= first_allowed[:, None]) & (stats["n"] >= phase.min_points)
         # a window is a fit candidate once it has enough points and a declining
-        # slope; `min_adj_r2` only gates the final acceptance in `_collect`,
-        # since the best (highest r2_adj) candidate fails the gate exactly
-        # when every candidate does
+        # slope; `min_adj_r2` only gates the acceptance of the selected window in
+        # `_collect`, not the selection itself
         candidate = count_ok & (stats["slope"] < 0)
         r2_adj = np.where(candidate, stats["r2_adj"], -np.inf)
         best = r2_adj.max(axis=1)
@@ -161,7 +160,7 @@ def terminal_fit(
         flags = np.where(
             ~has_candidate & count_ok.any(axis=1), NCAFlag.POSITIVE_SLOPE, 0
         ).astype(np.int64)
-        return _collect(tp, stats, start, has_candidate, phase, flags)
+        return _collect(tp, stats, start, has_candidate, phase, flags, regressable)
 
     if phase.method is TerminalMethod.LAST_N:
         assert phase.n_points is not None
@@ -181,7 +180,7 @@ def terminal_fit(
         enough = has_fit & (n_at_start >= phase.min_points)
         positive = enough & ~(slope_at_start < 0)
     flags = np.where(positive, NCAFlag.POSITIVE_SLOPE, 0).astype(np.int64)
-    return _collect(tp, stats, start, enough & ~positive, phase, flags)
+    return _collect(tp, stats, start, enough & ~positive, phase, flags, regressable)
 
 
 def _collect(
@@ -191,8 +190,18 @@ def _collect(
     has_fit: np.ndarray,
     phase: TerminalPhase,
     flags: np.ndarray,
+    regressable: np.ndarray,
 ) -> TerminalFit:
-    """Pick the statistics of the chosen window per row and set the flags."""
+    """Pick the statistics of the chosen window per row and set the flags.
+
+    The statistics of a window starting at a point that cannot be regressed
+    (`NaN`, zero or negative) are those of the window starting at the next
+    regressable point, so the start is snapped forward to that point before the
+    times are read: `t_first` always names a point of the regression.
+    """
+    # snap the start of every row forward to the first regressable point
+    at_or_after = regressable & (np.arange(tp.shape[1])[None, :] >= start[:, None])
+    start = np.where(at_or_after.any(axis=1), at_or_after.argmax(axis=1), start)
 
     def take(a: np.ndarray) -> np.ndarray:
         """Value of `a` at the chosen `start` index of every row."""
