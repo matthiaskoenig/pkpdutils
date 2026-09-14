@@ -13,8 +13,29 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 
 - **[Timecourses](timecourses.md)** — `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
 - **[Units](units.md)** — every timecourse and result carries its units, parameters are derived in the units of the input.
+- **[Non-compartmental analysis](nca.md)** — exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
+- **[Plotting](plotting.md)** — timecourses and NCA diagnostics as matplotlib figures.
 
 The methods behind the package are cited in [References](references.md).
+
+## Quickstart
+
+```python
+from pkpdutils import Dose, Route, Timecourse, nca_single
+
+tc = Timecourse(
+    time=[0.5, 1, 2, 4, 8, 12, 24],
+    value=[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.03],
+    time_unit="hr",
+    unit="mg/l",
+    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    substance="caffeine",
+)
+result = nca_single(tc)
+print(result.to_dataframe().T)
+```
+
+Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md).
 
 ## How to cite
 

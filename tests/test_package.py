@@ -10,3 +10,11 @@ def test_exports() -> None:
 
     assert Route.ORAL.value == "oral"
     assert Dose and DosingRegimen and Timecourse and Timecourses and Q_ and ureg
+
+
+def test_nca_exports() -> None:
+    from pkpdutils import NCAOptions, NCAResult, TerminalPhase, nca, nca_single
+
+    assert callable(nca) and callable(nca_single)
+    assert NCAOptions().terminal == TerminalPhase()
+    assert NCAResult is not None

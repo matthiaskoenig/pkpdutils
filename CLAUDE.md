@@ -34,6 +34,9 @@ uv run zensical serve
 
 # examples, they are modules of the `examples` package and not part of pkpdutils
 python -m examples.timecourses
+python -m examples.nca_single
+python -m examples.nca_batch
+python -m examples.steady_state
 ```
 
 `develop` is the default branch and takes every change through a pull request; direct pushes are rejected by the rulesets in `.github/rulesets/` (applied with `.github/rulesets/apply.sh`), which require the `tests`, `ruff`, `ty` and `docs` checks. `main` only tracks the latest release and is fast-forwarded by the `sync-main` job of the release workflow, never by hand.
@@ -49,6 +52,10 @@ Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`,
 **`timecourse.py`.** `Timecourse` is one curve (pydantic, frozen): `time`, `value`, units, optional `sd`/`se`/`n`, a `Dose` (`amount`, `unit`, `Route`, `time`, `duration`) and metadata. `Timecourses` wraps an `xarray.Dataset` with a `time` dimension plus any sample dimensions, the variables `value` and optionally `sd`, `se`, `n`, the dose as `dose_amount`/`dose_time`/`dose_duration` and units in `attrs["units"]`; `times` and `values` return the `(samples..., time)` arrays every analysis works on. `DosingRegimen` describes repeated dosing for steady state analyses.
 
 `console.py` (rich console, for scripts and examples) and `log.py` provide the shared output/logging. Modules get their logger from the standard library with `logging.getLogger(__name__)`. The package never configures logging: `log.enable_rich_logging()` is the opt-in for scripts. Library code logs, it does not print, and log calls use lazy `%s` formatting rather than f-strings (enforced by ruff `G`).
+
+**`nca/` — non-compartmental analysis.** `nca(timecourses, options)` flattens the sample dimensions to `(N, n_time)` arrays and runs `compute_parameters` (`nca/nca.py`), the pure numpy core: `auc.py` packs the valid points of every row to the front (`pack_valid`) and sums the trapezoid segments (`segment_areas`, linear / linear-up-log-down / log), `terminal.py` evaluates every candidate window of the terminal regression at once with suffix sums (`window_statistics`) and picks it by the `TerminalPhase` rule (best adjusted R², last n, all after tmax, manual), `steady_state.py` adds the parameters of a dosing interval and `superposition`. `options.py` holds `NCAOptions`, `TerminalPhase`, the enumerations and `NCAFlag`; `result.py` holds `NCAResult` (an `xarray.Dataset` over the sample dims with `attrs["units"]` per variable and the integer `flags`) and `parameter_unit`, which derives the units with pint (`PARAMETER_UNITS` in `nca.py` maps every parameter to a unit expression). `nca_single` wraps one `Timecourse`. The rows run in chunks of `chunk_rows`, with `n_workers` over a `ProcessPoolExecutor`; the steady state path is chunked the same way. `tests/nca/test_reference.py` reproduces `pkdb_analysis` 0.3.1 with `AUCMethod.LINEAR` and `TerminalMethod.ALL_AFTER_TMAX`.
+
+**`plot/` — figures.** `style.py` (`PlotStyle`), `timecourse.py` (`plot_timecourse`), `nca.py` (`plot_nca`, `plot_nca_grid`, `draw_nca_panel`). Functions return the `Figure`, take `ax`, never show.
 
 ## Conventions
 
