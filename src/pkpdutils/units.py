@@ -1,0 +1,144 @@
+"""Units of the package.
+
+One [pint](https://pint.readthedocs.io) registry per process, `ureg`, is shared
+by every timecourse, result and quantity of the package; quantities of different
+registries cannot be combined, which is why nothing creates a registry of its
+own. Numerics run on plain arrays in the units of the input, pint is used at the
+boundaries: parsing unit strings, deriving the units of results and converting
+volumes and clearances to their conventional units.
+
+```python
+from pkpdutils.units import Q_, ureg
+
+dose = Q_(100, "mg")
+time = Q_([0, 1, 2], "hr")
+```
+"""
+
+import pint
+from pint.facets.plain import PlainQuantity, PlainUnit
+
+#: the unit registry of the package
+ureg: pint.UnitRegistry = pint.UnitRegistry()
+ureg.define("none = count")
+ureg.define("IU = [activity_amount]")
+
+#: shortcut for creating quantities
+Q_ = ureg.Quantity
+
+#: type of a quantity of the registry, for annotations
+Quantity = PlainQuantity
+
+#: type of a unit of the registry, for annotations
+Unit = PlainUnit
+
+#: dimensionalities a dose may have: an amount, or an amount per body weight
+DOSE_DIMENSIONS: tuple[str, ...] = (
+    "[mass]",
+    "[substance]",
+    "[mass] / [mass]",
+    "[substance] / [mass]",
+)
+
+
+def parse_unit(unit: str) -> Unit:
+    """Parse a unit string with the registry of the package.
+
+    Args:
+        unit: unit string, e.g. `"ng/ml"` or `"hr"`
+
+    Returns:
+        The unit.
+
+    Raises:
+        ValueError: if the string is not a unit of the registry.
+    """
+    try:
+        return ureg.Unit(unit)
+    except (pint.UndefinedUnitError, pint.DefinitionSyntaxError, AttributeError) as err:
+        raise ValueError(f"'{unit}' is not a unit: {err}") from err
+
+
+def unit_str(unit: Unit | str) -> str:
+    """Canonical string of a unit, e.g. `"nanogram / milliliter"` for `"ng/ml"`.
+
+    Args:
+        unit: a unit or a unit string.
+
+    Returns:
+        The canonical string of the unit.
+    """
+    return str(parse_unit(unit) if isinstance(unit, str) else unit)
+
+
+def check_dose_unit(unit: str) -> None:
+    """Check that a unit is a dose unit.
+
+    A dose is an amount of substance, as mass (`mg`) or as substance (`mmol`),
+    or such an amount per body weight (`mg/kg`, `µmol/kg`).
+
+    Args:
+        unit: unit string of the dose
+
+    Raises:
+        ValueError: if the unit has another dimensionality.
+    """
+    u = parse_unit(unit)
+    reduced = (1 * u).to_base_units().to_reduced_units()
+    if not any(reduced.check(dimension) for dimension in DOSE_DIMENSIONS):
+        raise ValueError(
+            f"A dose must be in {DOSE_DIMENSIONS}, "
+            f"not '{reduced.dimensionality}' ('{unit}')"
+        )
+
+
+def is_per_bodyweight(unit: str) -> bool:
+    """Check whether a dose unit is an amount per body weight.
+
+    Args:
+        unit: unit string of the dose, e.g. `"mg/kg"`.
+
+    Returns:
+        `True` if the unit is an amount per body weight, e.g. `"mg/kg"`.
+    """
+    reduced = (1 * parse_unit(unit)).to_base_units().to_reduced_units()
+    return reduced.check("[mass] / [mass]") or reduced.check("[substance] / [mass]")
+
+
+def normalize_volume(q: Quantity) -> Quantity:
+    """Convert a volume to `liter` and a volume per body weight to `liter/kilogram`.
+
+    Anything else is returned unchanged.
+
+    Args:
+        q: quantity to normalize.
+
+    Returns:
+        The quantity converted to `liter` or `liter / kilogram`, or `q` unchanged.
+    """
+    reduced = q.to_base_units().to_reduced_units()
+    if reduced.check("[length] ** 3"):
+        return q.to("liter")
+    if reduced.check("[length] ** 3 / [mass]"):
+        return q.to("liter / kilogram")
+    return q
+
+
+def normalize_clearance(q: Quantity) -> Quantity:
+    """Convert a clearance to `liter/hour` and one per body weight to `liter/hour/kilogram`.
+
+    Anything else is returned unchanged.
+
+    Args:
+        q: quantity to normalize.
+
+    Returns:
+        The quantity converted to `liter / hour` or `liter / hour / kilogram`,
+        or `q` unchanged.
+    """
+    reduced = q.to_base_units().to_reduced_units()
+    if reduced.check("[length] ** 3 / [time]"):
+        return q.to("liter / hour")
+    if reduced.check("[length] ** 3 / [time] / [mass]"):
+        return q.to("liter / hour / kilogram")
+    return q
