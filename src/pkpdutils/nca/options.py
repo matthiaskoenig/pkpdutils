@@ -104,7 +104,8 @@ class TerminalPhase(BaseModel):
     Attributes:
         method: the selection rule
         min_points: minimal number of points of a regression (at least 3)
-        exclude_cmax: whether the point of the maximum is excluded from every window
+        exclude_cmax: whether the windows must start after the point of the maximum
+            (`True`) or may start anywhere (`False`)
         n_points: number of points for `LAST_N`
         points: indices of the points (in the time order of the curve) for `MANUAL`
         min_adj_r2: minimal adjusted R² a regression must reach, `None` for no limit
