@@ -86,7 +86,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_se` | | diagnostics of the regression | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_stderr` is the standard error of the slope of the terminal regression) | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose |

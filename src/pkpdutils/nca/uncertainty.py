@@ -16,8 +16,14 @@ subjects `n`. Two methods propagate this uncertainty to the parameters:
 
 The variables of a parameter `x` are `x_sd`, `x_se`, `x_ci_low`, `x_ci_high`
 and, for log-normal parameters, `x_geomean`, `x_geocv`; `n` is the number of
-subjects per sample. Discrete parameters (`tmax`, `tlast`, counts) carry no
-uncertainty.
+subjects per sample. Discrete parameters (`tmax`, `tlast`, counts) and the
+diagnostics of the terminal regression carry no uncertainty.
+
+The interval of the bootstrap is the percentile interval of the replicates, so
+it is not guaranteed to contain the point estimate of the mean curve: for
+skewed replicates (a parameter which is a strongly non-linear function of the
+values, such as `lambda_z` or `mrt`) the interval is asymmetric around the
+estimate and can exclude it.
 """
 
 import logging
@@ -61,7 +67,7 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
-#: parameters without uncertainty (read from the observed points or counts)
+#: parameters without uncertainty (observed points, counts and regression diagnostics)
 DISCRETE_PARAMETERS: frozenset[str] = frozenset(
     {
         "tmax",
@@ -71,16 +77,14 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "temax",
         "lambda_z_n_points",
         "lambda_z_t_first",
+        "lambda_z_intercept",
+        "lambda_z_r2",
+        "lambda_z_r2_adj",
+        "lambda_z_stderr",
         "flags",
         "n",
     }
 )
-
-#: parameters whose own name ends in a suffix of a derived variable: they are
-#: parameters of the analysis, not derived variables of another parameter
-#: (`lambda_z_se` is the standard error of the slope of the terminal regression;
-#: an uncertainty method replaces it with its own standard error of `lambda_z`)
-SUFFIXED_PARAMETERS: frozenset[str] = frozenset({"lambda_z_se"})
 
 #: suffixes of the uncertainty variables of a parameter
 UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
@@ -104,10 +108,8 @@ def base_name(name: str) -> str | None:
 
     Returns:
         The name of the parameter the variable is derived from, `None` for a
-        parameter (including the parameters of `SUFFIXED_PARAMETERS`).
+        parameter.
     """
-    if name in SUFFIXED_PARAMETERS:
-        return None
     for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES):
         if name.endswith(suffix) and len(name) > len(suffix):
             return name[: -len(suffix)]
@@ -207,9 +209,11 @@ def reduce_replicates(
     The spread of the replicates is the standard error of the parameter when
     the points were drawn with `se` and its standard deviation over subjects
     when they were drawn with `sd`; the other one follows from
-    `se = sd / sqrt(n)`. The interval is the percentile interval at `ci_level`
-    and the geometric statistics come from the logarithms of the positive
-    replicates, `geocv = sqrt(exp(var(ln x)) - 1)` (Efron & Tibshirani 1993, ch. 13).
+    `se = sd / sqrt(n)`. The interval is the percentile interval at `ci_level`,
+    which is asymmetric around the estimate of the mean curve for skewed
+    replicates and is not guaranteed to contain it; the geometric statistics
+    come from the logarithms of the positive replicates,
+    `geocv = sqrt(exp(var(ln x)) - 1)` (Efron & Tibshirani 1993, ch. 13).
 
     Args:
         replicates: parameter name to replicates `(N, B)`
@@ -234,7 +238,6 @@ def reduce_replicates(
     for name, reps in replicates.items():
         skip = (
             name in DISCRETE_PARAMETERS
-            or name in SUFFIXED_PARAMETERS
             or base_name(name) is not None
             or name not in point
         )

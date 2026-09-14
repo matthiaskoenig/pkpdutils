@@ -62,7 +62,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "aumc_inf": "({unit}) * ({time}) ** 2",
     "mrt": "{time}",
     "lambda_z": "1 / ({time})",
-    "lambda_z_se": "1 / ({time})",
+    "lambda_z_stderr": "1 / ({time})",
     "lambda_z_intercept": "dimensionless",
     "lambda_z_r2": "dimensionless",
     "lambda_z_r2_adj": "dimensionless",
@@ -374,7 +374,7 @@ def compute_parameters(
         "aumc_inf": aumc_inf,
         "mrt": mrt,
         "lambda_z": lambda_z,
-        "lambda_z_se": fit.se_slope,
+        "lambda_z_stderr": fit.se_slope,
         "lambda_z_intercept": fit.intercept,
         "lambda_z_r2": fit.r2,
         "lambda_z_r2_adj": fit.r2_adj,
@@ -506,8 +506,7 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     uncertainty of every parameter, by default from the parametric bootstrap
     (`options.uncertainty`, `pkpdutils.nca.uncertainty`): `x_sd`, `x_se`,
     `x_ci_low`, `x_ci_high` and, for log-normal parameters, `x_geomean`,
-    `x_geocv`. The bootstrap standard error of `lambda_z` replaces the standard
-    error of the slope of the terminal regression in `lambda_z_se`.
+    `x_geocv`.
 
     Args:
         timecourses: the batch
@@ -554,8 +553,6 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     flags = values.pop("flags")
     method = options.resolve_uncertainty(timecourses.has_uncertainty)
     if method is UncertaintyMethod.BOOTSTRAP:
-        # the bootstrap standard error of `lambda_z` replaces the standard
-        # error of the slope of the terminal regression in `lambda_z_se`
         values.update(bootstrap(timecourses, options, values))
     n_subjects = timecourses.n
     values["n"] = (

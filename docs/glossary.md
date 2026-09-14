@@ -16,7 +16,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `cmax_half`, `tmax_half` | | half maximum during absorption | value, time | [NCA](nca.md) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | [NCA](nca.md) |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_se` | | regression diagnostics | | [NCA](nca.md) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_stderr`: standard error of the slope of the terminal regression) | | [NCA](nca.md) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed | l/h | [NCA](nca.md) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |

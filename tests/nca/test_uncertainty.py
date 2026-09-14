@@ -38,8 +38,6 @@ def test_base_name() -> None:
     assert base_name("cl_f_geocv") == "cl_f"
     assert base_name("auc_last") is None
     assert base_name("flags") is None
-    # the standard error of the terminal slope is a parameter of its own
-    assert base_name("lambda_z_se") is None
 
 
 def test_resolve_spread_from_sd_and_n() -> None:
@@ -118,6 +116,7 @@ def test_bootstrap_default_for_group_data_and_reproducible() -> None:
     assert "auc_inf_obs_se" in a and "auc_inf_obs_ci_low" in a
     assert "auc_inf_obs_geocv" in a
     assert "tmax_se" not in a  # discrete
+    assert "lambda_z_r2_se" not in a  # regression diagnostic
     assert "auc_last" in a.parameters and "auc_last_se" not in a.parameters
     assert "auc_last_se" in a.derived_variables
     for name in a.derived_variables:
@@ -194,5 +193,12 @@ def test_no_uncertainty_without_spread() -> None:
 
 def test_discrete_and_lognormal_sets() -> None:
     assert "tmax" in DISCRETE_PARAMETERS and "lambda_z_n_points" in DISCRETE_PARAMETERS
+    for diagnostic in (
+        "lambda_z_stderr",
+        "lambda_z_r2",
+        "lambda_z_r2_adj",
+        "lambda_z_intercept",
+    ):
+        assert diagnostic in DISCRETE_PARAMETERS
     assert "auc_last" in LOGNORMAL_PARAMETERS
     assert "auc_extrap_fraction" not in LOGNORMAL_PARAMETERS
