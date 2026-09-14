@@ -30,6 +30,7 @@ import logging
 import warnings
 
 import numpy as np
+from scipy.stats import norm
 
 from pkpdutils.nca.options import BootstrapDistribution, BootstrapSpread, NCAOptions
 from pkpdutils.timecourse import Timecourses
@@ -354,3 +355,121 @@ def bootstrap(
         n_subjects=n_subjects,
         ci_level=options.ci_level,
     )
+
+
+def delta(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    point: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Delta method: propagate the standard errors of the points through the numerical Jacobian.
+
+    `var(x) = sum_i (dx/dC_i)^2 se_i^2` with `dx/dC_i` from a forward difference
+    of step `options.delta_step * se_i` (Efron & Tibshirani 1993, ch. 5). The
+    method always propagates `se`, the uncertainty of the mean curve, so
+    `options.bootstrap_spread` does not apply. The interval is the normal
+    interval `x +- z se`, on the log scale for log-normal parameters; discrete
+    parameters and the diagnostics of the terminal regression are skipped.
+
+    Args:
+        timecourses: the batch (group curves with `se`, or `sd` and `n`)
+        options: `delta_step`, `ci_level`
+        point: the parameters of the original curves (`run_rows` output)
+
+    Returns:
+        The uncertainty variables per continuous parameter.
+
+    Raises:
+        ValueError: if the batch has no `se` and it cannot be derived.
+    """
+    # the analysis of the perturbed curves runs through the same core as the
+    # original curves, whose module imports this one
+    from pkpdutils.nca.nca import run_rows
+
+    n_rows, n_time = timecourses.n_samples, timecourses.n_time
+    t = timecourses.times.reshape(n_rows, n_time)
+    c = timecourses.values.reshape(n_rows, n_time)
+    se = resolve_spread(
+        timecourses, options.model_copy(update={"bootstrap_spread": BootstrapSpread.SE})
+    )
+    with np.errstate(invalid="ignore"):
+        usable = np.isfinite(se) & (se > 0) & np.isfinite(c)
+    h = np.where(usable, options.delta_step * se, 0.0)
+
+    # every row is repeated `n_time` times, the j-th copy perturbed at point j
+    rows = np.arange(n_rows * n_time)
+    cols = np.tile(np.arange(n_time), n_rows)
+    c_pert = np.repeat(c, n_time, axis=0)
+    c_pert[rows, cols] += np.repeat(h, n_time, axis=0)[rows, cols]
+
+    def repeat(a: np.ndarray | None) -> np.ndarray | None:
+        """Repeat a per row array `n_time` times (the rows stay grouped).
+
+        Args:
+            a: the array, or `None`.
+
+        Returns:
+            The repeated array `(N * n,)`, or `None`.
+        """
+        return (
+            None
+            if a is None
+            else np.repeat(np.asarray(a, dtype=np.float64).reshape(n_rows), n_time)
+        )
+
+    logger.info("delta method: %d curves x %d perturbations", n_rows, n_time)
+    perturbed = run_rows(
+        np.repeat(t, n_time, axis=0),
+        c_pert,
+        dose_amount=repeat(timecourses.dose_amount),
+        dose_time=repeat(timecourses.dose_time),
+        dose_duration=repeat(timecourses.dose_duration),
+        route=timecourses.route,
+        options=options,
+    )
+    alpha = 1.0 - options.ci_level
+    z = float(norm.ppf(1.0 - alpha / 2.0))
+    n_subjects = (
+        None
+        if timecourses.n is None
+        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)
+    )
+    any_usable = usable.any(axis=1)
+    step = np.where(usable, h, 1.0)
+    weight = np.where(usable, se, 0.0)
+    out: dict[str, np.ndarray] = {}
+    for name, base in point.items():
+        skip = (
+            name in DISCRETE_PARAMETERS
+            or base_name(name) is not None
+            or name not in perturbed
+        )
+        if skip:
+            continue
+        pert = perturbed[name].reshape(n_rows, n_time)
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
+            derivative = np.where(usable, (pert - base[:, None]) / step, 0.0)
+            var = np.sum((derivative * weight) ** 2, axis=1)
+            valid = np.isfinite(base) & np.isfinite(var) & any_usable
+            x_se = np.where(valid, np.sqrt(np.where(valid, var, 0.0)), np.nan)
+            x_sd = (
+                x_se * np.sqrt(n_subjects)
+                if n_subjects is not None
+                else np.full_like(x_se, np.nan)
+            )
+            if name in LOGNORMAL_PARAMETERS:
+                rel = x_se / base
+                low = base * np.exp(-z * rel)
+                high = base * np.exp(z * rel)
+                out[f"{name}_geomean"] = np.where(valid, base, np.nan)
+                out[f"{name}_geocv"] = np.where(
+                    valid, np.sqrt(np.expm1(rel * rel)), np.nan
+                )
+            else:
+                low = base - z * x_se
+                high = base + z * x_se
+        out[f"{name}_sd"] = x_sd
+        out[f"{name}_se"] = x_se
+        out[f"{name}_ci_low"] = np.where(valid, low, np.nan)
+        out[f"{name}_ci_high"] = np.where(valid, high, np.nan)
+    return out

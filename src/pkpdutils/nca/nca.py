@@ -38,7 +38,7 @@ from pkpdutils.nca.options import (
 )
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
-from pkpdutils.nca.uncertainty import base_name, bootstrap
+from pkpdutils.nca.uncertainty import base_name, bootstrap, delta
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -554,6 +554,8 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     method = options.resolve_uncertainty(timecourses.has_uncertainty)
     if method is UncertaintyMethod.BOOTSTRAP:
         values.update(bootstrap(timecourses, options, values))
+    elif method is UncertaintyMethod.DELTA:
+        values.update(delta(timecourses, options, values))
     n_subjects = timecourses.n
     values["n"] = (
         np.full(n_rows, np.nan)

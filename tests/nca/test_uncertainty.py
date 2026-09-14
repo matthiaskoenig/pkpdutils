@@ -3,7 +3,12 @@ import pytest
 
 from pkpdutils import Dose, Route, Timecourse, Timecourses
 from pkpdutils.nca import AUCMethod, NCAOptions, UncertaintyMethod, nca, nca_single
-from pkpdutils.nca.options import BootstrapDistribution, BootstrapSpread
+from pkpdutils.nca.options import (
+    BootstrapDistribution,
+    BootstrapSpread,
+    TerminalMethod,
+    TerminalPhase,
+)
 from pkpdutils.nca.uncertainty import (
     DISCRETE_PARAMETERS,
     LOGNORMAL_PARAMETERS,
@@ -202,3 +207,77 @@ def test_discrete_and_lognormal_sets() -> None:
         assert diagnostic in DISCRETE_PARAMETERS
     assert "auc_last" in LOGNORMAL_PARAMETERS
     assert "auc_extrap_fraction" not in LOGNORMAL_PARAMETERS
+
+
+def test_delta_linear_auc_matches_closed_form() -> None:
+    tc = group_curve(cv=0.1, n=12)
+    options = NCAOptions(
+        uncertainty=UncertaintyMethod.DELTA, auc_method=AUCMethod.LINEAR, ci_level=0.95
+    )
+    # the linear trapezoid to tlast is `auc = sum_i w_i c_i` with
+    # `w_0 = (t_1 - t_0)/2`, `w_last = (t_last - t_last-1)/2` and
+    # `w_i = (t_i+1 - t_i-1)/2` in between, so the delta method reproduces
+    # `se(auc) = sqrt(sum_i (w_i se_i)^2` exactly; a bolus dose would insert the
+    # back extrapolated `(0, c0)` segment, whose weights depend on the first two
+    # points, so the closed form is compared on a dose-less curve
+    tc_nd = tc.model_copy(update={"dose": None})
+    q = nca_single(tc_nd, options).to_quantities()
+    assert tc_nd.se is not None
+    w = np.empty(T.size)
+    w[0] = (T[1] - T[0]) / 2
+    w[-1] = (T[-1] - T[-2]) / 2
+    w[1:-1] = (T[2:] - T[:-2]) / 2
+    expected_se = np.sqrt(np.sum((w * tc_nd.se) ** 2))
+    assert q["auc_last_se"].magnitude == pytest.approx(expected_se, rel=1e-3)
+    assert q["auc_last_sd"].magnitude == pytest.approx(
+        expected_se * np.sqrt(12), rel=1e-3
+    )
+    z = 1.959963984540054
+    assert q["auc_last_ci_high"].magnitude == pytest.approx(
+        q["auc_last"].magnitude * np.exp(z * expected_se / q["auc_last"].magnitude),
+        rel=1e-3,
+    )
+    assert q["auc_last_geomean"].magnitude == pytest.approx(q["auc_last"].magnitude)
+    assert "tmax_se" not in q  # discrete parameters carry no uncertainty
+
+
+def test_delta_agrees_with_bootstrap() -> None:
+    tc = group_curve(cv=0.05, n=12)
+    # the best fit window of the terminal phase can jump between the bootstrap
+    # replicates, which inflates the bootstrap spread of `lambda_z` beyond the
+    # linearization of the delta method; a fixed window makes both comparable
+    terminal = TerminalPhase(method=TerminalMethod.ALL_AFTER_TMAX)
+    delta = nca_single(
+        tc,
+        NCAOptions(
+            uncertainty=UncertaintyMethod.DELTA,
+            auc_method=AUCMethod.LINEAR,
+            terminal=terminal,
+        ),
+    ).to_quantities()
+    boot = nca_single(
+        tc,
+        NCAOptions(
+            uncertainty=UncertaintyMethod.BOOTSTRAP,
+            auc_method=AUCMethod.LINEAR,
+            terminal=terminal,
+            n_boot=4000,
+            seed=7,
+        ),
+    ).to_quantities()
+    for name in ("auc_last_se", "cmax_se", "lambda_z_se"):
+        assert delta[name].magnitude == pytest.approx(boot[name].magnitude, rel=0.15), (
+            name
+        )
+
+
+def test_delta_batch_and_no_se() -> None:
+    tcs = Timecourses.from_timecourses(
+        [group_curve(label="a"), group_curve(cv=0.2, label="b")]
+    )
+    result = nca(tcs, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    assert result.has_uncertainty
+    assert result["auc_last_se"].values[1] > result["auc_last_se"].values[0]
+    plain = Timecourse(time=T, value=C0 * np.exp(-K * T), time_unit="hr", unit="mg/l")
+    with pytest.raises(ValueError, match="se"):
+        nca_single(plain, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
