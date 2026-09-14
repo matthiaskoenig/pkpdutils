@@ -1,4 +1,7 @@
+from typing import ClassVar
+
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -199,3 +202,110 @@ def test_dataset_validation() -> None:
     ds = xr.Dataset({"foo": (("time",), np.zeros(3))}, coords={"time": [0, 1, 2]})
     with pytest.raises(ValueError, match="value"):
         Timecourses(ds)
+
+
+def test_from_dataframe_shared_grid() -> None:
+    rows = []
+    for i, name in enumerate(["a", "b", "c"]):
+        for t, v in zip(T, V[i], strict=True):
+            rows.append({"individual": name, "time": t, "value": v, "dose": 100})
+    df = pd.DataFrame(rows)
+    tcs = Timecourses.from_dataframe(
+        df,
+        sample=["individual"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="dose",
+        dose_unit="mg",
+        route=Route.ORAL,
+    )
+    assert tcs.sample_dims == ("individual",)
+    assert list(tcs.ds["individual"].values) == ["a", "b", "c"]
+    np.testing.assert_allclose(tcs.values, V)
+    dose_amount = tcs.dose_amount
+    assert dose_amount is not None
+    np.testing.assert_allclose(dose_amount, [100, 100, 100])
+    assert "times" not in tcs.ds
+
+
+def test_from_dataframe_ragged() -> None:
+    df = pd.DataFrame(
+        {
+            "subject": ["a", "a", "a", "b", "b"],
+            "time": [0, 1, 2, 0, 4],
+            "value": [0, 2, 1, 0, 3],
+            "sd": [0, 0.2, 0.1, 0, 0.3],
+            "n": [5, 5, 5, 8, 8],
+        }
+    )
+    tcs = Timecourses.from_dataframe(
+        df, sample=["subject"], time_unit="hr", unit="mg/l", sd="sd", n="n"
+    )
+    assert "times" in tcs.ds
+    assert tcs.n_time == 3
+    tcs_n = tcs.n
+    assert tcs_n is not None
+    np.testing.assert_allclose(tcs_n, [5, 8])
+    tc = tcs.sel(subject="b")
+    np.testing.assert_allclose(tc.time, [0, 4])
+    tc_sd = tc.sd
+    assert tc_sd is not None
+    np.testing.assert_allclose(tc_sd, [0, 0.3])
+
+
+def test_from_dataframe_two_sample_columns() -> None:
+    rows = []
+    for dose in (50, 100):
+        for name in ("a", "b"):
+            for t in T:
+                rows.append(
+                    {"dose": dose, "individual": name, "time": t, "value": dose * t}
+                )
+    tcs = Timecourses.from_dataframe(
+        pd.DataFrame(rows), sample=["dose", "individual"], time_unit="hr", unit="mg/l"
+    )
+    assert tcs.sample_dims == ("dose", "individual")
+    assert tcs.sample_shape == (2, 2)
+    np.testing.assert_allclose(tcs.sel(dose=100, individual="b").value, 100 * T)
+    assert tcs.unit == "mg/l" and tcs.time_unit == "hr"
+
+
+def test_from_dataset_scan() -> None:
+    time = np.linspace(0, 10, 11)
+    scan = np.array([1.0, 2.0])
+    values = np.exp(-scan[None, :] * time[:, None] / 5)  # (_time, dim_dose)
+    ds = xr.Dataset(
+        {"[Cve_mid]": (("_time", "dim_dose"), values)},
+        coords={"_time": time, "dim_dose": scan},
+    )
+    tcs = Timecourses.from_dataset(
+        ds, "[Cve_mid]", unit="mmol/l", time_unit="min", substance="midazolam"
+    )
+    assert tcs.sample_dims == ("dim_dose",)
+    assert tcs.n_time == 11
+    np.testing.assert_allclose(tcs.values, values.T)
+    np.testing.assert_allclose(tcs.ds["time"].values, time)
+    assert tcs.unit == "mmol/l" and tcs.time_unit == "min"
+
+
+def test_from_xresult_duck_typed() -> None:
+    time = np.linspace(0, 10, 11)
+    ds = xr.Dataset(
+        {"[Cve_mid]": (("_time",), np.exp(-time / 5))}, coords={"_time": time}
+    )
+
+    class FakeXResult:
+        xds: ClassVar[xr.Dataset] = ds
+        uinfo: ClassVar[dict[str, str]] = {"[Cve_mid]": "mmol/l", "time": "min"}
+
+    tcs = Timecourses.from_xresult(
+        FakeXResult(),
+        "[Cve_mid]",
+        dose=Dose(amount=7.5, unit="mg", route=Route.IV_BOLUS),
+    )
+    assert tcs.sample_dims == ()
+    assert tcs.n_samples == 1
+    assert tcs.unit == "mmol/l"
+    tc = tcs.isel()
+    assert tc.dose is not None and tc.dose.route is Route.IV_BOLUS
+    np.testing.assert_allclose(tc.time, time)

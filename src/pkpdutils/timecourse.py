@@ -398,6 +398,47 @@ TIME_DIM = "time"
 TIMES_VAR = "times"
 
 
+def _dose_of_group(
+    g: pd.DataFrame,
+    dose_amount: str | None,
+    dose_unit: str | None,
+    dose_time: str | None,
+    route: Route | None,
+) -> Dose | None:
+    """The dose of the rows of one sample of a long data frame.
+
+    Args:
+        g: the rows of one sample.
+        dose_amount: name of the dose column, `None` for no dose.
+        dose_unit: unit of the doses, required with `dose_amount`.
+        dose_time: name of the dose time column, 0 by default.
+        route: route of the doses, required with `dose_amount`.
+
+    Returns:
+        The dose, or `None` when `dose_amount` is `None`.
+
+    Raises:
+        ValueError: if `dose_unit` or `route` is missing, or the dose (or its
+            time) is not constant per sample.
+    """
+    if dose_amount is None:
+        return None
+    if dose_unit is None or route is None:
+        raise ValueError("'dose_unit' and 'route' are required with 'dose_amount'")
+    amounts = g[dose_amount].dropna().unique()
+    if amounts.size != 1:
+        raise ValueError(f"The dose must be constant per sample, found {amounts}")
+    time = 0.0
+    if dose_time is not None:
+        times = g[dose_time].dropna().unique()
+        if times.size != 1:
+            raise ValueError(
+                f"The dose time must be constant per sample, found {times}"
+            )
+        time = float(times[0])
+    return Dose(amount=float(amounts[0]), unit=dose_unit, route=route, time=time)
+
+
 class Timecourses:
     """A batch of timecourses as an `xarray.Dataset`.
 
@@ -820,6 +861,187 @@ class Timecourses:
             dose=dose,
             route=route,
             substance=first.substance,
+        )
+
+    @classmethod
+    def from_dataframe(
+        cls,
+        df: pd.DataFrame,
+        *,
+        sample: Sequence[str],
+        time_unit: str,
+        unit: str,
+        time: str = "time",
+        value: str = "value",
+        sd: str | None = None,
+        se: str | None = None,
+        n: str | None = None,
+        dose_amount: str | None = None,
+        dose_unit: str | None = None,
+        dose_time: str | None = None,
+        route: Route | None = None,
+        substance: str = "substance",
+    ) -> "Timecourses":
+        """Create a batch from a long data frame, one row per sample and time point.
+
+        Args:
+            df: the data frame
+            sample: the columns which identify a sample; they become the sample
+                dimensions, several columns give their cartesian product with
+                `NaN` for missing combinations
+            time_unit: unit of the time column
+            unit: unit of the value column
+            time: name of the time column
+            value: name of the value column
+            sd: name of the standard deviation column
+            se: name of the standard error column
+            n: name of the column with the number of subjects (constant per sample)
+            dose_amount: name of the dose column (constant per sample)
+            dose_unit: unit of the doses, required with `dose_amount`
+            dose_time: name of the dose time column, 0 by default
+            route: route of the doses, required with `dose_amount`
+            substance: name of the substance or effect
+
+        Returns:
+            The batch.
+
+        Raises:
+            ValueError: if `sample` is empty.
+        """
+        sample = list(sample)
+        if not sample:
+            raise ValueError("'sample' needs at least one column")
+        groups = df.groupby(sample, sort=True, dropna=False)
+        keys = list(groups.groups)
+        if len(sample) == 1:
+            keys = [k[0] if isinstance(k, tuple) else k for k in keys]
+        # from_timecourses decides between a shared grid and per sample grids
+        timecourses = [
+            Timecourse.from_dataframe(
+                g.sort_values(time),
+                time_unit=time_unit,
+                unit=unit,
+                time=time,
+                value=value,
+                sd=sd,
+                se=se,
+                n=n,
+                substance=substance,
+                label=str(key),
+                dose=_dose_of_group(g, dose_amount, dose_unit, dose_time, route),
+            )
+            for key, g in groups
+        ]
+
+        if len(sample) == 1:
+            return cls.from_timecourses(timecourses, dim=sample[0], labels=list(keys))
+
+        # several sample columns: build along one flat dimension, then unstack
+        flat = cls.from_timecourses(
+            timecourses, dim="_sample", labels=list(range(len(keys)))
+        )
+        tuple_keys: list[tuple[Any, ...]] = []
+        for k in keys:
+            assert isinstance(k, tuple)
+            tuple_keys.append(k)
+        index = pd.MultiIndex.from_tuples(tuple_keys, names=sample)
+        ds = flat.ds.assign_coords(_sample=index).unstack("_sample")
+        ds.attrs.update(flat.ds.attrs)
+        for name in ds.data_vars:
+            ds[name].attrs.update(flat.ds[name].attrs)
+        if TIME_DIM in ds.coords:
+            ds[TIME_DIM].attrs.update(flat.ds[TIME_DIM].attrs)
+        return cls(ds.transpose(*sample, TIME_DIM))
+
+    @classmethod
+    def from_dataset(
+        cls,
+        ds: xr.Dataset,
+        value: str,
+        *,
+        unit: str,
+        time_unit: str,
+        time_dim: str = "_time",
+        time: str | None = None,
+        dose: Dose | None = None,
+        substance: str | None = None,
+    ) -> "Timecourses":
+        """Create a batch from a dataset of a simulation, e.g. a parameter scan.
+
+        Args:
+            ds: dataset with the time dimension `time_dim` and the variable `value`
+                over it and the scan dimensions
+            value: name of the variable with the values
+            unit: unit of the values
+            time_unit: unit of the times
+            time_dim: name of the time dimension
+            time: name of the variable with the time values, the coordinate of
+                `time_dim` by default
+            dose: one dose for all samples
+            substance: name of the substance, `value` by default
+
+        Returns:
+            The batch with the scan dimensions as sample dimensions.
+
+        Raises:
+            ValueError: if `value` has no dimension `time_dim`, or the time
+                values are not one dimensional.
+        """
+        da = ds[value]
+        if time_dim not in da.dims:
+            raise ValueError(f"'{value}' has no dimension '{time_dim}'")
+        sample_dims = tuple(str(d) for d in da.dims if d != time_dim)
+        values = da.transpose(*sample_dims, time_dim).to_numpy()
+        grid = (
+            (ds[time] if time is not None else ds[time_dim])
+            .to_numpy()
+            .astype(np.float64)
+        )
+        if grid.ndim != 1:
+            raise ValueError("The time values must be one dimensional")
+        coords = {d: ds[d].to_numpy() for d in sample_dims if d in ds.coords}
+        return cls.from_arrays(
+            grid,
+            values,
+            time_unit=time_unit,
+            unit=unit,
+            dims=sample_dims,
+            coords=coords,
+            dose=dose,
+            substance=value if substance is None else substance,
+        )
+
+    @classmethod
+    def from_xresult(
+        cls,
+        xres: Any,
+        selection: str,
+        *,
+        dose: Dose | None = None,
+        substance: str | None = None,
+    ) -> "Timecourses":
+        """Create a batch from the result of an sbmlsim simulation.
+
+        sbmlsim is not a dependency; an `XResult` is used by its attributes:
+        `xres.xds` is the dataset with the `_time` dimension and `xres.uinfo`
+        maps `selection` and `"time"` to unit strings.
+
+        Args:
+            xres: the `sbmlsim.result.XResult`
+            selection: the variable of the result, e.g. `"[Cve_mid]"`
+            dose: one dose for all samples
+            substance: name of the substance, `selection` by default
+
+        Returns:
+            The batch with the scan dimensions as sample dimensions.
+        """
+        return cls.from_dataset(
+            xres.xds,
+            selection,
+            unit=str(xres.uinfo[selection]),
+            time_unit=str(xres.uinfo["time"]),
+            dose=dose,
+            substance=substance,
         )
 
     # --- access -------------------------------------------------------------
