@@ -9,12 +9,15 @@ from pkpdutils.nca.nca import nca, nca_single
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
+    BootstrapDistribution,
+    BootstrapSpread,
     C0Method,
     Kind,
     NCAFlag,
     NCAOptions,
     TerminalMethod,
     TerminalPhase,
+    UncertaintyMethod,
     decode_flags,
 )
 from pkpdutils.nca.result import NCAResult
@@ -23,6 +26,8 @@ from pkpdutils.nca.steady_state import accumulation_ratio, superposition
 __all__ = [
     "AUCMethod",
     "BLQHandling",
+    "BootstrapDistribution",
+    "BootstrapSpread",
     "C0Method",
     "Kind",
     "NCAFlag",
@@ -30,6 +35,7 @@ __all__ = [
     "NCAResult",
     "TerminalMethod",
     "TerminalPhase",
+    "UncertaintyMethod",
     "accumulation_ratio",
     "decode_flags",
     "nca",

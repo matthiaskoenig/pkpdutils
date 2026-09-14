@@ -3,12 +3,15 @@ import pytest
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
+    BootstrapDistribution,
+    BootstrapSpread,
     C0Method,
     Kind,
     NCAFlag,
     NCAOptions,
     TerminalMethod,
     TerminalPhase,
+    UncertaintyMethod,
     decode_flags,
 )
 from pkpdutils.timecourse import Dose, DosingRegimen
@@ -78,3 +81,34 @@ def test_flags() -> None:
     assert value == 5
     assert decode_flags(value) == ["POSITIVE_SLOPE", "EXTRAPOLATION_HIGH"]
     assert decode_flags(0) == []
+
+
+def test_uncertainty_defaults_and_resolution() -> None:
+    options = NCAOptions()
+    assert options.uncertainty is None
+    assert options.n_boot == 1000
+    assert options.seed is None
+    assert options.ci_level == pytest.approx(0.95)
+    assert options.bootstrap_spread is BootstrapSpread.SE
+    assert options.bootstrap_distribution is BootstrapDistribution.NORMAL
+    assert options.delta_step == pytest.approx(0.01)
+    assert (
+        options.resolve_uncertainty(has_uncertainty=True) is UncertaintyMethod.BOOTSTRAP
+    )
+    assert options.resolve_uncertainty(has_uncertainty=False) is UncertaintyMethod.NONE
+    explicit = NCAOptions(uncertainty=UncertaintyMethod.DELTA)
+    assert (
+        explicit.resolve_uncertainty(has_uncertainty=False) is UncertaintyMethod.DELTA
+    )
+
+
+def test_uncertainty_validation() -> None:
+    with pytest.raises(ValueError):
+        NCAOptions(n_boot=1)
+    with pytest.raises(ValueError):
+        NCAOptions(ci_level=1.0)
+    with pytest.raises(ValueError):
+        NCAOptions(delta_step=0.0)
+    assert (
+        NCAOptions(uncertainty="bootstrap").uncertainty is UncertaintyMethod.BOOTSTRAP
+    )
