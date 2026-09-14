@@ -81,6 +81,14 @@ PARAMETER_UNITS: dict[str, str] = {
     "auec_baseline": "({unit}) * ({time})",
     "emax_baseline": "{unit}",
     "time_above": "{time}",
+    "auc_tau": "({unit}) * ({time})",
+    "cmin_ss": "{unit}",
+    "ctrough": "{unit}",
+    "cavg": "{unit}",
+    "fluctuation": "dimensionless",
+    "swing": "dimensionless",
+    "accumulation_ratio": "dimensionless",
+    "cl_ss": "({dose}) / (({unit}) * ({time}))",
     "flags": "dimensionless",
 }
 
@@ -422,9 +430,7 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
 
     if options.regimen is not None:
         # the steady state analysis imports this module, so the import is local
-        from pkpdutils.nca.steady_state import (  # ty: ignore[unresolved-import]
-            compute_steady_state,
-        )
+        from pkpdutils.nca.steady_state import compute_steady_state
 
         values = compute_steady_state(
             t,

@@ -18,6 +18,7 @@ from pkpdutils.nca.options import (
     decode_flags,
 )
 from pkpdutils.nca.result import NCAResult
+from pkpdutils.nca.steady_state import accumulation_ratio, superposition
 
 __all__ = [
     "AUCMethod",
@@ -29,7 +30,9 @@ __all__ = [
     "NCAResult",
     "TerminalMethod",
     "TerminalPhase",
+    "accumulation_ratio",
     "decode_flags",
     "nca",
     "nca_single",
+    "superposition",
 ]
