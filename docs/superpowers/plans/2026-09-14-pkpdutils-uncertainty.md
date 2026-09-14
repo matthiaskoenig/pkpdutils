@@ -44,7 +44,7 @@
 - [ ] **Step 1: Create the branch**
 
 ```bash
-git switch -c uncertainty develop
+git switch uncertainty   # the branch exists and holds this plan
 ```
 
 - [ ] **Step 2: Replace every em dash**
