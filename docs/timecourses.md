@@ -1,0 +1,102 @@
+# Timecourses
+
+A pharmacokinetic timecourse is the concentration of a substance in a tissue over time after a dose; a pharmacodynamic timecourse is an effect over time. `pkpdutils` represents one curve as a `Timecourse` and many curves as a `Timecourses` batch, which is the input of every analysis of the package.
+
+## Concepts
+
+**Single curve.** A `Timecourse` holds the sampling times and the values with their units, an optional dose, and metadata (substance, label, tissue). It is a frozen [pydantic](https://docs.pydantic.dev) model: the arrays are converted to `float64`, sorted by time, and duplicate times or an unknown unit raise a `ValueError` when the object is created. Missing values are `NaN` in `value`; every analysis drops them.
+
+**Group data.** Publications report the mean curve of a group with the standard deviation or the standard error and the number of subjects. A `Timecourse` carries these as `sd`, `se` and `n`; the missing one of `sd` and `se` is derived from the other with \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\). The uncertainty analyses of the package propagate them to the parameters, see [Uncertainty](uncertainty.md).
+
+**Doses and routes.** A `Dose` has an `amount` with a dose unit (an amount or an amount per body weight, see [Units](units.md)), a `Route`, the `time` of the administration and, for an infusion, its `duration`. The route decides which parameters an analysis can report: after an intravenous bolus the clearance and the volume are absolute (`cl`, `vz`), after an extravascular dose they are relative to the unknown fraction absorbed (`cl_f`, `vz_f`), and an infusion shifts the mean residence time by half its duration. `Route.ORAL` stands for every extravascular route.
+
+**Batches.** `Timecourses` wraps an [xarray](https://xarray.dev) dataset with a `time` dimension and any number of *sample dimensions*: the individuals of a study, the groups of a publication, the doses of a dose escalation, the dimensions of a simulation scan. Every analysis of the package is vectorized over the sample dimensions and returns a dataset over the same dimensions, so the parameters of a thousand curves are one call. Curves with different sampling times are stored per sample and padded with `NaN`, the `times` and `values` properties return the padded `(samples..., time)` arrays.
+
+**Repeated dosing.** A `DosingRegimen` is a dose given every `interval` for `n_doses` administrations; steady state analyses need the interval \(\tau\).
+
+## Data layout of a batch
+
+| variable | dimensions | content |
+| --- | --- | --- |
+| `value` | `(*sample, time)` | the values, `NaN` for missing points |
+| `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
+| `n` | `(*sample)` | number of subjects of group data (optional) |
+| `dose_amount`, `dose_time`, `dose_duration` | `(*sample)` | the doses (optional), `dose_duration` is `NaN` without infusion |
+| `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
+| `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
+
+Every variable carries `attrs["units"]`; the dataset carries `substance`, `route`, `time_unit` and `unit` in its `attrs`. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results.
+
+## API
+
+A single curve:
+
+```python
+from pkpdutils import Dose, Route, Timecourse
+
+tc = Timecourse(
+    time=[0.5, 1, 2, 4, 8, 12, 24],
+    value=[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.03],
+    sd=[0.3, 0.5, 0.4, 0.3, 0.1, 0.05, 0.01],
+    n=12,
+    time_unit="hr",
+    unit="mg/l",
+    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    substance="caffeine",
+)
+print(tc.se)  # derived from sd and n
+print(tc.value_q)  # a pint quantity
+print(tc.to_dataframe())
+```
+
+A batch from arrays, with the individuals as coordinate labels:
+
+```python
+import numpy as np
+from pkpdutils import Timecourses
+
+time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+values = np.random.default_rng(0).uniform(0, 3, size=(3, time.size))
+tcs = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("individual",),
+    coords={"individual": ["s1", "s2", "s3"]},
+    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    substance="caffeine",
+)
+print(tcs.ds)
+print(tcs.sel(individual="s2"))  # a Timecourse
+for tc in tcs:  # iteration over the samples
+    print(tc.label)
+```
+
+From a long table (one row per sample and time point) with a dose column, and from a list of `Timecourse` objects:
+
+```python
+tcs = Timecourses.from_dataframe(
+    df,
+    sample=["study", "group"],
+    time_unit="hr",
+    unit="mg/l",
+    sd="sd",
+    n="n",
+    dose_amount="dose",
+    dose_unit="mg",
+    route=Route.ORAL,
+)
+tcs = Timecourses.from_timecourses([tc_a, tc_b], dim="group")
+```
+
+From a simulation: a dataset with a `_time` dimension and scan dimensions, e.g. the `XResult` of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim):
+
+```python
+tcs = Timecourses.from_xresult(
+    xres, "[Cve_mid]", dose=Dose(amount=7.5, unit="mg", route=Route.IV_BOLUS)
+)
+tcs = Timecourses.from_dataset(ds, "[Cve]", unit="mmol/l", time_unit="min")
+```
+
+The complete example is `examples/timecourses.py`; the reference of the module is in [API: timecourse](api/timecourse.md).

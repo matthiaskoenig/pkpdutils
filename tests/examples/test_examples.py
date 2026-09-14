@@ -16,7 +16,7 @@ import pytest
 REPO_DIR = Path(__file__).parent.parent.parent
 
 #: examples which run offline and without optional dependencies
-SCRIPTS: list[str] = []
+SCRIPTS: list[str] = ["examples.timecourses"]
 
 
 @pytest.mark.parametrize("module", SCRIPTS)
