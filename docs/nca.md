@@ -158,7 +158,7 @@ predicted = superposition(
 )
 ```
 
-Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
+Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md); partial areas come from `partial_auc`. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 
 ## References
 

@@ -14,6 +14,7 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 - **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
 - **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 - **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
+- **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
 - **[Plotting](plotting.md)** - timecourses and NCA diagnostics as matplotlib figures.
 
 The methods behind the package are cited in [References](references.md).

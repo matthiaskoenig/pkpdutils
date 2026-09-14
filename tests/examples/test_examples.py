@@ -22,6 +22,7 @@ SCRIPTS: list[str] = [
     "examples.nca_batch",
     "examples.steady_state",
     "examples.nca_from_sbmlsim",
+    "examples.group_uncertainty",
 ]
 
 

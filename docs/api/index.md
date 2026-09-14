@@ -23,6 +23,7 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.auc](nca.auc.md) | vectorized trapezoid areas, interpolation |
 | [nca.terminal](nca.terminal.md) | vectorized terminal phase regression |
 | [nca.steady_state](nca.steady_state.md) | steady state parameters, accumulation ratio, superposition |
+| [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
 
 ## pkpdutils.plot
 

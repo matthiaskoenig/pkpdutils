@@ -23,6 +23,7 @@ nav = [
     { "Units" = "units.md" },
     { "Timecourses" = "timecourses.md" },
     { "Non-compartmental analysis" = "nca.md" },
+    { "Uncertainty" = "uncertainty.md" },
     { "Plotting" = "plotting.md" },
     { "Glossary" = "glossary.md" },
   ] },
@@ -42,6 +43,7 @@ nav = [
       { "auc" = "api/nca.auc.md" },
       { "terminal" = "api/nca.terminal.md" },
       { "steady_state" = "api/nca.steady_state.md" },
+      { "uncertainty" = "api/nca.uncertainty.md" },
     ] },
     { "pkpdutils.plot" = [
       { "plot" = "api/plot.md" },

@@ -19,3 +19,4 @@ An example writes what it creates into the current working directory. No example
 | `examples/nca_batch.py` | NCA of a `(dose, individual)` batch, results as a data frame, curve and grid figures |
 | `examples/steady_state.py` | superposition of a single dose curve and the steady state parameters of a dosing interval |
 | `examples/nca_from_sbmlsim.py` | NCA of a simulation scan dataset (`Timecourses.from_dataset`), with or without sbmlsim installed |
+| `examples/group_uncertainty.py` | bootstrap and delta method for a group mean curve, summary over individuals, partial AUC |
