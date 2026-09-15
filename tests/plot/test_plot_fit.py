@@ -6,7 +6,12 @@ from matplotlib.figure import Figure
 
 from pkpdutils.fit import FitOptions, Weighting, fit, fit_table, proportionality_test
 from pkpdutils.fit.models import MonoExp, Power
-from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of_fit
+from pkpdutils.plot import (
+    plot_bland_altman,
+    plot_dose_proportionality,
+    plot_fit,
+    plot_goodness_of_fit,
+)
 
 matplotlib.use("Agg")
 T = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12, 24])
@@ -80,3 +85,17 @@ def test_plot_dose_proportionality() -> None:
     assert "b =" in ax.get_title()
     assert len(ax.collections) >= 1  # the acceptance wedge
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_bland_altman() -> None:
+    fig = plot_bland_altman(monoexp_result(3))
+    assert isinstance(fig, Figure)
+    ax = fig.axes[0]
+    assert ax.get_xlabel().startswith("mean") and ax.get_ylabel().startswith(
+        "difference"
+    )
+    # the mean difference and the two limits of agreement
+    assert sum(1 for line in ax.get_lines() if line.get_linestyle() in ("--", ":")) >= 3
+    fig_log = plot_bland_altman(monoexp_result(), log=True)
+    assert fig_log.axes[0].get_ylabel().startswith("log ratio")
+    matplotlib.pyplot.close("all")

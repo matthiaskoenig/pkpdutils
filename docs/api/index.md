@@ -8,7 +8,7 @@ The API reference is generated from the docstrings of the package.
 | --- | --- |
 | [units](units.md) | the unit registry of the package and unit helpers |
 | [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Route` and `DosingRegimen`, the data model |
-| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult` |
+| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample` |
 | [console](console.md) | shared rich console |
 | [log](log.md) | logging of the package |
 
@@ -37,10 +37,21 @@ Curve fitting, see [Curve fitting](../fitting.md) and [Pharmacodynamics](../pd.m
 | [fit.compare](fit.compare.md) | `compare_models` and `ModelComparison`: the ranking by AICc and the Akaike weights |
 | [fit.proportionality](fit.proportionality.md) | `proportionality_test`: the confidence interval criterion of dose proportionality |
 
+## pkpdutils.stats
+
+Statistics on parameters, see [Statistics](../statistics.md).
+
+| module | description |
+| --- | --- |
+| [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`: samples, tests and the geometric mean ratio |
+| [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, paired, parallel and 2x2 crossover designs |
+| [stats.ddi](stats.ddi.md) | `ddi_classification`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
+| [stats.meta](stats.meta.md) | `effect_size`, `fixed_effect`, `random_effects`, `heterogeneity`, `meta_analysis`: the meta-analysis |
+
 ## pkpdutils.plot
 
 Figures, see [Plotting](../plotting.md).
 
 | module | description |
 | --- | --- |
-| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality` |
+| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality`, `plot_parameters`, `plot_ratio`, `plot_forest`, `plot_bland_altman` |

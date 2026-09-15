@@ -27,6 +27,9 @@ SCRIPTS: list[str] = [
     "examples.emax",
     "examples.dose_proportionality",
     "examples.covariate",
+    "examples.bioequivalence",
+    "examples.ddi",
+    "examples.meta_analysis",
 ]
 
 

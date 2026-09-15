@@ -46,6 +46,25 @@ fig = plot_dose_proportionality(
 
 The images are written by `examples/fitting_exponential.py`, `examples/emax.py` and `examples/dose_proportionality.py`.
 
+## Parameters, ratios and forest plots
+
+`plot_parameters` draws the individual values of a parameter of a result as jittered points with a box plot per group (`by` names a coordinate along the sample dimension) and the geometric mean with its interval. `plot_ratio` draws geometric mean ratios with their intervals on a logarithmic axis against the acceptance limits of bioequivalence or the thresholds of the interaction classes, from a dictionary of `ratio` results or a `bioequivalence` result. `plot_forest` is the forest plot of a `meta_analysis`: the effect of every study with its interval and a marker sized by its random effects weight, the pooled fixed and random effects as diamonds, the heterogeneity in the title. `plot_bland_altman` shows the agreement of the predictions of a fit with the data.
+
+```python
+from pkpdutils.plot import plot_bland_altman, plot_forest, plot_parameters, plot_ratio
+from pkpdutils.stats import DDIThresholds
+
+fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log=True)
+fig = plot_ratio(be)  # a BEResult with the 80-125 % limits
+fig = plot_ratio(
+    {"auc": auc_ratio, "cmax": cmax_ratio}, limits=None, thresholds=DDIThresholds.fda()
+)
+fig = plot_forest(meta)
+fig = plot_bland_altman(fit_result, log=True)
+```
+
+The images are written by `examples/bioequivalence.py`, `examples/ddi.py` and `examples/meta_analysis.py`.
+
 ## Style
 
 ```python

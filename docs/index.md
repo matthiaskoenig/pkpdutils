@@ -17,7 +17,8 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 - **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
 - **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.
 - **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.
-- **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures.
+- **[Statistics](statistics.md)** - significance tests, geometric mean ratios, bioequivalence, drug-drug interaction classification and meta-analysis on the parameters of groups and studies.
+- **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures, parameter distributions, ratio and forest plots.
 
 The methods behind the package are cited in [References](references.md).
 

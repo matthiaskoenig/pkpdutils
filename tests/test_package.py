@@ -1,3 +1,5 @@
+import numpy as np
+
 import pkpdutils
 
 
@@ -36,3 +38,18 @@ def test_fit_exports() -> None:
     assert callable(fit_timecourse)
     assert callable(compare_models) and callable(proportionality_test)
     assert FitOptions().n_starts == 1 and FitResult is not None
+
+
+def test_stats_exports() -> None:
+    from pkpdutils import (
+        ParameterSample,
+        bioequivalence,
+        compare,
+        ddi_classification,
+        meta_analysis,
+        ratio,
+    )
+
+    assert callable(compare) and callable(ratio) and callable(bioequivalence)
+    assert callable(ddi_classification) and callable(meta_analysis)
+    assert ParameterSample(values=np.array([1.0, 2.0])).size == 2

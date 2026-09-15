@@ -235,3 +235,41 @@ def test_fit_table_on_nca_result() -> None:
     prop = fit_table(Power(), result.ds, "dose", "auc_inf_obs", dim="dose")
     assert prop.sample_dims == ()
     assert prop.to_quantities()["b"].magnitude == pytest.approx(1.0, abs=0.01)
+
+
+def test_fit_timecourses_keeps_sample_coordinates() -> None:
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"], "sequence": ("individual", ["RT", "TR"])},
+        dose={"amount": np.array([100.0, 100.0]), "unit": "mg"},
+        route=Route.IV_BOLUS,
+    )
+    result = fit_timecourses(MonoExp(), batch)
+    assert result.ds["sequence"].to_numpy().tolist() == ["RT", "TR"]
+    assert result.sample("k", dim="individual").coords["sequence"].tolist() == [
+        "RT",
+        "TR",
+    ]
+
+
+def test_fit_timecourses_rejects_coordinate_named_like_a_parameter() -> None:
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"], "k": ("individual", [1.0, 2.0])},
+        dose={"amount": np.array([100.0, 100.0]), "unit": "mg"},
+        route=Route.IV_BOLUS,
+    )
+    with pytest.raises(ValueError, match="collides"):
+        fit_timecourses(MonoExp(), batch)

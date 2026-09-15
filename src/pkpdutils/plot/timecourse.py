@@ -5,7 +5,9 @@ from typing import Any
 import matplotlib.pyplot as plt
 import xarray as xr
 from matplotlib.axes import Axes
+from matplotlib.axis import Axis
 from matplotlib.figure import Figure
+from matplotlib.ticker import LogFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import TIME_DIM, Timecourse, Timecourses
@@ -22,10 +24,45 @@ def _figure_of(ax: Axes | None) -> tuple[Figure, Axes]:
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 4))
+        fig.set_layout_engine("constrained")
         return fig, ax
     fig = ax.get_figure()
     assert isinstance(fig, Figure)
     return fig, ax
+
+
+class _PlainLogFormatter(LogFormatter):
+    """A `LogFormatter` which writes the labels as plain numbers, not as `10^n`.
+
+    Only the rendering of a labelled tick is changed; which ticks carry a
+    label stays with `LogFormatter`, which drops the labels between the
+    decades once an axis spans more than a couple of them.
+    """
+
+    def _num_to_string(self, x: float, vmin: float, vmax: float) -> str:
+        """The label of a tick value.
+
+        Args:
+            x: the tick value.
+            vmin: lower bound of the view interval (unused).
+            vmax: upper bound of the view interval (unused).
+
+        Returns:
+            The value as a plain number.
+        """
+        return f"{x:g}"
+
+
+def _plain_log_ticks(axis: Axis) -> None:
+    """Format the major and minor ticks of a logarithmic axis as plain numbers.
+
+    Args:
+        axis: the axis (`ax.xaxis` or `ax.yaxis`) to format.
+    """
+    axis.set_major_formatter(_PlainLogFormatter())
+    axis.set_minor_formatter(
+        _PlainLogFormatter(labelOnlyBase=False, minor_thresholds=(2, 0.5))
+    )
 
 
 def _draw_curve(

@@ -39,7 +39,7 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
-from pkpdutils.result import base_name
+from pkpdutils.result import base_name, check_coordinate_collision, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -592,12 +592,12 @@ def _to_result(
 
     Returns:
         The result.
+
+    Raises:
+        ValueError: if a non-dimension coordinate of the batch collides with
+            a data variable of the result (`check_coordinate_collision`).
     """
-    coords = {
-        d: timecourses.ds[d]
-        for d in timecourses.sample_dims
-        if d in timecourses.ds.coords
-    }
+    coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     data_vars: dict[str, Any] = {}
     for name, array in values.items():
         unit, factor = parameter_unit(
@@ -618,6 +618,7 @@ def _to_result(
                 (array * factor).reshape(shape),
                 {"units": unit},
             )
+    check_coordinate_collision(coords, data_vars)
     ds = xr.Dataset(
         data_vars=data_vars, coords=coords, attrs={"substance": timecourses.substance}
     )
@@ -664,7 +665,9 @@ def partial_auc(
         The areas over the sample dimensions, named `auc_partial`, with the unit of `auc_last`.
 
     Raises:
-        ValueError: if `t_end <= t_start`.
+        ValueError: if `t_end <= t_start`, or if a non-dimension coordinate
+            of the batch collides with `auc_partial`
+            (`check_coordinate_collision`).
     """
     if t_end <= t_start:
         raise ValueError(
@@ -696,11 +699,8 @@ def partial_auc(
         time_unit=timecourses.time_unit,
         dose_unit=timecourses.dose_unit,
     )
-    coords = {
-        d: timecourses.ds[d]
-        for d in timecourses.sample_dims
-        if d in timecourses.ds.coords
-    }
+    coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
+    check_coordinate_collision(coords, {"auc_partial"})
     return xr.DataArray(
         (area * factor).reshape(timecourses.sample_shape),
         dims=timecourses.sample_dims,

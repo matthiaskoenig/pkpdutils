@@ -50,3 +50,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `correlation` | | correlation matrix of the fitted parameters | – | [Curve fitting](fitting.md) |
 | `akaike_weight` | \(w_i\) | probability that a model is the best of the compared set | – | [Curve fitting](fitting.md) |
 | `bound_low`, `bound_high` | | acceptance bounds of the exponent in the dose proportionality criterion | – | [Curve fitting](fitting.md) |
+| `gmr`, `log_ratio`, `se_log` | \(\mathrm{GMR}\) | geometric mean ratio test / reference, its logarithm and the standard error of the logarithm | –, – | [Statistics](statistics.md) |
+| `effect`, `cohen_d`, `hedges_g` | \(d\), \(g\) | effect of a comparison and the standardized effect sizes | unit of the parameter (ratio: –), – | [Statistics](statistics.md) |
+| `bioequivalent`, `p_lower`, `p_upper`, `cv_intra`, `p_period`, `p_sequence` | | verdict and the two one-sided p values of the bioequivalence test, within-subject CV, period and carryover p values of a crossover | – | [Statistics](statistics.md) |
+| `kind`, `strength`, `uncertain` | | class of an interaction (inhibitor, inducer), its strength and whether the interval spans a boundary | – | [Statistics](statistics.md) |
+| `estimate`, `variance`, `weight_fixed`, `weight_random` | \(\theta_i\), \(v_i\), \(w_i\) | effect of a study, its variance and its normalized weights in the pooling | – | [Statistics](statistics.md) |
+| `q`, `i2`, `h2`, `tau2` | \(Q\), \(I^2\), \(H^2\), \(\tau^2\) | heterogeneity statistics of a meta-analysis | –, %, –, – | [Statistics](statistics.md) |

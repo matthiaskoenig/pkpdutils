@@ -1,8 +1,9 @@
 """Shared container of parameter results (`NCAResult`, `FitResult`): an `xarray.Dataset` over sample dimensions, units per variable, an integer `flags` variable, quantities, data frames and summaries."""
 
 import warnings
+from collections.abc import Iterable, Mapping, Sequence
 from enum import IntFlag
-from typing import Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,65 @@ import xarray as xr
 from scipy.stats import t as student_t
 
 from pkpdutils.units import Q_, Quantity
+
+if TYPE_CHECKING:
+    from pkpdutils.stats.sample import ParameterSample
+
+
+def sample_coordinates(
+    ds: xr.Dataset, sample_dims: Sequence[str]
+) -> dict[str, xr.DataArray]:
+    """The coordinates of a dataset which live on the sample dimensions.
+
+    The dimension coordinates of the sample dimensions and every
+    non-dimension coordinate along them (the `period` or the `sequence` of
+    the individuals of a crossover study, the weight of the subjects) are
+    carried from the analysed batch to its result, so that
+    `ParameterResult.sample` finds them.
+
+    Args:
+        ds: the dataset of the batch.
+        sample_dims: the sample dimensions.
+
+    Returns:
+        Coordinate name to coordinate.
+    """
+    dims = set(sample_dims)
+    return {
+        str(name): coord
+        for name, coord in ds.coords.items()
+        if {str(d) for d in coord.dims} <= dims
+    }
+
+
+def check_coordinate_collision(
+    coords: Mapping[str, Any], variables: Iterable[str]
+) -> None:
+    """Raise if a coordinate of the batch shares its name with a result variable.
+
+    `xr.Dataset` and `xr.DataArray` refuse a name that is both a coordinate
+    and a data variable (`ValueError: variables {...} are found in both
+    data_vars and coords`); a batch coordinate carried over by
+    `sample_coordinates` (e.g. an individual attribute happening to be named
+    `n` or after a parameter such as `cmax`) would otherwise only surface as
+    that opaque error deep inside the construction of the result. Calling
+    this first turns it into a clear message that names the batch coordinate
+    to rename.
+
+    Args:
+        coords: the coordinates that are about to be attached to the result.
+        variables: the names of the data variables of the result.
+
+    Raises:
+        ValueError: if a name is both a coordinate and a data variable.
+    """
+    clash = set(coords) & set(variables)
+    if clash:
+        raise ValueError(
+            f"coordinate {sorted(clash)} of the batch collides with a result "
+            "variable; rename the coordinate"
+        )
+
 
 #: suffixes of the uncertainty variables of a parameter (`_cv` is the
 #: coefficient of variation of a fitted parameter, `pkpdutils.fit`)
@@ -231,6 +291,100 @@ class ParameterResult:
             name: Q_(float(sample[name].values), self.units(name))
             for name in self._variables
         }
+
+    def sample(
+        self, name: str, dim: str | None = None, **indexers: Any
+    ) -> "ParameterSample":
+        """A parameter as a `ParameterSample` for the statistics of `pkpdutils.stats`.
+
+        With `dim`, the individual values of `name` along `dim`, after the
+        other sample dimensions were selected with `indexers`; the labels are
+        the coordinate of `dim` and the coordinates along `dim` (`period`,
+        `sequence`, ...) travel with the sample. Without `dim`, the summary
+        statistics of a group result: `x` as the mean, `x_sd` (or `x_se`
+        times the square root of `n`) as the standard deviation, `x_n` when
+        present else `n` as the number of individuals, and `x_geomean`,
+        `x_geocv` when present.
+
+        Args:
+            name: name of the parameter.
+            dim: the sample dimension the values run over, `None` for a
+                summary sample.
+            **indexers: coordinate label per remaining sample dimension.
+
+        Returns:
+            The sample.
+
+        Raises:
+            ValueError: if `name` is not a variable, `dim` is not a sample
+                dimension, a sample dimension besides `dim` is not indexed,
+                or the summary sample has no group statistics.
+        """
+        from pkpdutils.stats.sample import ParameterSample
+
+        if name not in self.ds.data_vars:
+            raise ValueError(f"'{name}' is not a variable of the result")
+        if dim is not None and dim not in self.sample_dims:
+            raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
+        selected = self.ds.sel(indexers) if indexers else self.ds
+        remaining = [d for d in selected["flags"].dims if d != dim]
+        if remaining:
+            raise ValueError(
+                f"The remaining sample dimensions {remaining} need an indexer each"
+            )
+        unit = self.units(name)
+        if dim is not None:
+            da = selected[name]
+            labels = (
+                selected[dim].to_numpy()
+                if dim in selected.coords
+                else np.arange(da.sizes[dim])
+            )
+            coords = {
+                str(key): coord.to_numpy()
+                for key, coord in selected.coords.items()
+                if key != dim and tuple(coord.dims) == (dim,)
+            }
+            return ParameterSample(
+                values=da.to_numpy().astype(np.float64),
+                labels=labels,
+                coords=coords,
+                name=name,
+                unit=unit,
+            )
+        has_sd = f"{name}_sd" in selected
+        has_se = f"{name}_se" in selected
+        count_name = f"{name}_n" if f"{name}_n" in selected else "n"
+        if not (has_sd or has_se) or count_name not in selected:
+            raise ValueError(
+                f"'{name}' has no group data ('{name}_sd' or '{name}_se' with 'n'); "
+                "give 'dim' for individual values"
+            )
+        n = float(selected[count_name].values)
+        sd = (
+            float(selected[f"{name}_sd"].values)
+            if has_sd
+            else float(selected[f"{name}_se"].values) * np.sqrt(n)
+        )
+        geomean = (
+            float(selected[f"{name}_geomean"].values)
+            if f"{name}_geomean" in selected
+            else None
+        )
+        geocv = (
+            float(selected[f"{name}_geocv"].values)
+            if f"{name}_geocv" in selected
+            else None
+        )
+        return ParameterSample(
+            mean=float(selected[name].values),
+            sd=sd,
+            n=n,
+            geomean=geomean,
+            geocv=geocv,
+            name=name,
+            unit=unit,
+        )
 
     def flags(self, **indexers: Any) -> list[str]:
         """Names of the flags set for one sample.

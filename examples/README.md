@@ -24,3 +24,6 @@ An example writes what it creates into the current working directory. No example
 | `examples/emax.py` | sigmoid Emax fit of a concentration-effect relationship, comparison with Emax and linear |
 | `examples/dose_proportionality.py` | power model of `auc_inf_obs` against the dose from an NCA batch and the Smith criterion |
 | `examples/covariate.py` | allometric scaling of a clearance against body weight with a free and a fixed exponent |
+| `examples/bioequivalence.py` | average bioequivalence of a test against a reference formulation in a 2x2 crossover from two NCA batches, ratio and parameter figures |
+| `examples/ddi.py` | exposure ratios with and without an inhibitor, Welch t test, FDA and EMA classification of the interaction, substrate sensitivity |
+| `examples/meta_analysis.py` | fixed effect and random effects meta-analysis of published summary statistics with a forest plot |

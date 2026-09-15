@@ -324,3 +324,66 @@ def plot_dose_proportionality(
     ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
     ax.legend(fontsize="small")
     return fig
+
+
+def plot_bland_altman(
+    result: FitResult, *, log: bool = False, style: PlotStyle = DEFAULT_STYLE
+) -> Figure:
+    """Bland-Altman plot of the predictions against the data of every sample.
+
+    The difference `y_pred - y_data` (the log ratio with `log`) against the
+    mean of both per point, with the mean difference and the limits of
+    agreement `mean +- 1.96 sd` as horizontal lines (Bland & Altman 1986).
+
+    Args:
+        result: the fit.
+        log: use the log ratio and the log mean; non-positive points are masked out.
+        style: colors and markers.
+
+    Returns:
+        The figure.
+    """
+    y = result.ds["y_data"].to_numpy().ravel()
+    pred = result.ds["y_pred"].to_numpy().ravel()
+    ok = np.isfinite(y) & np.isfinite(pred)
+    if log:
+        ok &= (y > 0) & (pred > 0)
+        mean = np.exp((np.log(y[ok]) + np.log(pred[ok])) / 2.0)
+        diff = np.log(pred[ok]) - np.log(y[ok])
+    else:
+        mean = (y[ok] + pred[ok]) / 2.0
+        diff = pred[ok] - y[ok]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    fig.set_layout_engine("constrained")
+    ax.plot(
+        mean,
+        diff,
+        linestyle="none",
+        marker=style.data_marker,
+        color=style.data_color,
+        markersize=style.markersize,
+    )
+    if diff.size:
+        center, sd = (
+            float(diff.mean()),
+            float(diff.std(ddof=1)) if diff.size > 1 else 0.0,
+        )
+        ax.axhline(
+            center, color=style.fit_color, linestyle="--", linewidth=style.linewidth
+        )
+        ax.axhline(
+            center + 1.96 * sd, color=style.limit_color, linestyle=":", linewidth=1.0
+        )
+        ax.axhline(
+            center - 1.96 * sd, color=style.limit_color, linestyle=":", linewidth=1.0
+        )
+    ax.axhline(0.0, color="gray", linewidth=1.0)
+    unit = result.ds.attrs["y_unit"]
+    if log:
+        ax.set_xscale("log")
+        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
+        ax.set_ylabel("log ratio predicted / observed")
+    else:
+        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
+        ax.set_ylabel(f"difference predicted - observed [{unit}]")
+    return fig
