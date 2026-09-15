@@ -6,10 +6,9 @@ from typing import Any
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
-from matplotlib.ticker import FuncFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of
+from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.stats.meta import EffectKind, MetaResult
 
 #: axis label per kind of effect
@@ -18,19 +17,6 @@ _LABELS = {
     EffectKind.MEAN_DIFF: "mean difference",
     EffectKind.LOG_RATIO: "log ratio",
 }
-
-
-def _plain_number(value: float, _pos: int) -> str:
-    """A tick label as a plain number, not `matplotlib`'s `10^n` notation.
-
-    Args:
-        value: the tick value.
-        _pos: the tick position (unused, `FuncFormatter`'s signature).
-
-    Returns:
-        The formatted label.
-    """
-    return f"{value:g}"
 
 
 def plot_forest(
@@ -104,8 +90,7 @@ def plot_forest(
     ax.invert_yaxis()
     if use_exp:
         ax.set_xscale("log")
-        ax.xaxis.set_major_formatter(FuncFormatter(_plain_number))
-        ax.xaxis.set_minor_formatter(FuncFormatter(_plain_number))
+        _plain_log_ticks(ax.xaxis)
         ax.set_xlabel("ratio treatment / control")
     else:
         ax.set_xlabel(_LABELS[result.kind])

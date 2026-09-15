@@ -8,7 +8,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of
+from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, summarize
 
@@ -116,4 +116,5 @@ def plot_parameters(
         ax.set_xlabel(by)
     if log:
         ax.set_yscale("log")
+        _plain_log_ticks(ax.yaxis)
     return fig

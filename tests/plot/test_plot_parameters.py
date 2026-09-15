@@ -43,6 +43,9 @@ def test_plot_parameters_groups() -> None:
     assert ax.get_yscale() == "log"
     assert [t.get_text() for t in ax.get_xticklabels()] == ["F", "M"]
     assert ax.get_ylabel().startswith("auc_inf_obs [")
+    fig.canvas.draw()
+    y_labels = [t.get_text() for t in ax.get_yticklabels(which="both")]
+    assert not any("^" in label or "10^" in label for label in y_labels)
     matplotlib.pyplot.close("all")
 
 

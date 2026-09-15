@@ -5,7 +5,9 @@ from typing import Any
 import matplotlib.pyplot as plt
 import xarray as xr
 from matplotlib.axes import Axes
+from matplotlib.axis import Axis
 from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import TIME_DIM, Timecourse, Timecourses
@@ -27,6 +29,29 @@ def _figure_of(ax: Axes | None) -> tuple[Figure, Axes]:
     fig = ax.get_figure()
     assert isinstance(fig, Figure)
     return fig, ax
+
+
+def _plain_number(value: float, _pos: int) -> str:
+    """A tick label as a plain number, not `matplotlib`'s `10^n` notation.
+
+    Args:
+        value: the tick value.
+        _pos: the tick position (unused, `FuncFormatter`'s signature).
+
+    Returns:
+        The formatted label.
+    """
+    return f"{value:g}"
+
+
+def _plain_log_ticks(axis: Axis) -> None:
+    """Format the major and minor ticks of a logarithmic axis as plain numbers.
+
+    Args:
+        axis: the axis (`ax.xaxis` or `ax.yaxis`) to format.
+    """
+    axis.set_major_formatter(FuncFormatter(_plain_number))
+    axis.set_minor_formatter(FuncFormatter(_plain_number))
 
 
 def _draw_curve(

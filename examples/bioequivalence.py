@@ -41,6 +41,10 @@ def curves(bioavailability: float, ka: float, period: np.ndarray) -> np.ndarray:
     return np.stack(values)
 
 
+def _format_float(value: float) -> str:
+    return f"{value:.4g}"
+
+
 def batch(values: np.ndarray, period: np.ndarray) -> Timecourses:
     return Timecourses.from_arrays(
         TIME,
@@ -67,21 +71,23 @@ if __name__ == "__main__":
     result = bioequivalence(
         test, reference, parameters=["auc_inf_obs", "auc_last", "cmax"]
     )
+    columns = [
+        "parameter",
+        "gmr",
+        "ci_low",
+        "ci_high",
+        "bioequivalent",
+        "p_value",
+        "cv_intra",
+        "p_period",
+        "p_sequence",
+        "design",
+    ]
     console.print(
-        result.to_dataframe()[
-            [
-                "parameter",
-                "gmr",
-                "ci_low",
-                "ci_high",
-                "bioequivalent",
-                "p_value",
-                "cv_intra",
-                "p_period",
-                "p_sequence",
-                "design",
-            ]
-        ]
+        result.to_dataframe()[columns].to_string(
+            index=False, float_format=_format_float
+        ),
+        soft_wrap=True,
     )
     console.print("bioequivalent:", result.bioequivalent)
     plot_ratio(result).savefig("bioequivalence.png", dpi=120)
