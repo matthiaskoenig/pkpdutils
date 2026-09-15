@@ -6,10 +6,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 
+from pkpdutils.nca.intervals import INTERVAL_DIM
 from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
+from pkpdutils.plot.timecourse import _figure_of
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 
@@ -44,6 +47,11 @@ def draw_nca_panel(
 ) -> None:
     """Draw the NCA diagnostics of one curve into one axes.
 
+    A multiple dose result (carrying `auc_tau`) shades the analysed last
+    dosing interval `[0, tau]` (relative to the last dose) instead of
+    `[0, tlast]`, labelled `AUC(0-tau)`; a single dose result keeps shading
+    `[0, tlast]` as `AUC(0-tlast)`.
+
     Args:
         ax: the axes
         timecourse: the curve (times relative to its dose)
@@ -53,7 +61,7 @@ def draw_nca_panel(
         title: title, the label of the curve by default
         style: colors and markers
     """
-    tc = timecourse.relative_to_dose()
+    tc = timecourse.relative_to_dose(which="last")
     t, c = tc.time, tc.value
     ok = np.isfinite(c)
     tlast, clast = values.get("tlast", np.nan), values.get("clast", np.nan)
@@ -61,15 +69,19 @@ def draw_nca_panel(
     intercept = values.get("lambda_z_intercept", np.nan)
     thalf = values.get("thalf", np.nan)
 
-    if np.isfinite(tlast):
-        area = ok & (t <= tlast)
+    steady_state = np.isfinite(values.get("auc_tau", np.nan))
+    tau = values.get("tau", np.nan)
+    auc_bound = tau if steady_state and np.isfinite(tau) else tlast
+    auc_label = "AUC(0-tau)" if steady_state else "AUC(0-tlast)"
+    if np.isfinite(auc_bound):
+        area = ok & (t <= auc_bound)
         ax.fill_between(
             t[area],
             0.0,
             c[area],
             color=style.auc_color,
             alpha=style.alpha,
-            label="AUC(0-tlast)",
+            label=auc_label,
         )
     if np.isfinite(lambda_z) and np.isfinite(tlast):
         t_ext = np.linspace(tlast, tlast + 3.0 * thalf, 50)
@@ -213,4 +225,90 @@ def plot_nca_grid(
         )
     for ax in flat_axes[n:]:
         ax.set_visible(False)
+    return fig
+
+
+def plot_intervals(
+    result: NCAResult,
+    name: str = "interval_auc",
+    *,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+    **indexers: Any,
+) -> Figure:
+    """Plot a per-interval parameter against the dosing interval.
+
+    Without `indexers`, one line per sample of the result, labelled with the
+    sample's coordinate values; with `indexers` selecting one sample, a single
+    line. Non-finite values (an incomplete interval) are masked so the line
+    breaks there instead of raising a matplotlib warning. The x axis carries
+    the integer interval numbers only, never a fractional tick.
+
+    Args:
+        result: the result of a multiple dose analysis
+        name: name of the per-interval variable (`interval_*`)
+        ax: axes to draw on, a new figure by default
+        style: colors and markers
+        **indexers: coordinate label per sample dimension selecting one sample
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the result has no interval parameters, or if `name` is
+            not one of them.
+    """
+    if not result.has_intervals:
+        raise ValueError("The result has no interval parameters")
+    if name not in result.ds.data_vars or INTERVAL_DIM not in result.ds[name].dims:
+        raise ValueError(f"'{name}' is not an interval variable of the result")
+    fig, ax = _figure_of(ax)
+    da = result[name]
+    x = result.ds[INTERVAL_DIM].to_numpy()
+    if indexers:
+        y = np.ma.masked_invalid(da.sel(indexers).to_numpy().astype(float))
+        ax.plot(
+            x,
+            y,
+            marker=style.data_marker,
+            linestyle="-",
+            color=style.data_color,
+            linewidth=style.linewidth,
+            markersize=style.markersize,
+        )
+    else:
+        sample_dims = list(result.sample_dims)
+        sizes = [result.ds.sizes[d] for d in sample_dims]
+        indices = list(np.ndindex(*sizes))
+        n = len(indices)
+        cmap = plt.get_cmap(style.cmap)
+        for i, index in enumerate(indices):
+            sel = dict(zip(sample_dims, (int(k) for k in index), strict=True))
+            sample = da.isel(sel)
+            label = (
+                "|".join(
+                    str(result.ds.coords[d].to_numpy()[k])
+                    if d in result.ds.coords
+                    else str(k)
+                    for d, k in zip(sample_dims, index, strict=True)
+                )
+                or None
+            )
+            color: Any = style.data_color if n <= 1 else cmap(i / max(n - 1, 1))
+            y = np.ma.masked_invalid(sample.to_numpy().astype(float))
+            ax.plot(
+                x,
+                y,
+                marker=style.data_marker,
+                linestyle="-",
+                color=color,
+                label=label,
+                linewidth=style.linewidth,
+                markersize=style.markersize,
+            )
+        if n > 1:
+            ax.legend(fontsize="small")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel(INTERVAL_DIM)
+    ax.set_ylabel(f"{name} [{result.units(name)}]")
     return fig

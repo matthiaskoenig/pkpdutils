@@ -30,6 +30,7 @@ SCRIPTS: list[str] = [
     "examples.bioequivalence",
     "examples.ddi",
     "examples.meta_analysis",
+    "examples.formats",
 ]
 
 

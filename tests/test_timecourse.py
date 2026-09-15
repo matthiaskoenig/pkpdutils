@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pkpdutils.timecourse import Dose, DosingRegimen, Route, Timecourse
+from pkpdutils.timecourse import Dose, Dosing, DosingRegimen, Route, Timecourse
+from pkpdutils.units import ureg
 
 
 def test_route() -> None:
@@ -41,6 +42,23 @@ def test_dose_infusion_requires_duration() -> None:
         Dose(amount=1, unit="mg", route=Route.IV_INFUSION)
     dose = Dose(amount=1, unit="mg", route=Route.IV_INFUSION, duration=0.5)
     assert dose.duration == 0.5
+
+
+def test_dose_infusion_rejects_a_nan_duration() -> None:
+    # `NaN <= 0` is False: an unknown duration must not pass as an infusion
+    with pytest.raises(ValueError, match="duration"):
+        Dose(amount=1, unit="mg", route=Route.IV_INFUSION, duration=float("nan"))
+
+
+def test_dosing_infusion_rejects_a_nan_duration() -> None:
+    with pytest.raises(ValueError, match="duration"):
+        Dosing(
+            amounts=[1, 1],
+            times=[0, 12],
+            durations=[0.5, np.nan],
+            unit="mg",
+            route=Route.IV_INFUSION,
+        )
 
 
 def test_dose_duration_only_for_infusion() -> None:
@@ -251,3 +269,126 @@ def test_timecourse_from_dataframe_columns() -> None:
     )
     np.testing.assert_allclose(tc.time, [0, 1, 2])
     assert str(tc.time_q.units) == "minute"
+
+
+def test_dosing_validation_and_properties() -> None:
+    d = Dosing(amounts=[100, 100, 50], times=[0, 12, 24], unit="mg", route=Route.ORAL)
+    assert d.n_doses == 3 and len(d) == 3
+    assert d.times.tolist() == [0.0, 12.0, 24.0]
+    assert d.intervals.tolist() == [12.0, 12.0]
+    assert d.tau == 12.0 and d.is_regular
+    assert d.first.amount == 100.0 and d.last.amount == 50.0 and d.last.time == 24.0
+    assert d.total_amount == 250.0 and d.quantity.units == ureg.mg
+    assert not d.per_bodyweight
+    assert d.durations is None
+    irregular = Dosing(amounts=[1, 1, 1], times=[0, 8, 24], unit="mg")
+    assert irregular.tau is None and not irregular.is_regular
+    single = Dosing.single(Dose(amount=5, unit="mg/kg", route=Route.IV_BOLUS, time=2.0))
+    assert (
+        single.n_doses == 1
+        and single.tau is None
+        and single.per_bodyweight
+        and single.route is Route.IV_BOLUS
+    )
+    assert single.shifted(2.0).times.tolist() == [0.0]
+
+
+def test_dosing_sorts_and_rejects_duplicates_and_mixed_routes() -> None:
+    d = Dosing(amounts=[1, 2], times=[12, 0], unit="mg")
+    assert d.times.tolist() == [0.0, 12.0] and d.amounts.tolist() == [2.0, 1.0]
+    with pytest.raises(ValueError, match="Duplicate"):
+        Dosing(amounts=[1, 1], times=[0, 0], unit="mg")
+    with pytest.raises(ValueError, match="length"):
+        Dosing(amounts=[1, 1], times=[0], unit="mg")
+    with pytest.raises(ValueError, match="at least one"):
+        Dosing(amounts=[], times=[], unit="mg")
+    with pytest.raises(ValueError, match="duration"):
+        Dosing(amounts=[1], times=[0], unit="mg", route=Route.IV_INFUSION)
+    with pytest.raises(ValueError, match="duration"):
+        Dosing(amounts=[1], times=[0], durations=[0.5], unit="mg", route=Route.ORAL)
+    inf = Dosing(
+        amounts=[1, 1],
+        times=[0, 12],
+        durations=[0.5, 0.5],
+        unit="mg",
+        route=Route.IV_INFUSION,
+    )
+    assert inf.doses[1].duration == 0.5
+    with pytest.raises(ValueError, match="route"):
+        Dosing.from_doses(
+            [
+                Dose(amount=1, unit="mg"),
+                Dose(amount=1, unit="mg", route=Route.IV_BOLUS, time=1),
+            ]
+        )
+    with pytest.raises(ValueError, match="unit"):
+        Dosing.from_doses(
+            [Dose(amount=1, unit="mg"), Dose(amount=1, unit="mmol", time=1)]
+        )
+
+
+def test_dosing_regimen_constructors() -> None:
+    dose = Dose(amount=100, unit="mg", route=Route.ORAL, time=1.0)
+    d = Dosing.regimen(dose, interval=12, n_doses=4)
+    assert (
+        d.times.tolist() == [1.0, 13.0, 25.0, 37.0]
+        and d.amounts.tolist() == [100.0] * 4
+    )
+    assert DosingRegimen(dose=dose, interval=12, n_doses=4).dosing() == d
+    with pytest.raises(ValueError, match="n_doses"):
+        DosingRegimen(dose=dose, interval=12).dosing()
+    assert Dosing.from_doses(d.doses) == d
+
+
+def test_timecourse_dose_keyword_and_property() -> None:
+    dose = Dose(amount=100, unit="mg", route=Route.ORAL, time=0.5)
+    tc = Timecourse(
+        time=[1, 2, 4], value=[1, 2, 1], time_unit="hr", unit="mg/l", dose=dose
+    )
+    assert tc.dosing is not None and tc.dosing.n_doses == 1
+    assert tc.dose == dose
+    protocol = Dosing.regimen(dose, interval=12, n_doses=3)
+    tc2 = Timecourse(
+        time=[1, 2, 4, 13, 25, 30],
+        value=[1, 2, 1, 3, 3, 2],
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    assert tc2.dose == dose and tc2.dosing == protocol
+    with pytest.raises(ValueError, match="not both"):
+        Timecourse(
+            time=[1], value=[1], time_unit="hr", unit="mg/l", dose=dose, dosing=protocol
+        )
+    assert (
+        Timecourse(time=[1, 2], value=[1, 2], time_unit="hr", unit="mg/l").dose is None
+    )
+
+
+def test_relative_to_dose_first_and_last() -> None:
+    protocol = Dosing(amounts=[1, 1], times=[2, 14], unit="mg")
+    tc = Timecourse(
+        time=[3, 8, 15, 20],
+        value=[1, 2, 3, 4],
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    first = tc.relative_to_dose()
+    assert (
+        first.time.tolist() == [1, 6, 13, 18]
+        and first.dosing is not None
+        and first.dosing.times.tolist() == [0.0, 12.0]
+    )
+    last = tc.relative_to_dose(which="last")
+    assert (
+        last.time.tolist() == [-11, -6, 1, 6]
+        and last.dosing is not None
+        and last.dosing.times.tolist() == [-12.0, 0.0]
+    )
+    assert (
+        Timecourse(
+            time=[1, 2], value=[1, 2], time_unit="hr", unit="mg/l"
+        ).relative_to_dose()
+        is not None
+    )

@@ -11,7 +11,7 @@ from pkpdutils.plot.fit import (
     plot_goodness_of_fit,
 )
 from pkpdutils.plot.meta import plot_forest
-from pkpdutils.plot.nca import plot_nca, plot_nca_grid
+from pkpdutils.plot.nca import plot_intervals, plot_nca, plot_nca_grid
 from pkpdutils.plot.parameters import plot_parameters
 from pkpdutils.plot.ratio import plot_ratio
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
@@ -25,6 +25,7 @@ __all__ = [
     "plot_fit",
     "plot_forest",
     "plot_goodness_of_fit",
+    "plot_intervals",
     "plot_nca",
     "plot_nca_grid",
     "plot_parameters",

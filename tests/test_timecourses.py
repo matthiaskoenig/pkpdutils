@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from pkpdutils.timecourse import Dose, Route, Timecourse, Timecourses
+from pkpdutils.timecourse import Dose, Dosing, Route, Timecourse, Timecourses
 
 T = np.array([0.0, 1.0, 2.0, 4.0])
 V = np.array([[0.0, 2.0, 1.5, 0.5], [0.0, 3.0, 2.0, 1.0], [0.0, 1.0, 0.8, 0.3]])
@@ -42,10 +42,11 @@ def test_from_arrays_layout() -> None:
     assert tcs.has_dose and not tcs.has_uncertainty
     dose_amount = tcs.dose_amount
     assert dose_amount is not None
-    np.testing.assert_allclose(dose_amount, [100, 100, 100])
+    assert tcs.n_dose == 1
+    np.testing.assert_allclose(dose_amount, [[100], [100], [100]])
     dose_time = tcs.dose_time
     assert dose_time is not None
-    np.testing.assert_allclose(dose_time, [0, 0, 0])
+    np.testing.assert_allclose(dose_time, [[0], [0], [0]])
     assert tcs.dose_unit == "mg"
     assert tcs.sd is None and tcs.n is None
 
@@ -66,7 +67,7 @@ def test_from_arrays_two_sample_dims() -> None:
     assert tcs.n_samples == 6
     dose_amount = tcs.dose_amount
     assert dose_amount is not None
-    np.testing.assert_allclose(dose_amount[1], [100, 100, 100])
+    np.testing.assert_allclose(dose_amount[1], [[100], [100], [100]])
     tc = tcs.sel(dose=100, individual="b")
     np.testing.assert_allclose(tc.value, 2 * V[1])
     assert tc.dose is not None and tc.dose.amount == 100
@@ -189,7 +190,7 @@ def test_from_timecourses_uncertainty_and_dose() -> None:
     np.testing.assert_allclose(tcs_n, [4, 6])
     dose_amount = tcs.dose_amount
     assert dose_amount is not None
-    np.testing.assert_allclose(dose_amount, [50, 100])
+    np.testing.assert_allclose(dose_amount, [[50], [100]])
 
 
 def test_to_dataframe_long() -> None:
@@ -270,7 +271,7 @@ def test_from_dataframe_shared_grid() -> None:
     np.testing.assert_allclose(tcs.values, V)
     dose_amount = tcs.dose_amount
     assert dose_amount is not None
-    np.testing.assert_allclose(dose_amount, [100, 100, 100])
+    np.testing.assert_allclose(dose_amount, [[100], [100], [100]])
     assert "times" not in tcs.ds
 
 
@@ -337,8 +338,9 @@ def test_from_dataframe_missing_combination() -> None:
     )
     assert tcs.sample_shape == (2, 2)
     missing = tcs.sel(dose=100, individual="b")
-    assert missing.dose is None
+    assert missing.dose is None and missing.dosing is None
     assert np.isnan(missing.value).all()
+    assert tcs.dosing_of(dose=100, individual="b") is None
     assert len(list(tcs)) == 4
     for dose_amount, name in ((50, "a"), (50, "b"), (100, "a")):
         tc = tcs.sel(dose=dose_amount, individual=name)
@@ -481,3 +483,195 @@ def test_from_xresult_duck_typed() -> None:
     tc = tcs.isel()
     assert tc.dose is not None and tc.dose.route is Route.IV_BOLUS
     np.testing.assert_allclose(tc.time, time)
+
+
+def test_batch_carries_protocols_padded() -> None:
+    t = np.array([1.0, 2.0, 4.0, 13.0, 25.0])
+    a = Timecourse(
+        time=t,
+        value=[1, 2, 1, 3, 3],
+        time_unit="hr",
+        unit="mg/l",
+        label="a",
+        dosing=Dosing(amounts=[100, 100], times=[0, 12], unit="mg"),
+    )
+    b = Timecourse(
+        time=t,
+        value=[1, 2, 1, 3, 3],
+        time_unit="hr",
+        unit="mg/l",
+        label="b",
+        dose=Dose(amount=50, unit="mg", time=0.0),
+    )
+    batch = Timecourses.from_timecourses([a, b], labels=["a", "b"])
+    assert batch.n_dose == 2 and batch.has_dose
+    assert batch.dose_amount is not None and batch.dose_amount.shape == (2, 2)
+    assert batch.dose_amount[0].tolist() == [100.0, 100.0]
+    assert batch.dose_amount[1][0] == 50.0 and np.isnan(batch.dose_amount[1][1])
+    assert batch.dose_time is not None and batch.dose_time[0].tolist() == [0.0, 12.0]
+    assert batch.n_doses is not None and batch.n_doses.tolist() == [2, 1]
+    assert batch.last_dose_time is not None and batch.last_dose_time.tolist() == [
+        12.0,
+        0.0,
+    ]
+    assert batch.first_dose_amount is not None and batch.first_dose_amount.tolist() == [
+        100.0,
+        50.0,
+    ]
+    assert list(batch.ds["dose_amount"].dims) == ["individual", "dose_index"]
+    assert batch.dosing_of(individual="a") == a.dosing
+    assert batch.dosing_of(individual="b") == b.dosing
+    assert batch.sel(individual="a") == a
+    assert [tc.dosing for tc in batch] == [a.dosing, b.dosing]
+
+
+def test_from_arrays_with_a_protocol_and_with_padded_mapping() -> None:
+    time = np.array([1.0, 2.0, 4.0, 13.0])
+    values = np.ones((3, 4))
+    protocol = Dosing(amounts=[10, 10], times=[0, 12], unit="mg", route=Route.IV_BOLUS)
+    batch = Timecourses.from_arrays(
+        time, values, time_unit="hr", unit="mg/l", dose=protocol, route=None
+    )
+    assert (
+        batch.dose_amount is not None
+        and batch.dose_amount.shape == (3, 2)
+        and batch.route is Route.IV_BOLUS
+    )
+    mapping = {
+        "amount": np.array([[10, 10], [20, np.nan], [10, 5]]),
+        "time": np.array([[0, 12], [0, np.nan], [0, 24]]),
+        "unit": "mg",
+    }
+    batch2 = Timecourses.from_arrays(
+        time, values, time_unit="hr", unit="mg/l", dose=mapping, route=Route.ORAL
+    )
+    assert batch2.n_doses is not None and batch2.n_doses.tolist() == [2, 1, 2]
+    assert batch2.dosing_of(individual=2) == Dosing(
+        amounts=[10, 5], times=[0, 24], unit="mg", route=Route.ORAL
+    )
+    with pytest.raises(ValueError, match="time"):
+        Timecourses.from_arrays(
+            time,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            dose={"amount": mapping["amount"], "unit": "mg"},
+            route=Route.ORAL,
+        )
+
+
+def test_from_dataframe_builds_protocols_from_dose_rows() -> None:
+    rows = []
+    for subject, doses in (
+        ("s1", [(0.0, 100.0), (12.0, 100.0)]),
+        ("s2", [(0.0, 50.0)]),
+    ):
+        for i, t in enumerate([1.0, 2.0, 13.0]):
+            dt, da = doses[min(i, len(doses) - 1)]
+            rows.append(
+                {
+                    "subject": subject,
+                    "time": t,
+                    "value": 1.0 + i,
+                    "dose_amount": da,
+                    "dose_time": dt,
+                }
+            )
+    df = pd.DataFrame(rows)
+    batch = Timecourses.from_dataframe(
+        df,
+        sample=["subject"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="dose_amount",
+        dose_unit="mg",
+        dose_time="dose_time",
+        route=Route.ORAL,
+    )
+    assert batch.dosing_of(subject="s1") == Dosing(
+        amounts=[100, 100], times=[0, 12], unit="mg", route=Route.ORAL
+    )
+    assert batch.dosing_of(subject="s2") == Dosing(
+        amounts=[50], times=[0], unit="mg", route=Route.ORAL
+    )
+
+
+def test_single_dose_batch_layout_is_one_column() -> None:
+    time = np.array([1.0, 2.0])
+    batch = Timecourses.from_arrays(
+        time,
+        np.ones((2, 2)),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=1, unit="mg"),
+        route=None,
+    )
+    assert batch.n_dose == 1 and batch.dose_time is not None
+    assert batch.dose_time.shape == (2, 1)
+    assert batch.dosing_of(individual=0) == Dosing.single(Dose(amount=1, unit="mg"))
+
+
+def test_from_arrays_mapping_sorts_rows_by_time() -> None:
+    batch = Timecourses.from_arrays(
+        np.array([1.0, 2.0]),
+        np.ones((1, 2)),
+        time_unit="hr",
+        unit="mg/l",
+        dose={
+            "amount": np.array([[100.0, 50.0]]),
+            "time": np.array([[12.0, 0.0]]),
+            "unit": "mg",
+        },
+        route=Route.ORAL,
+    )
+    assert batch.first_dose_amount is not None
+    assert batch.first_dose_amount.tolist() == [50.0]
+    assert batch.last_dose_amount is not None
+    assert batch.last_dose_amount.tolist() == [100.0]
+    assert batch.dose_time is not None and batch.dose_time[0].tolist() == [0.0, 12.0]
+    assert batch.dosing_of(individual=0) == Dosing(
+        amounts=[50, 100], times=[0, 12], unit="mg", route=Route.ORAL
+    )
+
+
+def test_from_arrays_mapping_rejects_interleaved_nan_and_duplicates() -> None:
+    time = np.array([1.0, 2.0])
+    values = np.ones((1, 2))
+    with pytest.raises(ValueError, match="NaN"):
+        Timecourses.from_arrays(
+            time,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            dose={
+                "amount": np.array([[np.nan, 10.0]]),
+                "time": np.array([[0.0, np.nan]]),
+                "unit": "mg",
+            },
+            route=Route.ORAL,
+        )
+    with pytest.raises(ValueError, match="Duplicate"):
+        Timecourses.from_arrays(
+            time,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            dose={
+                "amount": np.array([[10.0, 10.0]]),
+                "time": np.array([[0.0, 0.0]]),
+                "unit": "mg",
+            },
+            route=Route.ORAL,
+        )
+
+
+def test_dose_index_is_a_reserved_sample_dimension() -> None:
+    with pytest.raises(ValueError, match="dose_index"):
+        Timecourses.from_arrays(
+            T,
+            V,
+            time_unit="hr",
+            unit="mg/l",
+            dims=("dose_index",),
+            dose=Dose(amount=100, unit="mg"),
+        )

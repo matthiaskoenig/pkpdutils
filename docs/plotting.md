@@ -4,7 +4,7 @@ The figures of `pkpdutils.plot` are matplotlib figures. Every function returns t
 
 ## Timecourses
 
-`plot_timecourse` draws one curve or every curve of a batch, with the standard error (or the standard deviation) as error bars when present, one color per sample, and the legend from the sample labels or from a coordinate of the batch (`by="individual"`).
+`plot_timecourse` draws one curve or every curve of a batch, with the standard error (or the standard deviation) as error bars when present, one color per sample, and the legend from the sample labels or from a coordinate of the batch (`by="individual"`). A curve carrying a dosing protocol of more than one dose gets a thin dotted vertical line at every dose time (`style.dose_color`, default `"gray"`); a batch draws no dose lines, since its curves may carry different protocols.
 
 ```python
 from pkpdutils.plot import plot_timecourse
@@ -15,7 +15,7 @@ fig.savefig("curves.png")
 
 ## NCA diagnostics
 
-`plot_nca` shows what the analysis did with one curve, on a linear and a logarithmic axis: the data, the area to \(t_\mathrm{last}\), the extrapolated tail, the terminal regression line and the points it used, \(C_\mathrm{max}\)/\(t_\mathrm{max}\), \(C_0\) for a bolus, and the flags in the title. For a batch, `plot_nca_grid` draws one such panel per sample.
+`plot_nca` shows what the analysis did with one curve, on a linear and a logarithmic axis: the data, the area to \(t_\mathrm{last}\), the extrapolated tail, the terminal regression line and the points it used, \(C_\mathrm{max}\)/\(t_\mathrm{max}\), \(C_0\) for a bolus, and the flags in the title. A multiple dose result (carrying `auc_tau`) shades the analysed last dosing interval `[0, tau]`, relative to the last dose, labelled `AUC(0-tau)` instead of `AUC(0-tlast)`. For a batch, `plot_nca_grid` draws one such panel per sample.
 
 ```python
 from pkpdutils.plot import plot_nca, plot_nca_grid
@@ -23,6 +23,15 @@ from pkpdutils.plot import plot_nca, plot_nca_grid
 fig = plot_nca(tc, nca_single(tc))
 fig = plot_nca(batch.sel(individual="s2"), result, individual="s2")
 fig = plot_nca_grid(batch, result, ncols=4)
+```
+
+`plot_intervals` plots a per-interval parameter (`interval_*`) against the interval number, one line per sample of a batch result or a single line with `**indexers` selecting one sample; a missing (incomplete) interval breaks the line rather than raising.
+
+```python
+from pkpdutils.plot import plot_intervals
+
+fig = plot_intervals(result, "interval_ctrough")  # one line per sample
+fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 ```
 
 ![NCA diagnostics](images/nca_single.png)

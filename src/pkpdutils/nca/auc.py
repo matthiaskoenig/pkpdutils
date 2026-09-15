@@ -121,6 +121,36 @@ def auc_aumc(
     return area.sum(axis=1), moment.sum(axis=1)
 
 
+def time_above_threshold(
+    tp: np.ndarray, cp: np.ndarray, n_valid: np.ndarray, threshold: float
+) -> np.ndarray:
+    """Total time the linearly interpolated curve is above a threshold, per row.
+
+    Args:
+        tp: packed times `(N, n)`
+        cp: packed values `(N, n)`
+        n_valid: valid points per row
+        threshold: the threshold
+
+    Returns:
+        The total time above the threshold `(N,)`.
+    """
+    t1, t2 = tp[:, :-1], tp[:, 1:]
+    c1, c2 = cp[:, :-1], cp[:, 1:]
+    in_curve = np.arange(tp.shape[1] - 1)[None, :] < (n_valid - 1)[:, None]
+    dt = t2 - t1
+    with np.errstate(invalid="ignore"):
+        a1 = c1 > threshold
+        a2 = c2 > threshold
+    with np.errstate(divide="ignore", invalid="ignore"):
+        frac = (threshold - c1) / (c2 - c1)  # position of the crossing in the segment
+    both = np.where(a1 & a2, dt, 0.0)
+    rising = np.where(~a1 & a2, dt * (1.0 - frac), 0.0)
+    falling = np.where(a1 & ~a2, dt * frac, 0.0)
+    total = np.where(in_curve, both + rising + falling, 0.0)
+    return np.nansum(total, axis=1)
+
+
 def interpolate_at(
     tp: np.ndarray,
     cp: np.ndarray,

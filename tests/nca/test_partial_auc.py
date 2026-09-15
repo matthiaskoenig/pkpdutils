@@ -58,7 +58,7 @@ def test_partial_auc_whole_range_equals_auc_last() -> None:
     # auc_last of a bolus includes the inserted (0, C0) segment, so compare against the area from the first sample
     result = nca(
         tcs.__class__.from_timecourses(
-            [tc.model_copy(update={"dose": None}) for tc in tcs]
+            [tc.model_copy(update={"dosing": None}) for tc in tcs]
         ),
         options,
     )

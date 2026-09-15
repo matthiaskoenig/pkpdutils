@@ -1,0 +1,3 @@
+# intervals
+
+::: pkpdutils.nca.intervals

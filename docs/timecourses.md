@@ -12,7 +12,37 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 
 **Batches.** `Timecourses` wraps an [xarray](https://xarray.dev) dataset with a `time` dimension and any number of *sample dimensions*: the individuals of a study, the groups of a publication, the doses of a dose escalation, the dimensions of a simulation scan. Every analysis of the package is vectorized over the sample dimensions and returns a dataset over the same dimensions, so the parameters of a thousand curves are one call. Curves with different sampling times are stored per sample and padded with `NaN`, the `times` and `values` properties return the padded `(samples..., time)` arrays.
 
-**Repeated dosing.** A `DosingRegimen` is a dose given every `interval` for `n_doses` administrations; steady state analyses need the interval \(\tau\).
+**Repeated dosing.** A timecourse is accompanied by its dosing protocol, not a single dose: the vector of the doses given and the times they were given, see [Dosing protocols](#dosing-protocols).
+
+## Dosing protocols
+
+A `Dosing` is a frozen model of the doses given and the times they were given: `amounts`, `times` and `durations` (`None` unless the route is `IV_INFUSION`), one `unit` and one `route` for the whole protocol. The doses are sorted by time on construction and duplicate times raise. `Dosing.single(dose)` wraps a single `Dose` into a protocol of one, `Dosing.from_doses(doses)` builds one from a list of `Dose` objects sharing a unit and a route, and `Dosing.regimen(dose, interval, n_doses)` builds a regular protocol at `dose.time + k * interval`; `DosingRegimen(dose=..., interval=..., n_doses=...).dosing()` delegates to the same constructor and stays the convenient way to describe a regimen.
+
+`n_doses`, `doses` (the protocol as a list of `Dose`), `first` and `last` (the first and the last `Dose`), `intervals` (`np.diff(times)`), `tau` (the common interval when every interval is equal within a relative tolerance, `None` for an irregular protocol or a single dose), `is_regular`, `total_amount` and `shifted(offset)` (a copy with every time shifted by `-offset`) read and transform a protocol.
+
+`Timecourse.dosing` carries the protocol of one curve, `None` without dose information. The constructor also accepts a single `dose: Dose` keyword for backwards compatibility, converted into a protocol of one dose (giving both `dose` and `dosing` raises); `Timecourse.dose` is a read-only property returning the first dose of the protocol (or `None`), so `tc.dose.amount`, `tc.dose.route` and `tc.dose.time` keep working for a single dose curve. `relative_to_dose(which="first" | "last")` shifts the curve and its protocol so that the chosen dose is at time 0, which the non-compartmental analysis of a multiple dose curve uses to report the point parameters from the last dose on, see [Non-compartmental analysis](nca.md).
+
+```python
+from pkpdutils import Dose, Dosing, DosingRegimen, Route, Timecourse
+
+dose = Dose(amount=100, unit="mg", time=0, route=Route.ORAL)
+protocol = Dosing.regimen(dose, interval=12, n_doses=4)  # 4 doses every 12 hr
+same = DosingRegimen(dose=dose, interval=12, n_doses=4).dosing()
+print(protocol.tau, protocol.total_amount)  # 12.0, 400.0
+
+tc = Timecourse(
+    time=[0.5, 1, 2, 11.5, 12.5, 13, 14, 23.5, 47.5],
+    value=[0.9, 1.7, 2.6, 0.4, 1.0, 1.8, 2.5, 0.5, 0.2],
+    time_unit="hr",
+    unit="mg/l",
+    dosing=protocol,
+    substance="drug",
+)
+print(tc.dose.amount)  # the first dose, 100 mg
+shifted = tc.relative_to_dose(which="last")
+print(shifted.dosing.last.time)  # 0.0
+print(shifted.dosing.first.time)  # -36.0
+```
 
 ## Data layout of a batch
 
@@ -21,11 +51,11 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 | `value` | `(*sample, time)` | the values, `NaN` for missing points |
 | `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
 | `n` | `(*sample)` | number of subjects of group data (optional), one number per sample; an `n` which varies over the time points of a curve is reduced to its maximum with a warning |
-| `dose_amount`, `dose_time`, `dose_duration` | `(*sample)` | the doses (optional), `dose_duration` is `NaN` without infusion |
+| `dose_amount`, `dose_time`, `dose_duration` | `(*sample, dose_index)` | the dosing protocol of every sample (optional), the doses at the front of the row and the remaining columns `NaN`; `dose_duration` is `NaN` without infusion |
 | `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
 | `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
 
-Every variable carries `attrs["units"]`; the dataset carries `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when doses are present. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results. Several sample dimensions span their cartesian product: a combination without data is a sample of `NaN` values, which iteration and `sel`/`isel` return as a `Timecourse` with `NaN` values and without a dose.
+Every variable carries `attrs["units"]`; the dataset carries `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when doses are present. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results. Several sample dimensions span their cartesian product: a combination without data is a sample of `NaN` values, which iteration and `sel`/`isel` return as a `Timecourse` with `NaN` values and without a dose. The dose dimension is called `dose_index` so that `dose` stays free as a sample dimension (the dose groups of a dose proportionality study, the dose axis of a simulation scan); a single dose batch has one dose column, and `n_doses`, `first_dose_amount`, `last_dose_time` and `dosing_of` read the protocol of a sample back.
 
 ## API
 

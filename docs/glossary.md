@@ -24,12 +24,17 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over a dosing interval | value·time | [NCA](nca.md) |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, trough and average over the interval | value | [NCA](nca.md) |
 | `fluctuation`, `swing` | | peak–trough fluctuation and swing over the interval | – | [NCA](nca.md) |
-| `accumulation_ratio` | \(R\) | accumulation at steady state | – | [NCA](nca.md) |
-| `cl_ss` | \(\mathrm{CL}_\mathrm{ss}\) | clearance at steady state | l/h | [NCA](nca.md) |
+| `accumulation_ratio` | \(R_\mathrm{pred}\) | accumulation at steady state, predicted from \(\lambda_z\) | – | [NCA](nca.md) |
+| `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first dosing interval of a protocol | – | [NCA](nca.md) |
+| `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | clearance at steady state (`_f`: extravascular) | l/h | [NCA](nca.md) |
+| `n_doses`, `tau` | \(K\), \(\tau\) | number of doses of the protocol, length of the last dosing interval | –, time | [NCA](nca.md) |
+| `interval_auc`, `interval_cmax`, `interval_tmax`, `interval_cmin`, `interval_ctrough`, `interval_c_start`, `interval_cavg`, `interval_fluctuation`, `interval_swing`, `interval_n_points` | | parameters of every single dosing interval, over the extra dimension `interval` | value·time, value, time, value, value, value, value, –, –, – | [NCA](nca.md) |
+| `interval_start`, `interval_end`, `interval_dose` | | bounds and dose amount of a dosing interval (columns of `NCAResult.intervals()`) | time, time, dose | [NCA](nca.md) |
 | `e0`, `emax_obs`, `temax` | | baseline, maximum effect and its time | value, value, time | [NCA](nca.md) |
 | `auec_last`, `auec_baseline` | \(\mathrm{AUEC}\) | area under the effect curve, raw and baseline corrected | value·time | [NCA](nca.md) |
 | `emax_baseline`, `time_above` | | baseline corrected maximum, time above a threshold | value, time | [NCA](nca.md) |
-| `flags` | | `NCAFlag` bits | – | [NCA](nca.md) |
+| `auec_tau`, `emin_ss`, `emax_ss`, `eavg`, `time_above_tau` | | steady state effect parameters of the last dosing interval, and `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg`, `interval_time_above` per interval | value·time, value, value, value, time | [Pharmacodynamics](pd.md) |
+| `flags` | | `NCAFlag` bits, including `INCOMPLETE_INTERVAL` and `EXTRAPOLATED_TROUGH` of a multiple dose analysis | – | [NCA](nca.md) |
 | `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |

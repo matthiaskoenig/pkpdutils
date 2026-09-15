@@ -16,7 +16,7 @@ from pkpdutils.timecourse import Timecourse, Timecourses
 def fit_timecourse(
     model: Model, timecourse: Timecourse, *, options: FitOptions | None = None
 ) -> FitResult:
-    """Fit a model to one timecourse, with the times relative to the dose.
+    """Fit a model to one timecourse, with the times relative to the first dose.
 
     The curve is fitted as a batch of one (`fit_timecourses`) and the single
     sample is dropped from the result, so the result has no sample dimension
@@ -24,7 +24,7 @@ def fit_timecourse(
     indexer.
 
     Args:
-        model: the model (`x` is the time relative to the dose, `y` the value)
+        model: the model (`x` is the time relative to the first dose, `y` the value)
         timecourse: the curve; its `sd` is used for `Weighting.INV_SD`
 
     Keyword Args:
@@ -43,18 +43,19 @@ def fit_timecourse(
 def fit_timecourses(
     model: Model, timecourses: Timecourses, *, options: FitOptions | None = None
 ) -> FitResult:
-    """Fit a model to every curve of a batch, with the times relative to the dose.
+    """Fit a model to every curve of a batch, with the times relative to the first dose.
 
     The batch is flattened to `(N, n_time)` rows over its sample dimensions
     (any number of them) and fitted with `fit_rows`; the result is then
-    reshaped back to `timecourses.sample_shape`. `x` is `times - dose_time`
-    when the batch carries a dose, else `times` unchanged; `NaN`-padded
+    reshaped back to `timecourses.sample_shape`. `x` is the time relative to
+    the first dose of the protocol when the batch carries doses, else `times`
+    unchanged; `NaN`-padded
     (ragged) times stay `NaN` and are dropped by the engine. Parameters are
     reported in the raw units of the batch, `x_unit = timecourses.time_unit`
     and `y_unit = timecourses.unit`.
 
     Args:
-        model: the model (`x` is the time relative to the dose, `y` the value)
+        model: the model (`x` is the time relative to the first dose, `y` the value)
         timecourses: the batch; `sd` is used for `Weighting.INV_SD`
 
     Keyword Args:
@@ -66,9 +67,9 @@ def fit_timecourses(
     options = options or FitOptions()
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     x = timecourses.times.reshape(n_rows, n_time)
-    dose_time = timecourses.dose_time
-    if dose_time is not None:
-        x = x - np.asarray(dose_time, dtype=np.float64).reshape(n_rows)[:, None]
+    first_dose_time = timecourses.first_dose_time
+    if first_dose_time is not None:
+        x = x - np.asarray(first_dose_time, dtype=np.float64).reshape(n_rows)[:, None]
     y = timecourses.values.reshape(n_rows, n_time)
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
     rows = fit_rows(model, x, y, sd, options)

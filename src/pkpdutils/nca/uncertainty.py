@@ -72,6 +72,7 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "cl",
         "cl_f",
         "cl_ss",
+        "cl_ss_f",
         "vz",
         "vz_f",
         "vss",
@@ -80,6 +81,9 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "mrt",
         "auc_inf_dn",
         "cmax_dn",
+        "accumulation_ratio_obs",
+        "auec_tau",
+        "eavg",
     }
 )
 
@@ -99,6 +103,9 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "lambda_z_stderr",
         "flags",
         "n",
+        "n_doses",
+        "tau",
+        "interval_n_points",
     }
 )
 
@@ -394,18 +401,20 @@ def bootstrap(
     b = options.n_boot
 
     def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row array `B` times (the rows stay grouped).
+        """Repeat a per row dose array `B` times (the rows stay grouped).
 
         Args:
-            a: the array, or `None`.
+            a: the array of shape `(*sample_shape, n_dose)`, or `None`.
 
         Returns:
-            The repeated array `(N * B,)`, or `None`.
+            The repeated array `(N * B, n_dose)`, or `None`.
         """
         return (
             None
             if a is None
-            else np.repeat(np.asarray(a, dtype=np.float64).reshape(n_rows), b)
+            else np.repeat(
+                np.asarray(a, dtype=np.float64).reshape(n_rows, -1), b, axis=0
+            )
         )
 
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
@@ -418,7 +427,13 @@ def bootstrap(
         route=timecourses.route,
         options=options,
     )
-    replicates = {name: array.reshape(n_rows, b) for name, array in values.items()}
+    # the per-interval parameters carry an extra dimension and are no
+    # parameters of a sample: they are left to the point estimate
+    replicates = {
+        name: array.reshape(n_rows, b)
+        for name, array in values.items()
+        if array.ndim == 1
+    }
     n_subjects = (
         None
         if timecourses.n is None
@@ -491,18 +506,20 @@ def delta(
     c_pert[rows, cols] += np.repeat(h, n_time, axis=0)[rows, cols]
 
     def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row array `n_time` times (the rows stay grouped).
+        """Repeat a per row dose array `n_time` times (the rows stay grouped).
 
         Args:
-            a: the array, or `None`.
+            a: the array of shape `(*sample_shape, n_dose)`, or `None`.
 
         Returns:
-            The repeated array `(N * n,)`, or `None`.
+            The repeated array `(N * n, n_dose)`, or `None`.
         """
         return (
             None
             if a is None
-            else np.repeat(np.asarray(a, dtype=np.float64).reshape(n_rows), n_time)
+            else np.repeat(
+                np.asarray(a, dtype=np.float64).reshape(n_rows, -1), n_time, axis=0
+            )
         )
 
     logger.info("delta method: %d curves x %d perturbations", n_rows, n_time)
@@ -535,6 +552,8 @@ def delta(
             name in DISCRETE_PARAMETERS
             or base_name(name) is not None
             or name not in perturbed
+            # the per-interval parameters carry an extra dimension
+            or base.ndim > 1
         )
         if skip:
             continue

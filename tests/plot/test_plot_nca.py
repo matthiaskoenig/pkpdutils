@@ -1,13 +1,39 @@
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
+import pytest
 from matplotlib.figure import Figure
 
-from pkpdutils import Dose, Route, Timecourse, Timecourses
-from pkpdutils.nca import NCAOptions, nca, nca_single
-from pkpdutils.plot import PlotStyle, plot_nca, plot_nca_grid, plot_timecourse
+from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
+from pkpdutils.nca import AUCMethod, NCAOptions, nca, nca_single
+from pkpdutils.plot import (
+    PlotStyle,
+    plot_intervals,
+    plot_nca,
+    plot_nca_grid,
+    plot_timecourse,
+)
 
 matplotlib.use("Agg")
+
+
+def multiple_dose_tc(
+    n_doses: int = 3, tau: float = 12.0, c0: float = 10.0, k: float = 0.2
+) -> Timecourse:
+    """Superposition of a mono-exponential bolus curve given every `tau` hours."""
+    time = np.sort(
+        np.concatenate([np.arange(0, n_doses * tau + 0.01, 0.5), [n_doses * tau + 24]])
+    )
+    value = np.zeros_like(time)
+    for k_dose in range(n_doses):
+        shifted = time - k_dose * tau
+        value += np.where(shifted >= 0, c0 * np.exp(-k * shifted), 0.0)
+    dosing = Dosing.regimen(
+        Dose(amount=100, unit="mg", route=Route.IV_BOLUS), interval=tau, n_doses=n_doses
+    )
+    return Timecourse(
+        time=time, value=value, time_unit="hr", unit="mg/l", dosing=dosing
+    )
 
 
 def oral(ka: float = 2.0, label: str = "a") -> Timecourse:
@@ -123,3 +149,57 @@ def test_plot_nca_breaks_line_at_nan_without_bridging() -> None:
     # NaN itself instead of the previous, gap-bridging masked plot
     assert np.isnan(data_line.get_ydata()).any()
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_multiple_dose_shades_the_steady_state_interval() -> None:
+    tc = multiple_dose_tc()
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_nca(tc, result)
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    legend_labels = [text.get_text() for text in legend.get_texts()]
+    assert any("tau" in label for label in legend_labels)
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_intervals_one_line_per_sample() -> None:
+    a = multiple_dose_tc(n_doses=3, c0=10.0)
+    b = multiple_dose_tc(n_doses=3, c0=20.0)
+    batch = Timecourses.from_timecourses([a, b], labels=["one", "two"])
+    result = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_intervals(result)
+    ax = fig.axes[0]
+    assert len(ax.get_lines()) == 2
+    assert ax.get_ylabel().startswith("interval_auc [")
+    assert ax.get_xlabel() == "interval"
+    fig.canvas.draw()
+    tick_labels = [
+        label.get_text() for label in ax.xaxis.get_ticklabels() if label.get_text()
+    ]
+    assert tick_labels and all("." not in label for label in tick_labels), tick_labels
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_intervals_one_sample_with_indexers() -> None:
+    a = multiple_dose_tc(n_doses=3, c0=10.0)
+    b = multiple_dose_tc(n_doses=3, c0=20.0)
+    batch = Timecourses.from_timecourses([a, b], labels=["one", "two"])
+    result = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_intervals(result, individual="two")
+    ax = fig.axes[0]
+    assert len(ax.get_lines()) == 1
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_intervals_raises_without_intervals() -> None:
+    tc = oral()
+    result = nca_single(tc)
+    with pytest.raises(ValueError):
+        plot_intervals(result)
+
+
+def test_plot_intervals_raises_for_a_non_interval_name() -> None:
+    tc = multiple_dose_tc(n_doses=3)
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    with pytest.raises(ValueError):
+        plot_intervals(result, name="cmax")
