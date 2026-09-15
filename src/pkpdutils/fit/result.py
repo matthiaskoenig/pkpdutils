@@ -20,7 +20,8 @@ class FitResult(ParameterResult):
     `n_starts_converged`, `n_bootstrap` (number of successful residual
     bootstrap replicates, 0 without bootstrap; `attrs["bootstrap"]` holds the
     requested count); the data and the prediction per point (`x_data`,
-    `y_data`, `y_pred`, `residuals` over `point`); the correlation matrix over
+    `y_data`, `sd_data` - `NaN` when the fit had no `sd` -, `y_pred`,
+    `residuals` over `point`); the correlation matrix over
     `(parameter, parameter_)`; and the integer `flags` (`FitFlag`). The model
     object is kept for `predict`.
 

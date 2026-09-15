@@ -106,6 +106,7 @@ def test_monoexp_recovery_and_statistics() -> None:
     assert result.point_variables == [
         "x_data",
         "y_data",
+        "sd_data",
         "y_pred",
         "residuals",
         "correlation",

@@ -976,6 +976,7 @@ def _check_no_dimension_collision(model: Model, dims: tuple[str, ...]) -> None:
         "x_data",
         "y_data",
         "y_pred",
+        "sd_data",
         "residuals",
         "correlation",
         "flags",
@@ -1042,7 +1043,8 @@ def build_result(
         rows: one `RowFit` per row
         x: `(N, n)` independent variable
         y: `(N, n)` dependent variable
-        sd: `(N, n)` standard deviations or `None` (reported by a later task)
+        sd: `(N, n)` standard deviations or `None`, reported as `sd_data`
+            (`NaN` for every point when `None`)
         x_unit: unit of `x`
         y_unit: unit of `y`
         dims: sample dimension names (`()` for a single row)
@@ -1126,6 +1128,8 @@ def build_result(
     point_shape = (*sample_shape, n_points)
     data_vars["x_data"] = (point_dims, x.reshape(point_shape), {"units": x_unit})
     data_vars["y_data"] = (point_dims, y.reshape(point_shape), {"units": y_unit})
+    sd_values = np.full(point_shape, np.nan) if sd is None else sd.reshape(point_shape)
+    data_vars["sd_data"] = (point_dims, sd_values, {"units": y_unit})
     data_vars["y_pred"] = (
         point_dims,
         np.stack([r.y_pred for r in rows]).reshape(point_shape),
