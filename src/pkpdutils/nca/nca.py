@@ -25,7 +25,14 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from pkpdutils.nca.auc import auc_aumc, insert_point, interpolate_at, pack_valid
+from pkpdutils.nca.auc import (
+    auc_aumc,
+    insert_point,
+    interpolate_at,
+    pack_valid,
+    time_above_threshold,
+)
+from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_UNITS
 from pkpdutils.nca.options import (
     AUCMethod,
     BLQHandling,
@@ -92,8 +99,17 @@ PARAMETER_UNITS: dict[str, str] = {
     "fluctuation": "dimensionless",
     "swing": "dimensionless",
     "accumulation_ratio": "dimensionless",
+    "accumulation_ratio_obs": "dimensionless",
     "cl_ss": "({dose}) / (({unit}) * ({time}))",
+    "auec_tau": "({unit}) * ({time})",
+    "emin_ss": "{unit}",
+    "emax_ss": "{unit}",
+    "eavg": "{unit}",
+    "time_above_tau": "{time}",
+    "n_doses": "dimensionless",
+    "tau": "{time}",
     "flags": "dimensionless",
+    **INTERVAL_UNITS,
 }
 
 
@@ -199,40 +215,12 @@ def _effect_parameters(
     }
     if options.effect_threshold is not None:
         out["time_above"] = np.where(
-            has_data, _time_above(tp, cp, n_valid, options.effect_threshold), np.nan
+            has_data,
+            time_above_threshold(tp, cp, n_valid, options.effect_threshold),
+            np.nan,
         )
     out["flags"] = flags
     return out
-
-
-def _time_above(
-    tp: np.ndarray, cp: np.ndarray, n_valid: np.ndarray, threshold: float
-) -> np.ndarray:
-    """Total time the linearly interpolated curve is above a threshold, per row.
-
-    Args:
-        tp: packed times `(N, n)`
-        cp: packed values `(N, n)`
-        n_valid: valid points per row
-        threshold: the threshold
-
-    Returns:
-        The total time above the threshold `(N,)`.
-    """
-    t1, t2 = tp[:, :-1], tp[:, 1:]
-    c1, c2 = cp[:, :-1], cp[:, 1:]
-    in_curve = np.arange(tp.shape[1] - 1)[None, :] < (n_valid - 1)[:, None]
-    dt = t2 - t1
-    with np.errstate(invalid="ignore"):
-        a1 = c1 > threshold
-        a2 = c2 > threshold
-    with np.errstate(divide="ignore", invalid="ignore"):
-        frac = (threshold - c1) / (c2 - c1)  # position of the crossing in the segment
-    both = np.where(a1 & a2, dt, 0.0)
-    rising = np.where(~a1 & a2, dt * (1.0 - frac), 0.0)
-    falling = np.where(a1 & ~a2, dt * frac, 0.0)
-    total = np.where(in_curve, both + rising + falling, 0.0)
-    return np.nansum(total, axis=1)
 
 
 def compute_parameters(
@@ -458,41 +446,75 @@ def reference_dose(
     return picked[0], picked[1], picked[2]
 
 
+def is_multiple_dose(
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    options: NCAOptions,
+) -> bool:
+    """Whether a batch is analysed as a multiple dose batch.
+
+    A batch with a protocol of more than one dose in any of its rows, or with
+    `options.tau` (a steady state curve given with its last dose only), is
+    analysed over its dosing intervals (`compute_steady_state`); every other
+    batch is a single dose batch. The decision is taken for the whole batch, so
+    that every chunk of `run_rows` reports the same parameters.
+
+    Args:
+        dose_amount: dose amounts `(N, n_dose)`, `None` without doses
+        dose_time: dose times `(N, n_dose)`, `None` without doses
+        options: the options, `tau` is used
+
+    Returns:
+        Whether the multiple dose analysis applies.
+    """
+    if options.tau is not None:
+        return True
+    if dose_amount is None or dose_time is None:
+        return False
+    amounts = np.asarray(dose_amount, dtype=np.float64)
+    times = np.asarray(dose_time, dtype=np.float64)
+    given = np.isfinite(amounts.reshape(amounts.shape[0], -1)) & np.isfinite(
+        times.reshape(times.shape[0], -1)
+    )
+    counts = given.sum(axis=1)
+    return bool((counts >= 2).any())
+
+
 def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
     """Worker entry: the parameters of a chunk of rows.
 
-    The chunk carries the dose arrays of the batch, `(N, n_dose)`; the core
-    gets the reference dose of every row (`reference_dose`): the first dose of
-    the protocol for the single dose analysis, the last dose for the steady
-    state analysis. The steady state analysis runs through the same entry, so
-    a batch with a `regimen` is chunked and parallelized like a single dose
-    batch.
+    The chunk carries the dose arrays of the batch, `(N, n_dose)`. A single
+    dose batch is reduced to the one dose of every row (`reference_dose`) and
+    analysed by `compute_parameters`; a multiple dose batch keeps the whole
+    protocol and is analysed by `compute_steady_state`, which picks the last
+    dose of every row itself. Both paths run through the same entry, so a
+    multiple dose batch is chunked and parallelized like a single dose batch.
 
     Args:
-        args: the arguments of `compute_parameters` as a tuple, with the dose
-            arrays over the dose dimension.
+        args: the times, the values, the dose arrays over the dose dimension,
+            the route, the options and whether the multiple dose analysis
+            applies.
 
     Returns:
         The parameters of the rows of the chunk.
     """
-    t, c, dose_amount, dose_time, dose_duration, route, options = args
-    steady_state = options.regimen is not None
-    amount, time, duration = reference_dose(
-        dose_amount, dose_time, dose_duration, last=steady_state
-    )
-    if steady_state:
+    t, c, dose_amount, dose_time, dose_duration, route, options, multiple = args
+    if multiple:
         # the steady state analysis imports this module, so the import is local
         from pkpdutils.nca.steady_state import compute_steady_state
 
         return compute_steady_state(
             t,
             c,
-            dose_amount=amount,
-            dose_time=time,
-            dose_duration=duration,
+            dose_amount=dose_amount,
+            dose_time=dose_time,
+            dose_duration=dose_duration,
             route=route,
             options=options,
         )
+    amount, time, duration = reference_dose(
+        dose_amount, dose_time, dose_duration, last=False
+    )
     return compute_parameters(
         t,
         c,
@@ -521,8 +543,11 @@ def run_rows(
     chunks are mapped in order over a `ProcessPoolExecutor`.
 
     The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
-    padded with `NaN`; `_compute_chunk` reduces them to the reference dose of
-    the row (`reference_dose`). A 1-D array `(N,)` is one dose per row.
+    padded with `NaN`. A batch whose protocols hold more than one dose, or an
+    analysis with `options.tau`, is analysed over the dosing intervals
+    (`is_multiple_dose`, `pkpdutils.nca.steady_state.compute_steady_state`);
+    a single dose batch is reduced to the one dose of every row
+    (`reference_dose`). A 1-D array `(N,)` is one dose per row.
 
     Args:
         t: times `(N, n)`
@@ -540,6 +565,7 @@ def run_rows(
     # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
     # the memory of the vectorized core; the worker pool maps the chunks in order
     n_chunks = max(1, -(-n_rows // options.chunk_rows))
+    multiple = is_multiple_dose(dose_amount, dose_time, options)
     jobs = [
         (
             t[rows],
@@ -549,6 +575,7 @@ def run_rows(
             None if dose_duration is None else dose_duration[rows],
             route,
             options,
+            multiple,
         )
         for rows in np.array_split(np.arange(n_rows), n_chunks)
     ]
@@ -569,7 +596,14 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
 
     The rows are analysed in chunks of `options.chunk_rows` rows, in the calling
     process or, with `options.n_workers`, in a pool of worker processes; a
-    steady state analysis (`options.regimen`) is chunked the same way.
+    multiple dose analysis is chunked the same way.
+
+    A batch whose dosing protocols hold more than one dose (or an analysis with
+    `options.tau`) is analysed over its dosing intervals: the point parameters
+    are computed from the last dose on, the per-interval parameters
+    (`interval_*` over the dimension `interval`) over every dosing interval and
+    the steady state parameters from the last one, see
+    `pkpdutils.nca.steady_state`.
 
     A batch of group curves (`sd` or `se` per point) also carries the
     uncertainty of every parameter, by default from the parametric bootstrap
@@ -673,6 +707,7 @@ def _to_result(
     """
     coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     data_vars: dict[str, Any] = {}
+    n_intervals = 0
     for name, array in values.items():
         unit, factor = parameter_unit(
             unit_expression(name),
@@ -680,7 +715,15 @@ def _to_result(
             time_unit=timecourses.time_unit,
             dose_unit=timecourses.dose_unit,
         )
-        if name == "flags":
+        if array.ndim > 1:
+            # the per-interval parameters carry the extra dimension `interval`
+            n_intervals = array.shape[1]
+            data_vars[name] = (
+                (*timecourses.sample_dims, INTERVAL_DIM),
+                (array * factor).reshape((*shape, n_intervals)),
+                {"units": unit},
+            )
+        elif name == "flags":
             data_vars[name] = (
                 timecourses.sample_dims,
                 array.reshape(shape).astype(np.int64),
@@ -692,6 +735,10 @@ def _to_result(
                 (array * factor).reshape(shape),
                 {"units": unit},
             )
+    if n_intervals:
+        coords[INTERVAL_DIM] = xr.DataArray(
+            np.arange(1, n_intervals + 1), dims=INTERVAL_DIM
+        )
     check_coordinate_collision(coords, data_vars)
     ds = xr.Dataset(
         data_vars=data_vars, coords=coords, attrs={"substance": timecourses.substance}

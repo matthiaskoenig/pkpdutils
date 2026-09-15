@@ -144,19 +144,18 @@ result.flag_table()  # one boolean column per flag
 Steady state, with the dosing interval:
 
 ```python
-from pkpdutils import DosingRegimen
+from pkpdutils import Dosing
 from pkpdutils.nca import accumulation_ratio, superposition
 
-regimen = DosingRegimen(
-    dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS), interval=12
-)
-ss = nca(batch_ss, NCAOptions(regimen=regimen))  # auc_tau, cavg, fluctuation, ...
-sd = nca(batch_single, NCAOptions(regimen=regimen))
+dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
+# the dosing interval of a curve given with its last dose only
+ss = nca(batch_ss, NCAOptions(tau=12))  # auc_tau, cavg, fluctuation, ...
+sd = nca(batch_single, NCAOptions(tau=12))
 ratio = accumulation_ratio(ss, sd)  # observed accumulation
-predicted = superposition(
-    tc_single, DosingRegimen(dose=regimen.dose, interval=12, n_doses=10)
-)
+predicted = superposition(tc_single, Dosing.regimen(dose, interval=12, n_doses=10))
 ```
+
+A batch whose curves carry a dosing protocol of more than one dose is analysed over its dosing intervals without `tau`: the per-interval parameters (`interval_*`, `NCAResult.intervals()`), the steady state parameters of the last interval and the point parameters from the last dose on.
 
 Large batches are analysed in chunks of `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and run in worker processes with `NCAOptions(n_workers=4)`, which map the chunks in order; both apply to the steady state path as well. The analysis itself is vectorized, so the workers only pay off for many thousands of curves. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md); partial areas come from `partial_auc`. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 

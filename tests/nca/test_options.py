@@ -14,7 +14,6 @@ from pkpdutils.nca.options import (
     UncertaintyMethod,
     decode_flags,
 )
-from pkpdutils.timecourse import Dose, DosingRegimen
 
 
 def test_defaults() -> None:
@@ -28,7 +27,8 @@ def test_defaults() -> None:
     assert options.blq is BLQHandling.NAN
     assert options.c0_method is C0Method.LOG_BACK_EXTRAPOLATION
     assert options.extrapolation_warning == pytest.approx(0.2)
-    assert options.regimen is None
+    assert options.tau is None
+    assert options.intervals
     assert options.effect_threshold is None
     assert options.n_workers is None
     assert options.chunk_rows == 5000
@@ -66,8 +66,9 @@ def test_options_validation() -> None:
         NCAOptions(n_workers=0)
     with pytest.raises(ValueError):
         NCAOptions(chunk_rows=0)
-    regimen = DosingRegimen(dose=Dose(amount=100, unit="mg"), interval=12)
-    assert NCAOptions(regimen=regimen).regimen is regimen
+    with pytest.raises(ValueError):
+        NCAOptions(tau=0)
+    assert NCAOptions(tau=12.0).tau == 12.0
 
 
 def test_options_frozen() -> None:

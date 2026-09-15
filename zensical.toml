@@ -46,6 +46,7 @@ nav = [
       { "result" = "api/nca.result.md" },
       { "auc" = "api/nca.auc.md" },
       { "terminal" = "api/nca.terminal.md" },
+      { "intervals" = "api/nca.intervals.md" },
       { "steady_state" = "api/nca.steady_state.md" },
       { "uncertainty" = "api/nca.uncertainty.md" },
     ] },

@@ -1,4 +1,4 @@
-"""Steady state parameters and superposition.
+"""Steady state parameters of the last dosing interval and superposition.
 
 At steady state under repeated dosing every dosing interval `tau` looks the
 same; the exposure over one interval, `AUC(0-tau)`, equals the single dose
@@ -14,21 +14,60 @@ same; the exposure over one interval, `AUC(0-tau)`, equals the single dose
   `swing = (Cmax,ss - Cmin,ss) / Cmin,ss`,
 - `CLss = Dose / AUC(0-tau)`,
 - the accumulation ratio `R = 1 / (1 - exp(-lambda_z tau))` predicted from the
-  terminal phase, or observed as `AUC(0-tau)ss / AUC(0-tau)single`.
+  terminal phase, and `accumulation_ratio_obs`, the observed ratio of the
+  exposure of the last and of the first dosing interval of the protocol.
 
-`superposition` predicts the multiple dose curve from a single dose curve by
-adding the shifted single dose curves (linear superposition), which is valid
-for linear kinetics.
+`compute_steady_state` analyses the last dosing interval of the protocol of
+every row, `[t_K, t_K + tau]`, where `tau` is `NCAOptions.tau` or the distance
+of the last two doses; the parameters of every interval come from
+`pkpdutils.nca.intervals`. The point parameters of the same rows are computed
+from the last dose on: the values before it are dropped and the times are
+relative to it, so that `cmax`, `tmax`, the terminal phase and the
+extrapolated areas describe the last dosing interval and its decline.
+
+`superposition` predicts the multiple dose curve of a dosing protocol from a
+single dose curve by adding the shifted, dose-scaled single dose curves
+(linear superposition), which is valid for linear kinetics.
 """
 
 import numpy as np
 import xarray as xr
 
-from pkpdutils.nca.auc import auc_aumc, insert_point, interpolate_at, pack_valid
-from pkpdutils.nca.nca import compute_parameters, nca_single
-from pkpdutils.nca.options import NCAOptions
+from pkpdutils.nca.auc import interpolate_at, pack_valid
+from pkpdutils.nca.intervals import compute_intervals
+from pkpdutils.nca.nca import compute_parameters, nca_single, reference_dose
+from pkpdutils.nca.options import Kind, NCAFlag, NCAOptions
 from pkpdutils.nca.result import NCAResult
-from pkpdutils.timecourse import DosingRegimen, Route, Timecourse
+from pkpdutils.timecourse import Dosing, DosingRegimen, Route, Timecourse
+
+
+def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """Element `idx[i]` of row `i`.
+
+    Args:
+        a: array `(N, n)`
+        idx: one column index per row `(N,)`
+
+    Returns:
+        The selected elements `(N,)`.
+    """
+    return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
+
+
+def _interval_length(times: np.ndarray, counts: np.ndarray) -> np.ndarray:
+    """Length of the last dosing interval of every protocol, `t_K - t_{K-1}`.
+
+    Args:
+        times: dose times `(N, K)`, `NaN` padded
+        counts: number of doses per row `(N,)`
+
+    Returns:
+        The length `(N,)`, `NaN` for a protocol of one dose.
+    """
+    n_dose = times.shape[1]
+    last = np.clip(counts - 1, 0, n_dose - 1)
+    previous = np.clip(counts - 2, 0, n_dose - 1)
+    return np.where(counts >= 2, _take(times, last) - _take(times, previous), np.nan)
 
 
 def compute_steady_state(
@@ -41,106 +80,149 @@ def compute_steady_state(
     route: Route | None,
     options: NCAOptions,
 ) -> dict[str, np.ndarray]:
-    """Single dose and steady state parameters of every row over the dosing interval.
+    """Point, per-interval and steady state parameters of every row of a batch.
 
-    The dose arrays are one dose per row, the reference dose of the interval:
-    `pkpdutils.nca.nca.reference_dose` picks the last dose of the protocol of
-    every row of the batch before the chunk reaches this function.
+    The dose arrays carry the dosing protocol of every row, `(N, K)` padded
+    with `NaN` (`pkpdutils.timecourse.Timecourses`). The point parameters are
+    computed from the last dose of every protocol on (the values before it are
+    dropped), the per-interval parameters over every dosing interval
+    (`pkpdutils.nca.intervals.compute_intervals`) and the steady state
+    parameters from the last interval `[t_K, t_K + tau]`. A row whose last
+    interval is not covered by the data carries
+    `NCAFlag.INCOMPLETE_INTERVAL` and `NaN` steady state parameters.
 
     Args:
         t: times `(N, n)`
         c: values `(N, n)`
-        dose_amount: amount of the reference dose per row `(N,)`, `None`
-            without doses
-        dose_time: time of the reference dose per row `(N,)`, `None` for the
-            time of `options.regimen.dose`
-        dose_duration: infusion duration of the reference dose per row `(N,)`
+
+    Keyword Args:
+        dose_amount: dose amounts `(N, K)`, `None` without doses
+        dose_time: dose times `(N, K)`, `None` without doses (the interval of
+            `options.tau` then starts at time 0)
+        dose_duration: infusion durations `(N, K)`, `None` for none
         route: route of the batch
-        options: the options; `options.regimen` must be set
+        options: the options; `tau` gives the length of the last interval when
+            the protocol has one dose
 
     Returns:
-        The parameters of `compute_parameters` plus the steady state parameters.
+        The parameters of `pkpdutils.nca.nca.compute_parameters` plus the
+        steady state parameters, the per-interval parameters (with
+        `options.intervals`) and `flags`.
     """
-    regimen = options.regimen
-    if regimen is None:
-        raise ValueError("A steady state analysis needs 'options.regimen'")
     t = np.asarray(t, dtype=np.float64)
     c = np.asarray(c, dtype=np.float64)
-    if dose_time is None:
-        dose_time = np.full(t.shape[0], regimen.dose.time)
+    n_rows = t.shape[0]
+    amount, time, duration = reference_dose(
+        dose_amount, dose_time, dose_duration, last=True
+    )
+
+    # the point parameters describe the curve from the last dose on
+    values = c
+    if time is not None:
+        with np.errstate(invalid="ignore"):
+            before = np.isfinite(time)[:, None] & (t < time[:, None])
+        values = np.where(before, np.nan, c)
     out = compute_parameters(
         t,
-        c,
-        dose_amount=dose_amount,
-        dose_time=dose_time,
-        dose_duration=dose_duration,
+        values,
+        dose_amount=amount,
+        dose_time=time,
+        dose_duration=duration,
         route=route,
         options=options,
     )
-    tau = regimen.interval
-    tp, cp, n_valid = pack_valid(t - dose_time[:, None], c)
-    n_rows = tp.shape[0]
-    tau_row = np.full(n_rows, tau)
-    zero_row = np.zeros(n_rows)
-    if route is Route.IV_BOLUS and "c0" in out:
-        # the interval starts at the dose: insert (0, C0) like the single dose areas do
-        first_after_zero = (n_valid > 0) & (tp[:, 0] > 0) & np.isfinite(out["c0"])
-        tp, cp, n_valid = insert_point(
-            tp,
-            cp,
-            n_valid,
-            np.where(first_after_zero, 0.0, np.nan),
-            np.where(first_after_zero, out["c0"], np.nan),
-        )
-    # a curve with pre-dose samples starts before the dose: insert the interpolated
-    # value at the dose, so a segment straddling the dose contributes only its
-    # part after the dose to `auc_tau`
-    c_zero = interpolate_at(tp, cp, n_valid, zero_row, options.auc_method)
-    with np.errstate(invalid="ignore"):
-        straddles = (n_valid > 0) & (tp[:, 0] < 0) & np.isfinite(c_zero)
-    tp, cp, n_valid = insert_point(
-        tp,
-        cp,
-        n_valid,
-        np.where(straddles, 0.0, np.nan),
-        np.where(straddles, c_zero, np.nan),
-    )
-    ctrough = interpolate_at(tp, cp, n_valid, tau_row, options.auc_method)
-    tp2, cp2, n2 = insert_point(
-        tp, cp, n_valid, np.where(np.isnan(ctrough), np.nan, tau_row), ctrough
-    )
-    in_interval = (
-        (np.arange(tp2.shape[1])[None, :] < n2[:, None]) & (tp2 >= 0) & (tp2 <= tau)
-    )
-    # segments before the dose or after tau do not count
-    auc_tau, _ = auc_aumc(
-        tp2, cp2, n2, options.auc_method, t_start=zero_row, t_end=tau_row
-    )
-    with np.errstate(invalid="ignore"):
-        cmin_ss = np.where(in_interval, cp2, np.inf).min(axis=1)
-        cmax_ss = np.where(in_interval, cp2, -np.inf).max(axis=1)
-    has_tau = ~np.isnan(ctrough)
-    nan = np.full(n_rows, np.nan)
-    auc_tau = np.where(has_tau, auc_tau, nan)
-    cmin_ss = np.where(has_tau & np.isfinite(cmin_ss), cmin_ss, nan)
-    cmax_ss = np.where(has_tau & np.isfinite(cmax_ss), cmax_ss, nan)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cavg = auc_tau / tau
-        fluctuation = (cmax_ss - cmin_ss) / cavg
-        swing = (cmax_ss - cmin_ss) / cmin_ss
-        accumulation = 1.0 / (1.0 - np.exp(-out["lambda_z"] * tau))
     flags = out.pop("flags")
-    out["auc_tau"] = auc_tau
-    out["cmin_ss"] = cmin_ss
-    out["cmax_ss"] = cmax_ss
-    out["ctrough"] = ctrough
-    out["cavg"] = cavg
-    out["fluctuation"] = fluctuation
-    out["swing"] = swing
-    out["accumulation_ratio"] = accumulation
-    if dose_amount is not None:
+
+    # a batch without a protocol but with `tau` is one interval from time 0
+    times = (
+        np.zeros((n_rows, 1))
+        if dose_time is None
+        else np.asarray(dose_time, dtype=np.float64).reshape(n_rows, -1)
+    )
+    amounts = (
+        None
+        if dose_amount is None
+        else np.asarray(dose_amount, dtype=np.float64).reshape(n_rows, -1)
+    )
+    counts = np.isfinite(times).sum(axis=1)
+    tau = (
+        np.full(n_rows, float(options.tau))
+        if options.tau is not None
+        else _interval_length(times, counts)
+    )
+    intervals = compute_intervals(
+        t,
+        c,
+        dose_amount=amounts,
+        dose_time=times,
+        tau=tau,
+        route=route,
+        options=options,
+    )
+
+    n_dose = times.shape[1]
+    last = np.clip(counts - 1, 0, n_dose - 1)
+    has_interval = counts > 0
+
+    def last_interval(name: str) -> np.ndarray:
+        """The value of the last dosing interval of every row.
+
+        Args:
+            name: name of the interval variable.
+
+        Returns:
+            The column of the last interval `(N,)`.
+        """
+        return np.where(has_interval, _take(intervals[name], last), np.nan)
+
+    def first_interval(name: str) -> np.ndarray:
+        """The value of the first dosing interval of every row.
+
+        Args:
+            name: name of the interval variable.
+
+        Returns:
+            The first column `(N,)`, `NaN` for a protocol of one dose.
+        """
+        return np.where(counts >= 2, intervals[name][:, 0], np.nan)
+
+    area_name = (
+        "interval_auc" if options.kind is Kind.CONCENTRATION else "interval_auec"
+    )
+    area = last_interval(area_name)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        accumulation_obs = area / first_interval(area_name)
+    if options.kind is Kind.CONCENTRATION:
+        out["auc_tau"] = area
+        out["cmin_ss"] = last_interval("interval_cmin")
+        out["cmax_ss"] = last_interval("interval_cmax")
+        out["ctrough"] = last_interval("interval_ctrough")
+        out["cavg"] = last_interval("interval_cavg")
+        out["fluctuation"] = last_interval("interval_fluctuation")
+        out["swing"] = last_interval("interval_swing")
         with np.errstate(divide="ignore", invalid="ignore"):
-            out["cl_ss"] = dose_amount / auc_tau
+            out["accumulation_ratio"] = 1.0 / (1.0 - np.exp(-out["lambda_z"] * tau))
+        out["accumulation_ratio_obs"] = accumulation_obs
+        if amount is not None:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                out["cl_ss"] = amount / area
+    else:
+        out["auec_tau"] = area
+        out["emin_ss"] = last_interval("interval_emin")
+        out["emax_ss"] = last_interval("interval_emax")
+        out["eavg"] = last_interval("interval_eavg")
+        out["time_above_tau"] = last_interval("interval_time_above")
+        out["accumulation_ratio_obs"] = accumulation_obs
+    out["n_doses"] = counts.astype(np.float64)
+    out["tau"] = np.where(has_interval, tau, np.nan)
+
+    with np.errstate(invalid="ignore"):
+        incomplete = has_interval & np.isfinite(tau) & ~np.isfinite(area)
+    flags = flags | np.where(incomplete, int(NCAFlag.INCOMPLETE_INTERVAL), 0).astype(
+        flags.dtype
+    )
+    if options.intervals:
+        out.update(intervals)
     out["flags"] = flags
     return out
 
@@ -148,7 +230,9 @@ def compute_steady_state(
 def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.DataArray:
     """Observed accumulation ratio `AUC(0-tau) at steady state / AUC(0-tau) after a single dose`.
 
-    Both results come from analyses with the same `regimen`, so both carry `auc_tau`.
+    Both results come from analyses over the same dosing interval, so both
+    carry `auc_tau`. Within one multiple dose curve the ratio of the last and
+    the first dosing interval is reported as `accumulation_ratio_obs`.
 
     Args:
         steady_state: result of the analysis of the steady state curve
@@ -162,7 +246,9 @@ def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.Da
     """
     for result in (steady_state, single_dose):
         if "auc_tau" not in result:
-            raise ValueError("Both results need 'auc_tau': analyse with a regimen")
+            raise ValueError(
+                "Both results need 'auc_tau': analyse with a dosing protocol or 'tau'"
+            )
     ratio = steady_state["auc_tau"] / single_dose["auc_tau"]
     ratio.attrs["units"] = "dimensionless"
     return ratio.rename("accumulation_ratio")
@@ -170,28 +256,37 @@ def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.Da
 
 def superposition(
     timecourse: Timecourse,
-    regimen: DosingRegimen,
+    dosing: Dosing | DosingRegimen,
     options: NCAOptions | None = None,
     t_end: float | None = None,
 ) -> Timecourse:
-    """Predict the multiple dose curve from a single dose curve by superposition.
+    """Predict the multiple dose curve of a protocol from a single dose curve.
+
+    Every dose of the protocol contributes the single dose curve shifted to its
+    time and scaled by `amount_k / amount_single`, the linear superposition
+    which holds for linear kinetics (Gabrielsson & Weiner 2016, ch. 2.8). The
+    curve is interpolated on the union of the shifted time grids and continued
+    beyond its last observed point with its terminal phase.
 
     Args:
-        timecourse: the single dose curve (its dose time is the origin)
-        regimen: the doses to superpose; `n_doses` is required
+        timecourse: the single dose curve (its dose is the reference amount)
+        dosing: the protocol to superpose, or a `DosingRegimen` with `n_doses`
         options: NCA options for the interpolation and the terminal phase
         t_end: end of the predicted curve, the last dose time plus the last
             observed time by default
 
     Returns:
-        The predicted curve with the dose of the regimen.
+        The predicted curve carrying the protocol.
 
     Raises:
-        ValueError: without `n_doses` or without a terminal phase of the curve.
+        ValueError: without `n_doses` of a regimen, without a dose of the
+            single dose curve or without a terminal phase of the curve.
     """
-    if regimen.n_doses is None:
-        raise ValueError("'regimen.n_doses' is required for the superposition")
+    protocol = dosing.dosing() if isinstance(dosing, DosingRegimen) else dosing
     options = options or NCAOptions()
+    if timecourse.dose is None:
+        raise ValueError("The single dose curve needs a dose to scale the protocol")
+    amount_single = timecourse.dose.amount
     single = timecourse.relative_to_dose()
     q = nca_single(single, options).to_quantities()
     lambda_z = float(q["lambda_z"].magnitude)
@@ -202,14 +297,19 @@ def superposition(
     tlast = float(q["tlast"].magnitude)
     clast = float(q["clast"].magnitude)
 
-    dose_times = regimen.dose_times() - regimen.dose.time
+    dose_times = protocol.times
+    factors = (
+        protocol.amounts / amount_single
+        if amount_single
+        else np.ones_like(protocol.amounts)
+    )
     end = t_end if t_end is not None else float(dose_times[-1] + single.time[-1])
     grid = np.unique(np.concatenate([single.time + d for d in dose_times]))
-    grid = grid[(grid >= 0) & (grid <= end)]
+    grid = grid[(grid >= dose_times[0]) & (grid <= end)]
 
     tp, cp, n_valid = pack_valid(single.time[None, :], single.value[None, :])
     total = np.zeros_like(grid)
-    for d in dose_times:
+    for d, factor in zip(dose_times, factors, strict=True):
         tau_rel = grid - d
         inside = (tau_rel >= single.time[0]) & (tau_rel <= tlast)
         rows = np.repeat(tp, grid.size, axis=0)
@@ -226,13 +326,13 @@ def superposition(
             with np.errstate(divide="ignore", invalid="ignore"):
                 rise = single.value[0] * tau_rel / single.time[0]
             values = np.where(before, rise, values)
-        total = total + values
+        total = total + factor * values
     return Timecourse(
         time=grid,
         value=total,
         time_unit=single.time_unit,
         unit=single.unit,
-        dose=regimen.dose,
+        dosing=protocol,
         substance=single.substance,
         label=single.label,
         tissue=single.tissue,

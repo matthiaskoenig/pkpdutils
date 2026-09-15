@@ -9,6 +9,9 @@ time_unit)` converted to `liter / hour` (or per kilogram), a volume converted
 to `liter` (or per kilogram), see `pkpdutils.units`.
 """
 
+import pandas as pd
+
+from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import NCAFlag
 from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS, LOGNORMAL_PARAMETERS
 from pkpdutils.result import ParameterResult
@@ -56,3 +59,36 @@ class NCAResult(ParameterResult):
     flag_type = NCAFlag
     lognormal_parameters = LOGNORMAL_PARAMETERS
     discrete_parameters = DISCRETE_PARAMETERS
+
+    @property
+    def has_intervals(self) -> bool:
+        """Whether the result carries the parameters of the single dosing intervals."""
+        return INTERVAL_DIM in self.ds.dims and bool(self._interval_variables)
+
+    @property
+    def _interval_variables(self) -> list[str]:
+        """Names of the per-interval variables, in the order of the dataset."""
+        return [
+            str(name)
+            for name in self.ds.data_vars
+            if str(name).startswith(INTERVAL_PREFIX)
+        ]
+
+    def intervals(self) -> pd.DataFrame:
+        """The per-interval parameters as one row per sample and dosing interval.
+
+        The interval variables carry the dimension `interval` beyond the sample
+        dimensions and are therefore point variables, which `to_dataframe`
+        leaves out; this frame reports them with the sample coordinates and the
+        number of the interval.
+
+        Returns:
+            One row per sample and interval with the sample coordinates,
+            `interval` and every `interval_*` variable; an empty frame for a
+            single dose result.
+        """
+        names = self._interval_variables
+        if not self.has_intervals:
+            return pd.DataFrame()
+        df = self.ds[names].to_dataframe().reset_index()
+        return df[[*self.sample_dims, INTERVAL_DIM, *names]]

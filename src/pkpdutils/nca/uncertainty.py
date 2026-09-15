@@ -80,6 +80,9 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "mrt",
         "auc_inf_dn",
         "cmax_dn",
+        "accumulation_ratio_obs",
+        "auec_tau",
+        "eavg",
     }
 )
 
@@ -99,6 +102,9 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "lambda_z_stderr",
         "flags",
         "n",
+        "n_doses",
+        "tau",
+        "interval_n_points",
     }
 )
 
@@ -420,7 +426,13 @@ def bootstrap(
         route=timecourses.route,
         options=options,
     )
-    replicates = {name: array.reshape(n_rows, b) for name, array in values.items()}
+    # the per-interval parameters carry an extra dimension and are no
+    # parameters of a sample: they are left to the point estimate
+    replicates = {
+        name: array.reshape(n_rows, b)
+        for name, array in values.items()
+        if array.ndim == 1
+    }
     n_subjects = (
         None
         if timecourses.n is None
@@ -539,6 +551,8 @@ def delta(
             name in DISCRETE_PARAMETERS
             or base_name(name) is not None
             or name not in perturbed
+            # the per-interval parameters carry an extra dimension
+            or base.ndim > 1
         )
         if skip:
             continue

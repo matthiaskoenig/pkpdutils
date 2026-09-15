@@ -2,7 +2,7 @@
 
 `NCAOptions` selects the methods of an analysis: the kind of timecourse, the
 trapezoid rule, the terminal phase selection, the handling of values below the
-limit of quantification and the dosing regimen of a steady state analysis.
+limit of quantification and the dosing intervals of a multiple dose analysis.
 `NCAFlag` names the conditions an analysis reports per sample instead of
 raising or warning.
 """
@@ -11,8 +11,6 @@ from enum import IntFlag, StrEnum
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from pkpdutils.timecourse import DosingRegimen
 
 
 class Kind(StrEnum):
@@ -116,6 +114,9 @@ class NCAFlag(IntFlag):
     #: the delta method skipped points at which the terminal window changed; the
     #: uncertainty of the terminal parameters is incomplete
     DELTA_WINDOW_CHANGE = 128
+    #: the last dosing interval is not covered by the data; its parameters and
+    #: the steady state parameters are NaN
+    INCOMPLETE_INTERVAL = 256
 
 
 def decode_flags(value: int) -> list[str]:
@@ -189,7 +190,12 @@ class NCAOptions(BaseModel):
         blq: handling of values below `lloq`
         c0_method: estimate of C(0) after an intravenous bolus
         extrapolation_warning: fraction of AUC(0-inf) above which `EXTRAPOLATION_HIGH` is set
-        regimen: dosing regimen of a steady state analysis, `None` for single dose
+        tau: length of the last dosing interval, `None` to take it from the
+            dosing protocol (the distance of the last two doses); it is needed
+            for a steady state curve given with its last dose only and it
+            overrides the protocol for the last interval
+        intervals: whether the per-interval parameters (`interval_*`) are part
+            of the result of a multiple dose analysis
         effect_threshold: threshold of `time_above` for effect timecourses, `None` for none
         n_workers: number of worker processes for large batches, `None` for the calling process
         chunk_rows: rows per chunk of the vectorized core, which bounds its
@@ -214,7 +220,8 @@ class NCAOptions(BaseModel):
     blq: BLQHandling = BLQHandling.NAN
     c0_method: C0Method = C0Method.LOG_BACK_EXTRAPOLATION
     extrapolation_warning: float = Field(default=0.2, gt=0.0, lt=1.0)
-    regimen: DosingRegimen | None = None
+    tau: float | None = Field(default=None, gt=0.0)
+    intervals: bool = True
     effect_threshold: float | None = None
     n_workers: int | None = Field(default=None, ge=1)
     chunk_rows: int = Field(default=5000, ge=1)
