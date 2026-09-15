@@ -131,7 +131,7 @@ Use the printed enumeration members and parameter names in the table below; corr
 
 - [ ] **Step 2: Write `release-notes/1.0.0.md`**
 
-```markdown
+````markdown
 # Release notes for pkpdutils 1.0.0
 
 `pkpdutils` 1.0.0 is a rewrite of `pkdb-analysis` as a library for the pharmacokinetic and pharmacodynamic analysis of timecourses and parameters, without any dependency on PK-DB. The package, the repository and the documentation carry the new name: [pypi.org/project/pkpdutils](https://pypi.org/project/pkpdutils/), [github.com/matthiaskoenig/pkpdutils](https://github.com/matthiaskoenig/pkpdutils), [matthiaskoenig.github.io/pkpdutils](https://matthiaskoenig.github.io/pkpdutils). `pkdb-analysis` stays available on PyPI at 0.3.1 and receives no further releases.
@@ -218,7 +218,7 @@ which is what `tests/nca/test_reference.py` checks against the frozen results of
 The effect analysis of `pkdb_analysis.reports.effect_analysis` (`OutputPair`, `fixed_effect`, `random_effects`) is `pkpdutils.stats.meta` (`effect_size`, `fixed_effect`, `random_effects`, `meta_analysis`); the pairs are `Study(label, control, treatment)` objects built from `ParameterSample` values or summary statistics.
 
 Your pkpdutils team
-```
+````
 
 Correct the option and parameter names against Step 1 (the import path of `AUCMethod`/`TerminalMethod`, the exact `TerminalPhase` keyword, whether `lambda_z_t_first` and `dose_amount` exist on an `NCAResult`; drop a row whose name does not exist). Check the "Known gaps" bullets against the memory rulings quoted in the spec section of this plan header: every ruling is represented once.
 

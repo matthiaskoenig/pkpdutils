@@ -165,8 +165,10 @@ The documentation is built with [Zensical](https://zensical.org/), the static si
 Build the site into `site/`:
 
 ```bash
-uv run zensical build --clean
+uv run zensical build --clean --strict
 ```
+
+The build is strict: a broken link or a missing page fails it, in continuous integration as well.
 
 For writing, the preview rebuilds on save:
 
@@ -189,7 +191,7 @@ Docstrings are therefore the place to document functions and classes, the markdo
 Agents and language models read markdown, not rendered html. `scripts/llms_txt.py` writes the files of the [llms.txt convention](https://llmstxt.org/) into the built site, i.e., [llms.txt](https://matthiaskoenig.github.io/pkpdutils/llms.txt) as an annotated index of all pages, [llms-full.txt](https://matthiaskoenig.github.io/pkpdutils/llms-full.txt) with the complete documentation in a single file, and the markdown of every page next to its html (`/nca.md` for `/nca/`). The markdown of the API reference is generated from the docstrings with `inspect`, since the pages themselves only contain the mkdocstrings directive.
 
 ```bash
-uv run zensical build --clean
+uv run zensical build --clean --strict
 uv run python scripts/llms_txt.py
 ```
 

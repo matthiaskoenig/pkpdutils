@@ -4496,7 +4496,7 @@ Extend the "Effect sizes" entry (Hedges 1981) with the sentence "The small sampl
 
 - [ ] **Step 3: `docs/statistics.md`**
 
-```markdown
+````markdown
 # Statistics
 
 Statistics on pharmacokinetic parameters: comparisons of two groups, geometric mean ratios, average bioequivalence, the classification of drug-drug interactions and the meta-analysis of published studies. Every function of `pkpdutils.stats` works on a `ParameterSample`, the values of one parameter over the individuals of a group or the summary statistics of the group, taken from an `NCAResult` or a `FitResult` with `sample` or typed in from a publication.
@@ -4632,12 +4632,12 @@ Figures: `plot_parameters`, `plot_ratio` and `plot_forest`, see [Plotting](plott
 [^higgins]: Higgins JPT, Thompson SG. *Stat Med.* 2002;21:1539-1558. See [References](references.md#statistics).
 [^holm]: Holm S. *Scand J Stat.* 1979;6:65-70. See [References](references.md#statistics).
 [^bh]: Benjamini Y, Hochberg Y. *J R Stat Soc B.* 1995;57:289-300. See [References](references.md#statistics).
-```
+````
 
 - [ ] **Step 4: Plotting, glossary, index, CLAUDE.md**
 
 Insert in `docs/plotting.md` before `## Style`:
-```markdown
+````markdown
 ## Parameters, ratios and forest plots
 
 `plot_parameters` draws the individual values of a parameter of a result as jittered points with a box plot per group (`by` names a coordinate along the sample dimension) and the geometric mean with its interval. `plot_ratio` draws geometric mean ratios with their intervals on a logarithmic axis against the acceptance limits of bioequivalence or the thresholds of the interaction classes, from a dictionary of `ratio` results or a `bioequivalence` result. `plot_forest` is the forest plot of a `meta_analysis`: the effect of every study with its interval and a marker sized by its random effects weight, the pooled fixed and random effects as diamonds, the heterogeneity in the title. `plot_bland_altman` shows the agreement of the predictions of a fit with the data.
@@ -4654,7 +4654,7 @@ fig = plot_bland_altman(fits, log=True)
 ```
 
 The images are written by `examples/bioequivalence.py`, `examples/ddi.py` and `examples/meta_analysis.py`.
-```
+````
 (the inner code fence uses three backticks as everywhere in the docs; the outer fence of this plan is the only reason it is shown nested here).
 
 Append to the table of `docs/glossary.md`:

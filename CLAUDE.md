@@ -28,7 +28,7 @@ tox -e ty                       # ty type check (config in [tool.ty] in pyprojec
 uvx ty check                    # same check, straight from the working tree
 
 # docs
-uv run zensical build --clean
+uv run zensical build --clean --strict
 uv run python scripts/llms_txt.py
 uv run zensical serve
 

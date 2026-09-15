@@ -1279,7 +1279,7 @@ Run: `cd $(mktemp -d) && PYTHONPATH=/home/mkoenig/git/pkdb_analysis MPLBACKEND=A
 
 - [ ] **Step 2: `docs/uncertainty.md`**
 
-```markdown
+````markdown
 # Uncertainty
 
 Published pharmacokinetic data are mostly group data: the mean concentration of a group at every sampling time with its standard deviation or standard error and the number of subjects. The parameters of the mean curve are point estimates; how uncertain they are depends on the uncertainty of the points and on how the parameters depend on them. `pkpdutils` propagates the uncertainty of a group timecourse to every parameter of the [non-compartmental analysis](nca.md) by a parametric bootstrap or by the delta method, and it summarizes the parameters of individual curves over the individuals with the same set of variables, so that the statistics of the next pages accept both.
@@ -1376,7 +1376,7 @@ The example is `examples/group_uncertainty.py`; the reference of the module is i
 ## References
 
 [^efron]: Efron B, Tibshirani RJ. *An Introduction to the Bootstrap*. Chapman & Hall/CRC; 1993, ch. 5 (delta method) and 6 (bootstrap). See [References](references.md#statistics).
-```
+````
 
 `docs/api/nca.uncertainty.md`:
 ```markdown
@@ -1390,8 +1390,8 @@ The example is `examples/group_uncertainty.py`; the reference of the module is i
 - `zensical.toml`: add `{ "Uncertainty" = "uncertainty.md" }` after the NCA entry in the user guide and `{ "uncertainty" = "api/nca.uncertainty.md" }` after `steady_state` in the `pkpdutils.nca` API list.
 - `docs/api/index.md`: add the row `| [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |`.
 - `docs/index.md`: add the feature bullet `- **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.` after the NCA bullet.
-- `docs/nca.md`: in the API section add the sentence "Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md); partial areas come from `partial_auc`."
-- `docs/glossary.md`: add the rows for `x_sd`/`x_se`, `x_ci_low`/`x_ci_high`, `x_geomean`/`x_geocv`, `x_median`/`x_q25`/`x_q75`/`x_n`, `n`, `auc_partial` pointing at [Uncertainty](uncertainty.md).
+- `docs/nca.md`: in the API section add the sentence "Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see `[Uncertainty](uncertainty.md)`; partial areas come from `partial_auc`."
+- `docs/glossary.md`: add the rows for `x_sd`/`x_se`, `x_ci_low`/`x_ci_high`, `x_geomean`/`x_geocv`, `x_median`/`x_q25`/`x_q75`/`x_n`, `n`, `auc_partial` pointing at `[Uncertainty](uncertainty.md)`.
 - `docs/timecourses.md` already links `uncertainty.md`.
 - `CLAUDE.md`: add `python -m examples.group_uncertainty` to the commands; in the `nca/` architecture paragraph add: "`uncertainty.py` propagates `sd`/`se` of group curves: `bootstrap` resamples every point (`resample_values`), runs `run_rows` on the `N*B` replicate rows and reduces them (`reduce_replicates`); `delta` perturbs every point once and propagates `se` through the numerical Jacobian; `NCAOptions.resolve_uncertainty` picks the bootstrap by default for group data. Variables `x_sd`, `x_se`, `x_ci_low`, `x_ci_high`, `x_geomean`, `x_geocv`, `n`; `NCAResult.summarize(dim)` gives the same layout for individual results; `partial_auc` (`nca.py`) is the area between two times."
 

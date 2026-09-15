@@ -1212,7 +1212,7 @@ Matthias König was supported by the Federal Ministry of Education and Research 
 ```
 
 `docs/installation.md`:
-```markdown
+````markdown
 # Installation
 
 `pkpdutils` requires python >= 3.13 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils). It is tested on Linux, macOS and Windows and is pure python; every dependency ships binary wheels, so no compiler is needed.
@@ -1283,7 +1283,7 @@ from pkpdutils import log
 
 log.enable_rich_logging()
 ```
-```
+````
 
 `docs/development.md`: copy `/home/mkoenig/git/sbmlsim/docs/development.md`, then
 
@@ -1491,7 +1491,7 @@ Claude-Session: https://claude.ai/code/session_017h5AZEctvrGTruqpqg4E2z"
 
 - [ ] **Step 1: Write `README.md`**
 
-```markdown
+````markdown
 # pkpdutils: pharmacokinetic and pharmacodynamic analysis
 [![GitHub Actions CI/CD Status](https://github.com/matthiaskoenig/pkpdutils/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/matthiaskoenig/pkpdutils/actions/workflows/ci-cd.yml)
 [![Documentation](https://img.shields.io/badge/docs-pkpdutils-3f51b5.svg)](https://matthiaskoenig.github.io/pkpdutils)
@@ -1551,11 +1551,11 @@ Matthias König is supported by the German Research Foundation (DFG) within the 
 Matthias König was supported by the Federal Ministry of Education and Research (BMBF, Germany) within the research network Systems Medicine of the Liver (**LiSyM**, grant number 031L0054).
 
 © 2018-2026 Matthias König & Jan Grzegorzewski.
-```
+````
 
 - [ ] **Step 2: Write `CLAUDE.md`**
 
-```markdown
+````markdown
 # CLAUDE.md
 
 This file provides guidance when working with code in this repository.
@@ -1618,7 +1618,7 @@ Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`,
 - Test fixtures live in `tests/data/`; `tests/data/reference/nca_reference.json` holds the results of `pkdb_analysis` 0.3.1 on them and is the regression reference of the NCA.
 - Markdown carries no hard line wraps: a paragraph, a list item or a table row is a single line. Code fences, headings and the rows of badges keep their line structure.
 - Release notes go in `release-notes/` as part of a release commit.
-```
+````
 
 - [ ] **Step 3: Write the examples package and the runner**
 
@@ -1628,7 +1628,7 @@ Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`,
 ```
 
 `examples/README.md`:
-```markdown
+````markdown
 # Examples
 
 Runnable examples for pkpdutils. They are **not** part of the package: they are not installed with `pip install pkpdutils`, they are read and run from a checkout of the repository.
@@ -1646,7 +1646,7 @@ An example writes what it creates into the current working directory. No example
 | path | content |
 | --- | --- |
 | `examples/timecourses.py` | creating `Timecourse` and `Timecourses` objects from arrays, data frames and a simulation-like dataset |
-```
+````
 
 `tests/examples/__init__.py`: empty.
 
@@ -3492,7 +3492,7 @@ Expected: the example prints the four sections and the test passes.
 ```
 
 `docs/units.md`:
-```markdown
+````markdown
 # Units
 
 Every timecourse and every result of `pkpdutils` carries its units. The package uses [pint](https://pint.readthedocs.io) with one registry per process, `pkpdutils.units.ureg`; quantities of two registries cannot be combined, which is why nothing in the package creates a registry of its own and why an application which mixes its own quantities with those of the package should use `ureg` as well.
@@ -3524,10 +3524,10 @@ check_dose_unit("mg/l")         # ValueError
 ```
 
 The reference of the module is in [API: units](api/units.md).
-```
+````
 
 `docs/timecourses.md`:
-```markdown
+````markdown
 # Timecourses
 
 A pharmacokinetic timecourse is the concentration of a substance in a tissue over time after a dose; a pharmacodynamic timecourse is an effect over time. `pkpdutils` represents one curve as a `Timecourse` and many curves as a `Timecourses` batch, which is the input of every analysis of the package.
@@ -3616,7 +3616,7 @@ tcs = Timecourses.from_dataset(ds, "[Cve]", unit="mmol/l", time_unit="min")
 ```
 
 The complete example is `examples/timecourses.py`; the reference of the module is in [API: timecourse](api/timecourse.md).
-```
+````
 
 If Task 6 removed the `units.md`, `timecourses.md` and `api/timecourse.md` entries from `nav` in `zensical.toml`, add them back now (see the `nav` in Task 6 Step 1). `docs/timecourses.md` links to `uncertainty.md`, which the uncertainty plan creates; Zensical warns about the missing target but builds. If the build treats it as an error, write the link as plain text `Uncertainty` for now and restore the link in that plan.
 
