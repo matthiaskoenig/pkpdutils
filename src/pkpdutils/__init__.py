@@ -4,7 +4,9 @@ The data model is `Timecourse` (one curve) and `Timecourses` (a batch as an
 xarray dataset), see `pkpdutils.timecourse`; units are pint quantities of the
 shared registry `ureg`, see `pkpdutils.units`. The analyses are
 `pkpdutils.nca` (non-compartmental analysis) and `pkpdutils.fit` (curve
-fitting), both returning a `pkpdutils.result.ParameterResult`.
+fitting), both returning a `pkpdutils.result.ParameterResult`. `pkpdutils.stats`
+holds the statistics on parameters (tests, ratios, bioequivalence,
+drug-drug interactions, meta-analysis).
 """
 
 from pkpdutils.fit import (
@@ -25,6 +27,14 @@ from pkpdutils.nca import (
     nca_single,
     partial_auc,
 )
+from pkpdutils.stats import (
+    ParameterSample,
+    bioequivalence,
+    compare,
+    ddi_classification,
+    meta_analysis,
+    ratio,
+)
 from pkpdutils.timecourse import Dose, DosingRegimen, Route, Timecourse, Timecourses
 from pkpdutils.units import Q_, Quantity, ureg
 
@@ -38,20 +48,26 @@ __all__ = [
     "FitResult",
     "NCAOptions",
     "NCAResult",
+    "ParameterSample",
     "Quantity",
     "Route",
     "TerminalPhase",
     "Timecourse",
     "Timecourses",
     "__version__",
+    "bioequivalence",
+    "compare",
     "compare_models",
+    "ddi_classification",
     "fit",
     "fit_table",
     "fit_timecourse",
     "fit_timecourses",
+    "meta_analysis",
     "nca",
     "nca_single",
     "partial_auc",
     "proportionality_test",
+    "ratio",
     "ureg",
 ]
