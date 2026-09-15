@@ -408,3 +408,71 @@ def test_nca_rejects_coordinate_named_like_a_variable() -> None:
     )
     with pytest.raises(ValueError, match="collides"):
         nca(batch)
+
+
+def test_last_n_after_the_maximum_end_to_end() -> None:
+    # B18: the analysis of a curve whose maximum is not its first point
+    t = np.array([0.5, 1, 2, 4, 8, 12, 24.0])
+    c = np.array([1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.05])
+    tc = Timecourse(time=t, value=c, time_unit="hr", unit="mg/l")
+    result = nca_single(
+        tc,
+        NCAOptions(
+            terminal=TerminalPhase(
+                method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=True
+            )
+        ),
+    )
+    assert float(result["lambda_z_n_points"]) == 5
+    assert float(result["lambda_z_t_first"]) >= 2.0
+
+
+def test_zero_dose_gives_nan_dose_parameters(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # B19: a placebo arm is encoded as a dose of 0; `cl = 0` and
+    # `auc_inf_dn = inf` are plausible looking numbers which are not quantities
+    zero = Dose(amount=0.0, unit="mg", route=Route.IV_BOLUS)
+    with caplog.at_level("DEBUG", logger="pkpdutils.nca.nca"):
+        q = nca_single(iv_timecourse(zero)).to_quantities()
+    for name in ("cl", "vz", "vss", "auc_inf_dn", "cmax_dn"):
+        assert np.isnan(q[name].magnitude), name
+    assert np.isfinite(q["auc_inf_obs"].magnitude)
+    assert any("dose" in record.message for record in caplog.records)
+    oral = nca_single(
+        Timecourse(
+            time=np.array([0.5, 1, 2, 4, 8.0]),
+            value=np.array([1.2, 2.5, 2.1, 1.3, 0.5]),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=0.0, unit="mg", route=Route.ORAL),
+        )
+    ).to_quantities()
+    assert np.isnan(oral["cl_f"].magnitude) and np.isnan(oral["vz_f"].magnitude)
+
+
+def effect_timecourse() -> Timecourse:
+    return Timecourse(
+        time=np.array([0.0, 1, 2, 4, 8]),
+        value=np.array([0.0, 5.0, 4.0, 2.0, 1.0]),
+        time_unit="hr",
+        unit="dimensionless",
+    )
+
+
+def test_effect_applies_lloq_and_blq() -> None:
+    # B21: `lloq` and `blq` were accepted and silently discarded for effects
+    result = nca_single(effect_timecourse(), NCAOptions(kind=Kind.EFFECT, lloq=1.5))
+    # the values 0 and 1 are below the limit and drop out: the linear area of
+    # (1, 5), (2, 4), (4, 2) is 4.5 + 6
+    assert float(result["auec_last"]) == pytest.approx(10.5)
+    assert float(result["e0"]) == pytest.approx(5.0)
+    assert result.flags() == ["BLQ_TRUNCATED"]
+
+
+def test_effect_area_is_linear_whatever_the_auc_method() -> None:
+    for method in AUCMethod:
+        options = NCAOptions(kind=Kind.EFFECT, auc_method=method)
+        assert float(nca_single(effect_timecourse(), options)["auec_last"]) == (
+            pytest.approx(19.0)
+        )

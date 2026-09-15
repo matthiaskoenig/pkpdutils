@@ -50,12 +50,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from pydantic import ValidationError
 
-# `_pad_protocols` is the padding of the dose variables of a batch, shared with
-# the constructors of `Timecourses` (the readers do not go through
-# `Timecourse`: a subject of an exchange format may have a single observation
-# or no dose records at all, which a single curve does not allow)
-from pkpdutils.timecourse import Dosing, Route, Timecourses, _pad_protocols
+# `dose_mapping` and `pad_rows` build the padded variables of a batch, shared
+# with the constructors of `Timecourses` (the readers do not go through
+# `Timecourse`: a subject of an exchange format may have no dose records at
+# all, which a single curve does not allow)
+from pkpdutils.timecourse import Dosing, Route, Timecourses, dose_mapping, pad_rows
 from pkpdutils.units import parse_unit
 
 logger = logging.getLogger(__name__)
@@ -193,20 +194,77 @@ def _subjects(df: pd.DataFrame, column: str) -> dict[Any, pd.Index]:
     return dict(df.groupby(column, sort=False).groups)
 
 
-def _pad(arrays: Sequence[np.ndarray], n_time: int) -> np.ndarray:
-    """Stack the 1-D arrays of the subjects into `(n_subjects, n_time)`, padded with `NaN`.
+def _subject_arrays(
+    rows: pd.Index,
+    time: pd.Series,
+    columns: Sequence[pd.Series],
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """The times of one subject and its other columns, sorted by time.
 
     Args:
-        arrays: one array per subject.
-        n_time: number of columns, at least the length of the longest array.
+        rows: the rows of the subject.
+        time: the time column of the table.
+        columns: the other columns to take, e.g. the values and the uncertainty.
 
     Returns:
-        The padded array.
+        The times and one array per column, all in the order of the times.
     """
-    out = np.full((len(arrays), n_time), np.nan)
-    for i, array in enumerate(arrays):
-        out[i, : array.size] = array
-    return out
+    times = time[rows].to_numpy(dtype=np.float64)
+    order = np.argsort(times, kind="stable")
+    return times[order], [
+        column[rows].to_numpy(dtype=np.float64)[order] for column in columns
+    ]
+
+
+def _dosing(label: Any, **fields: Any) -> Dosing:
+    """Build the dosing protocol of one subject, naming it in every error.
+
+    Args:
+        label: the subject, for the error message.
+        **fields: the fields of `Dosing`.
+
+    Returns:
+        The protocol.
+
+    Raises:
+        ValueError: with the message of the first error of `Dosing`, prefixed
+            by the subject; a reader never raises a pydantic `ValidationError`.
+    """
+    try:
+        return Dosing(**fields)
+    except ValidationError as err:
+        message = str(err.errors()[0]["msg"]).removeprefix("Value error, ")
+        raise ValueError(f"subject {label}: {message}") from err
+
+
+def _check_times(label: Any, times: np.ndarray) -> None:
+    """Check the sampling times of one subject.
+
+    A subject of an exchange format needs the sampling times of a curve: at
+    least two of them, finite and without duplicates. Both were only caught
+    later, by `Timecourses.sel` or, for the duplicates, not at all (they skew
+    `cmax` and add a zero width trapezoid to the AUC).
+
+    Args:
+        label: the subject, for the error message.
+        times: the sampling times of the subject.
+
+    Raises:
+        ValueError: if the subject has fewer than two observations, a time
+            which is not finite, or duplicate times.
+    """
+    if times.size < 2:
+        raise ValueError(
+            f"subject {label}: a timecourse needs at least 2 time points, "
+            f"found {times.size}"
+        )
+    if not np.isfinite(times).all():
+        raise ValueError(f"subject {label}: the sampling times must be finite")
+    unique, counts = np.unique(times, return_counts=True)
+    if (counts > 1).any():
+        raise ValueError(
+            f"subject {label}: duplicate sampling time {unique[counts > 1][0]:g}"
+        )
 
 
 def _build_batch(
@@ -220,14 +278,17 @@ def _build_batch(
     dim: str,
     substance: str,
     coordinates: dict[str, np.ndarray],
+    sd: Sequence[np.ndarray] | None = None,
+    se: Sequence[np.ndarray] | None = None,
+    n: np.ndarray | None = None,
 ) -> Timecourses:
     """Assemble the batch of the subjects a reader has collected.
 
     The subjects of an exchange format may have different sampling grids,
-    different numbers of doses and, unlike a single `Timecourse`, a single
-    observation or no dose records at all, so the batch is built from the
-    padded arrays rather than from `Timecourses.from_timecourses`. A subject
-    without a protocol gets a row of `NaN` dose entries.
+    different numbers of doses and, unlike a single `Timecourse`, no dose
+    records at all, so the batch is built from the padded arrays rather than
+    from `Timecourses.from_timecourses`. A subject without a protocol gets a
+    row of `NaN` dose entries.
 
     Args:
         labels: the subjects, in the order of the sample dimension.
@@ -239,56 +300,41 @@ def _build_batch(
         dim: name of the sample dimension.
         substance: name of the substance or effect.
         coordinates: the covariates of the subjects along `dim`.
+        sd: the standard deviations of every subject, with the times.
+        se: the standard errors of every subject, with the times.
+        n: the number of subjects of every group curve, of shape `(len(labels),)`.
 
     Returns:
         The batch, with the shared sampling grid as the `time` coordinate when
         every subject has the same one.
 
     Raises:
-        ValueError: if there is no subject, or if the protocols do not share
-            one route and one dose unit.
+        ValueError: if there is no subject, if a subject has fewer than two
+            observations, a time which is not finite or duplicate times, or if
+            the protocols do not share one route and one dose unit.
     """
     if not labels:
         raise ValueError("The table holds no subject")
+    for label, subject_times in zip(labels, times, strict=True):
+        _check_times(label, subject_times)
     n_time = max(array.size for array in times)
     shared = all(
         array.size == times[0].size and np.array_equal(array, times[0])
         for array in times
     )
-    grid: np.ndarray = times[0] if shared else _pad(times, n_time)
-
-    dose: dict[str, Any] | None = None
-    route: Route | None = None
-    given = [protocol for protocol in protocols if protocol is not None]
-    if given:
-        routes = {protocol.route for protocol in given}
-        units = {protocol.unit for protocol in given}
-        if len(routes) != 1:
-            raise ValueError(
-                "A batch has one route, found "
-                f"{sorted(r.value for r in routes)}; read the routes into "
-                "separate batches"
-            )
-        if len(units) != 1:
-            raise ValueError(f"All doses need the same unit, found {sorted(units)}")
-        route = routes.pop()
-        amounts, dose_times, durations = _pad_protocols(
-            protocols, max(protocol.n_doses for protocol in given)
-        )
-        dose = {
-            "amount": amounts,
-            "unit": units.pop(),
-            "time": dose_times,
-            "duration": durations,
-        }
+    grid: np.ndarray = times[0] if shared else pad_rows(times, n_time)
+    dose, route = dose_mapping(protocols)
 
     batch = Timecourses.from_arrays(
         grid,
-        _pad(values, n_time),
+        pad_rows(values, n_time),
         time_unit=time_unit,
         unit=unit,
         dims=(dim,),
         coords={dim: list(labels)},
+        sd=None if sd is None else pad_rows(sd, n_time),
+        se=None if se is None else pad_rows(se, n_time),
+        n=n,
         dose=dose,
         route=route,
         substance=substance,
@@ -354,7 +400,7 @@ def read_events(
     time_unit: str,
     unit: str,
     dose_unit: str,
-    route: Route,
+    route: Route | str,
     id: str = "ID",
     time: str = "TIME",
     dv: str = "DV",
@@ -366,7 +412,11 @@ def read_events(
     addl: str = "ADDL",
     ii: str = "II",
     ss: str = "SS",
+    sd_col: str = "SD",
+    se_col: str = "SE",
+    n_col: str = "N",
     ss_doses: int = 5,
+    keep_missing: bool = True,
     dim: str = "individual",
     substance: str = "substance",
     covariates: Sequence[str] | None = None,
@@ -374,8 +424,11 @@ def read_events(
     """Read a batch from event records, the NONMEM and Monolix format.
 
     A row of the table is one event of one subject: a dose when `EVID` is 1, an
-    observation when `EVID` is 0, `MDV` is 0 (or there is no `MDV` column) and
-    `DV` is not missing. Rows with `EVID` 2 (other type event) or 3 (reset) are
+    observation when `EVID` is 0. An observation whose `DV` is missing or whose
+    `MDV` is 1 is a missing value: with `keep_missing` it keeps its time and is
+    read as `NaN` (the sampling grid of the table is the grid of the batch,
+    which is what a table of values below the limit of quantification needs),
+    without it the row is dropped. Rows with `EVID` 2 (other type event) or 3 (reset) are
     dropped and counted in a warning; `EVID` 4 (reset and dose) raises, since a
     reset starts a new period which the reader would silently merge into the
     protocol of the subject (Bauer 2019). A row with `EVID` 1 and a value in
@@ -407,7 +460,8 @@ def read_events(
         time_unit: unit of the `TIME` column
         unit: unit of the `DV` column
         dose_unit: unit of the `AMT` column
-        route: route of the doses; the event format has no route column
+        route: route of the doses, a `Route` or a string it coerces
+            (`"oral"`, `"IV_BOLUS"`); the event format has no route column
             (`CMT`/`ADM` are compartments, not routes) and a batch has one
             route, so a table of several routes is filtered by the caller
         id: name of the subject column
@@ -421,7 +475,13 @@ def read_events(
         addl: name of the additional doses column
         ii: name of the interdose interval column
         ss: name of the steady state column
+        sd_col: name of the standard deviation column of a group curve
+        se_col: name of the standard error column of a group curve
+        n_col: name of the column with the number of subjects of a group curve
+            (constant within a subject)
         ss_doses: number of preceding doses a steady state record stands for
+        keep_missing: whether a missing observation (`MDV` 1 or no `DV`) is
+            read as a `NaN` value at its time instead of being dropped
         dim: name of the sample dimension of the batch
         substance: name of the substance or effect
         covariates: columns to keep as coordinates along `dim`; by default
@@ -438,10 +498,13 @@ def read_events(
         ValueError: if a required column (`id`, `time`, `dv`) is missing, if a
             row carries `EVID` 4, if a row carries an `SS` value other than 0
             or 1, if a rate is negative (a modelled rate), if a dose record
-            asks for repeated doses without a positive `II`, if a requested
-            covariate is not a column or not constant within a subject, or if
-            the doses of the subjects do not share one unit.
+            asks for repeated doses without a positive `II`, if a subject has
+            fewer than two observations, duplicate sampling times or a dosing
+            protocol which is not valid (named with the subject), if a
+            requested covariate is not a column or not constant within a
+            subject, or if the doses of the subjects do not share one unit.
     """
+    route = Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
     c_id = _column(lookup, id, "id", required=True)
@@ -455,6 +518,9 @@ def read_events(
     c_addl = _column(lookup, addl, "addl")
     c_ii = _column(lookup, ii, "ii")
     c_ss = _column(lookup, ss, "ss")
+    c_sd = _column(lookup, sd_col)
+    c_se = _column(lookup, se_col)
+    c_n = _column(lookup, n_col)
     assert c_id is not None and c_time is not None and c_dv is not None
 
     if c_rate is not None and (_numeric(df, c_rate) < 0).any():
@@ -498,9 +564,14 @@ def read_events(
                 "%d dose rows carry a DV value which is ignored (no EVID column)",
                 ignored,
             )
+    missing = values.isna()
     if c_mdv is not None:
-        is_observation &= _numeric(df, c_mdv, default=0.0).fillna(0.0) == 0.0
-    is_observation &= values.notna()
+        missing |= _numeric(df, c_mdv, default=0.0).fillna(0.0) != 0.0
+    if keep_missing:
+        # the row keeps its time; a `DV` on an `MDV 1` row is not observed
+        values = values.where(~missing)
+    else:
+        is_observation &= ~missing
 
     durations = pd.Series(np.nan, index=df.index, dtype=np.float64)
     if c_tinf is not None:
@@ -527,9 +598,14 @@ def read_events(
 
     subjects = _subjects(df, c_id)
     labels = list(subjects)
+    spread = [_numeric(df, c_sd), _numeric(df, c_se)]
+    n_values = _numeric(df, c_n)
     steady_state_marker = False
     sample_times: list[np.ndarray] = []
     sample_values: list[np.ndarray] = []
+    sample_sd: list[np.ndarray] = []
+    sample_se: list[np.ndarray] = []
+    sample_n: list[float] = []
     protocols: list[Dosing | None] = []
     for label, rows in subjects.items():
         dose_rows = [i for i in rows if bool(is_dose[i])]
@@ -552,7 +628,8 @@ def read_events(
             dose_durations.extend([float(durations[i])] * len(expanded))
         dosing = None
         if dose_times:
-            dosing = Dosing(
+            dosing = _dosing(
+                label,
                 amounts=np.array(dose_amounts),
                 times=np.array(dose_times),
                 durations=np.array(dose_durations),
@@ -560,11 +637,18 @@ def read_events(
                 route=route,
             )
         protocols.append(dosing)
-        observation_rows = [i for i in rows if bool(is_observation[i])]
-        observed = times[observation_rows].to_numpy()
-        order = np.argsort(observed, kind="stable")
-        sample_times.append(observed[order])
-        sample_values.append(values[observation_rows].to_numpy()[order])
+        observation_rows = pd.Index([i for i in rows if bool(is_observation[i])])
+        observed, columns = _subject_arrays(observation_rows, times, [values, *spread])
+        sample_times.append(observed)
+        sample_values.append(columns[0])
+        sample_sd.append(columns[1])
+        sample_se.append(columns[2])
+        subject_n = n_values[rows].dropna().unique()
+        if subject_n.size > 1:
+            raise ValueError(
+                f"subject {label}: '{c_n}' is not constant, found {subject_n}"
+            )
+        sample_n.append(float(subject_n[0]) if subject_n.size else np.nan)
 
     known = {
         column
@@ -580,6 +664,9 @@ def read_events(
             c_addl,
             c_ii,
             c_ss,
+            c_sd,
+            c_se,
+            c_n,
         )
         if column is not None
     }
@@ -614,6 +701,13 @@ def read_events(
                 )
             coordinates[column] = constant
 
+    subject_counts = np.array(sample_n) if c_n is not None else None
+    if subject_counts is not None and not np.isfinite(subject_counts).all():
+        logger.warning(
+            "'%s' is missing for some subjects, the batch carries no 'n'", c_n
+        )
+        subject_counts = None
+
     batch = _build_batch(
         labels=labels,
         times=sample_times,
@@ -624,6 +718,9 @@ def read_events(
         dim=dim,
         substance=substance,
         coordinates=coordinates,
+        sd=sample_sd if c_sd is not None else None,
+        se=sample_se if c_se is not None else None,
+        n=subject_counts,
     )
     if steady_state_marker:
         batch.ds.attrs["steady_state_marker"] = True
@@ -640,6 +737,9 @@ def write_events(
     evid: str = "EVID",
     mdv: str = "MDV",
     rate: str = "RATE",
+    sd_col: str = "SD",
+    se_col: str = "SE",
+    n_col: str = "N",
 ) -> pd.DataFrame:
     """Write a batch as event records, the inverse of `read_events`.
 
@@ -653,9 +753,13 @@ def write_events(
     without the expansion rules. The covariate coordinates along the sample
     dimension become columns after the event columns.
 
-    A missing value is written as a row with `MDV 1`, which `read_events` does
-    not read back as an observation: the round trip keeps the observed points
-    and the protocol, not the missing points.
+    A missing value is written as a row with `MDV 1` and no `DV`, which
+    `read_events` reads back as a missing value at its time: the round trip
+    keeps the sampling grid, the observed points and the protocol.
+
+    A group curve carries its uncertainty in the columns `sd_col`, `se_col` and
+    `n_col`, written only when the batch has them: `sd` and `se` on the
+    observation rows, the number of subjects `n` on every row of the sample.
 
     Args:
         timecourses: the batch, with exactly one sample dimension
@@ -666,10 +770,14 @@ def write_events(
         evid: name of the event identifier column
         mdv: name of the missing dependent value column
         rate: name of the infusion rate column
+        sd_col: name of the standard deviation column of a group curve
+        se_col: name of the standard error column of a group curve
+        n_col: name of the column with the number of subjects of a group curve
 
     Returns:
         The event table with the columns `id`, `time`, `dv`, `amt`, `evid`,
-        `mdv`, `rate` and one column per covariate coordinate.
+        `mdv`, `rate`, the uncertainty columns of a group curve and one column
+        per covariate coordinate.
 
     Raises:
         ValueError: if the batch does not have exactly one sample dimension.
@@ -697,10 +805,15 @@ def write_events(
     amounts = timecourses.dose_amount
     dose_times = timecourses.dose_time
     durations = timecourses.dose_duration
+    sd = timecourses.sd
+    se = timecourses.se
+    n = timecourses.n
 
     rows: list[dict[str, Any]] = []
     for index in range(n_samples):
         shared: dict[str, Any] = {id: labels[index]}
+        if n is not None:
+            shared[n_col] = float(n[index])
         shared.update({name: ds[name].to_numpy()[index] for name in covariate_names})
         sample_rows: list[dict[str, Any]] = []
         if amounts is not None and dose_times is not None and durations is not None:
@@ -724,24 +837,38 @@ def write_events(
                         ),
                     }
                 )
-        for t, value in zip(times[index], values[index], strict=True):
+        for point, (t, value) in enumerate(
+            zip(times[index], values[index], strict=True)
+        ):
             if not np.isfinite(t):
                 continue  # the padding of a shorter sampling grid
-            sample_rows.append(
-                {
-                    **shared,
-                    time: float(t),
-                    dv: float(value),
-                    amt: 0.0,
-                    evid: 0,
-                    mdv: 0 if np.isfinite(value) else 1,
-                    rate: 0.0,
-                }
-            )
+            observation = {
+                **shared,
+                time: float(t),
+                dv: float(value),
+                amt: 0.0,
+                evid: 0,
+                mdv: 0 if np.isfinite(value) else 1,
+                rate: 0.0,
+            }
+            if sd is not None:
+                observation[sd_col] = float(sd[index][point])
+            if se is not None:
+                observation[se_col] = float(se[index][point])
+            sample_rows.append(observation)
         sample_rows.sort(key=lambda row: (row[time], -row[evid]))
         rows.extend(sample_rows)
 
-    columns = [id, time, dv, amt, evid, mdv, rate, *covariate_names]
+    uncertainty = [
+        column
+        for column, present in (
+            (sd_col, sd is not None),
+            (se_col, se is not None),
+            (n_col, n is not None),
+        )
+        if present
+    ]
+    columns = [id, time, dv, amt, evid, mdv, rate, *uncertainty, *covariate_names]
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -752,7 +879,7 @@ def read_pknca(
     time_unit: str,
     unit: str,
     dose_unit: str,
-    route: Route,
+    route: Route | str,
     conc_col: str = "conc",
     time_col: str = "time",
     dose_col: str = "dose",
@@ -778,7 +905,8 @@ def read_pknca(
         time_unit: unit of the time columns
         unit: unit of the concentration column
         dose_unit: unit of the dose column
-        route: route of the doses
+        route: route of the doses, a `Route` or a string it coerces
+            (`"oral"`, `"IV_BOLUS"`)
         conc_col: name of the concentration column
         time_col: name of the time column of `conc`
         dose_col: name of the dose amount column
@@ -797,9 +925,14 @@ def read_pknca(
 
     Raises:
         ValueError: if a required column is missing, if a grouping column is in
-            neither table or is not constant within a subject, or if the
-            concentration table holds no subject.
+            neither table or is not constant within a subject, if the
+            concentration table holds no subject, if a subject has fewer than
+            two concentrations or duplicate times, or if the dose rows of a
+            subject are not a valid protocol (a dose time which is not a
+            number, a negative amount, a missing infusion duration), named with
+            the subject.
     """
+    route = Route(route)
     conc = conc.reset_index(drop=True)
     dose = dose.reset_index(drop=True)
     c_lookup = _lookup(conc)
@@ -827,13 +960,13 @@ def read_pknca(
     sample_values: list[np.ndarray] = []
     protocols: list[Dosing | None] = []
     for label, rows in subjects.items():
-        times = conc_times[rows].to_numpy()
-        order = np.argsort(times, kind="stable")
-        sample_times.append(times[order])
-        sample_values.append(conc_values[rows].to_numpy()[order])
+        times, columns = _subject_arrays(rows, conc_times, [conc_values])
+        sample_times.append(times)
+        sample_values.append(columns[0])
         dose_rows = dosed.get(label, pd.Index([]))
         protocols.append(
-            Dosing(
+            _dosing(
+                label,
                 amounts=dose_amounts[dose_rows].to_numpy(),
                 times=dose_times[dose_rows].to_numpy(),
                 durations=dose_durations[dose_rows].to_numpy(),
@@ -944,7 +1077,8 @@ def read_adnca(
         time_unit: unit of the time columns
         unit: unit of the values, the first `AVALU` of the analyte by default
         dose_unit: unit of the doses, the first `DOSEU` by default
-        route: route of the doses, the first `ROUTE` by default
+        route: route of the doses, a `Route` or a string it coerces, the
+            first `ROUTE` by default
         subject: name of the subject column
         analyte: the analyte to read, the single analyte of the dataset by
             default
@@ -970,9 +1104,11 @@ def read_adnca(
         ValueError: if a required column is missing, if `analyte` is `None` and
             the dataset holds several analytes, if a unit or a route cannot be
             read, if the route is `Route.IV_INFUSION` (the dataset holds no
-            duration), or if the records of one dose time of a subject disagree
-            on the dose amount.
+            duration, the error names the subject), if a subject has fewer than
+            two records or duplicate times, or if the records of one dose time
+            of a subject disagree on the dose amount.
     """
+    route = None if route is None else Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
     c_subject = _column(lookup, subject, required=True)
@@ -1048,17 +1184,17 @@ def read_adnca(
         dosing = None
         if protocol:
             dose_times = sorted(protocol)
-            dosing = Dosing(
+            dosing = _dosing(
+                label,
                 amounts=np.array([protocol[t] for t in dose_times]),
                 times=np.array(dose_times),
                 unit=doses_unit,
                 route=route,
             )
         protocols.append(dosing)
-        observed = times[index].to_numpy()
-        order = np.argsort(observed, kind="stable")
-        sample_times.append(observed[order])
-        sample_values.append(values[index].to_numpy()[order])
+        observed, columns = _subject_arrays(index, times, [values])
+        sample_times.append(observed)
+        sample_values.append(columns[0])
 
     coordinates: dict[str, np.ndarray] = {}
     if c_lloq is not None and bool(rows[c_lloq].notna().any()):

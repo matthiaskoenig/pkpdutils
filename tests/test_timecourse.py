@@ -392,3 +392,48 @@ def test_relative_to_dose_first_and_last() -> None:
         ).relative_to_dose()
         is not None
     )
+
+
+def test_route_coerces_strings_case_insensitively() -> None:
+    # B20: `route="oral"` reaches the constructors as a string
+    assert Route("ORAL") is Route.ORAL
+    assert Route("Iv_Bolus") is Route.IV_BOLUS
+    assert Route(" iv infusion ") is Route.IV_INFUSION
+    assert Route("iv-infusion") is Route.IV_INFUSION
+    with pytest.raises(ValueError, match="sublingual"):
+        Route("sublingual")
+
+
+def test_dose_and_dosing_coerce_a_route_string() -> None:
+    dose = Dose(amount=100, unit="mg", route="IV_BOLUS")
+    assert dose.route is Route.IV_BOLUS
+    protocol = Dosing(amounts=[1], times=[0], unit="mg", route="oral")
+    assert protocol.route is Route.ORAL
+
+
+def test_dose_accepts_international_units() -> None:
+    # B22: the registry defines `IU`, activity dosed substances are dosed in it
+    assert Dose(amount=100, unit="IU").quantity.magnitude == 100
+    assert Dose(amount=2, unit="IU/kg").per_bodyweight
+    assert not Dose(amount=100, unit="IU").per_bodyweight
+    assert Dosing(amounts=[100], times=[0], unit="IU").total_amount == 100
+
+
+def test_dosing_rejects_non_finite_amounts_and_times() -> None:
+    # B32: a NaN dose time reached the padding of the batch as a half dose
+    with pytest.raises(ValueError, match="finite"):
+        Dosing(amounts=[100.0], times=[np.nan], unit="mg")
+    with pytest.raises(ValueError, match="finite"):
+        Dosing(amounts=[np.nan], times=[0.0], unit="mg")
+    with pytest.raises(ValueError, match="finite"):
+        Dosing(amounts=[100.0, 100.0], times=[0.0, np.inf], unit="mg")
+
+
+def test_timecourse_rejects_an_empty_unit() -> None:
+    # B4: `unit=""` parsed as dimensionless and broke the derived units
+    with pytest.raises(ValueError, match="dimensionless"):
+        Timecourse(time=[0, 1], value=[1, 2], time_unit="hr", unit="")
+    with pytest.raises(ValueError, match="dimensionless"):
+        Timecourse(time=[0, 1], value=[1, 2], time_unit="", unit="mg/l")
+    tc = Timecourse(time=[0, 1], value=[1, 2], time_unit="hr", unit="dimensionless")
+    assert tc.unit == "dimensionless"

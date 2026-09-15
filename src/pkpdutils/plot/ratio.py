@@ -8,8 +8,8 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import NullLocator
 
+from pkpdutils.plot._common import figure_of
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of
 from pkpdutils.stats.bioequivalence import BEResult
 from pkpdutils.stats.ddi import DDIThresholds
 
@@ -53,16 +53,23 @@ def plot_ratio(
         limits: acceptance limits drawn as dashed lines, `None` for none.
         thresholds: interaction thresholds drawn as dotted lines with the
             class names, `None` for none.
-        ax: axes to draw on, a new figure by default.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
 
     Returns:
         The figure.
+
+    Raises:
+        ValueError: if `ratios` (or `ratios.parameters`) is empty.
     """
     entries: Mapping[str, RatioLike] = (
         ratios.parameters if isinstance(ratios, BEResult) else ratios
     )
-    fig, ax = _figure_of(ax)
+    if not entries:
+        raise ValueError("plot_ratio needs at least one ratio")
+    fig, ax = figure_of(ax)
     names = list(entries)
     ys = np.arange(len(names))
     for y, name in zip(ys, names, strict=True):

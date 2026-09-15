@@ -59,6 +59,7 @@ from pkpdutils.nca.auc import (
     insert_point,
     interpolate_at,
     pack_valid,
+    take_rows,
     time_above_threshold,
 )
 from pkpdutils.nca.options import AUCMethod, C0Method, Kind, NCAOptions
@@ -142,19 +143,6 @@ def interval_variables(options: NCAOptions, *, has_dose: bool) -> tuple[str, ...
     return (*shared, *kind)
 
 
-def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
-    """Element `idx[i]` of row `i`.
-
-    Args:
-        a: array `(N, n)`
-        idx: one column index per row `(N,)`
-
-    Returns:
-        The selected elements `(N,)`.
-    """
-    return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
-
-
 def _back_extrapolate(
     tp: np.ndarray,
     cp: np.ndarray,
@@ -190,8 +178,8 @@ def _back_extrapolate(
     n_after = n_valid - first
     i1 = np.clip(first, 0, n - 1)
     i2 = np.clip(first + 1, 0, n - 1)
-    t1, c1 = _take(tp, i1), _take(cp, i1)
-    t2, c2 = _take(tp, i2), _take(cp, i2)
+    t1, c1 = take_rows(tp, i1), take_rows(cp, i1)
+    t2, c2 = take_rows(tp, i2), take_rows(cp, i2)
     with np.errstate(divide="ignore", invalid="ignore"):
         back = np.exp(
             np.log(c1) - (np.log(c2) - np.log(c1)) / (t2 - t1) * (t1 - t_start)
@@ -299,7 +287,7 @@ def _interval_column(
     # the samples of the interval are a block of the packed row
     first = np.clip(before.sum(axis=1), 0, n - 1)
     last_idx = np.clip(first + n_inside - 1, 0, n - 1)
-    c_last_inside = np.where(n_inside >= 1, _take(cp, last_idx), np.nan)
+    c_last_inside = np.where(n_inside >= 1, take_rows(cp, last_idx), np.nan)
     has_sample_at_end = at_end.any(axis=1)
     with np.errstate(invalid="ignore"):
         c_sample_at_end = np.where(
@@ -350,8 +338,8 @@ def _interval_column(
     in_row = np.arange(tq.shape[1])[None, :] < nq[:, None]
     with np.errstate(invalid="ignore"):
         imax = np.where(in_row, cq, -np.inf).argmax(axis=1)
-        value_max = np.where(complete, _take(cq, imax), nan)
-        time_max = np.where(complete, _take(tq, imax) - t_start, nan)
+        value_max = np.where(complete, take_rows(cq, imax), nan)
+        time_max = np.where(complete, take_rows(tq, imax) - t_start, nan)
         value_min = np.where(complete, np.where(in_row, cq, np.inf).min(axis=1), nan)
     method = (
         options.auc_method if options.kind is Kind.CONCENTRATION else AUCMethod.LINEAR

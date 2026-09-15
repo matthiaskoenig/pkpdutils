@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from pkpdutils.nca.auc import take_rows
 from pkpdutils.nca.options import NCAFlag, TerminalMethod, TerminalPhase
 
 
@@ -169,13 +170,16 @@ def terminal_fit(
         start = np.where(
             enough_n.any(axis=1), n - 1 - enough_n[:, ::-1].argmax(axis=1), 0
         )
+        # with `exclude_cmax` the window may not reach into the absorption phase:
+        # it then holds the points after the maximum, fewer than `n_points`
+        start = np.clip(np.maximum(start, first_allowed), 0, n - 1)
         has_fit = enough_n.any(axis=1)
     else:  # ALL_AFTER_TMAX
         start = tmax_idx + 1
         has_fit = start < n_valid
         start = np.clip(start, 0, n - 1)
-    n_at_start = np.take_along_axis(stats["n"], start[:, None], axis=1)[:, 0]
-    slope_at_start = np.take_along_axis(stats["slope"], start[:, None], axis=1)[:, 0]
+    n_at_start = take_rows(stats["n"], start)
+    slope_at_start = take_rows(stats["slope"], start)
     with np.errstate(invalid="ignore"):
         enough = has_fit & (n_at_start >= phase.min_points)
         positive = enough & ~(slope_at_start < 0)
@@ -205,7 +209,7 @@ def _collect(
 
     def take(a: np.ndarray) -> np.ndarray:
         """Value of `a` at the chosen `start` index of every row."""
-        return np.take_along_axis(a, start[:, None], axis=1)[:, 0]
+        return take_rows(a, start)
 
     n_points = take(stats["n"])
     with np.errstate(invalid="ignore"):

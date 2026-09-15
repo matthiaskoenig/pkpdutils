@@ -1,3 +1,5 @@
+import warnings
+
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
@@ -46,6 +48,24 @@ def test_plot_timecourse_single_dose_draws_no_dose_line() -> None:
     ax = fig.axes[0]
     dose_lines = [line for line in ax.get_lines() if line.get_linestyle() == ":"]
     assert len(dose_lines) == 0
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_timecourse_log_without_positive_values_stays_linear() -> None:
+    # B28: a curve with no positive value used to raise "UserWarning: Data
+    # has no positive values, and therefore cannot be log-scaled" at draw time.
+    tc = Timecourse(
+        time=[0, 1, 2, 4],
+        value=[0.0, 0.0, 0.0, 0.0],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg"),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fig = plot_timecourse(tc, log=True)
+        fig.canvas.draw()
+    assert fig.axes[0].get_yscale() == "linear"
     matplotlib.pyplot.close(fig)
 
 

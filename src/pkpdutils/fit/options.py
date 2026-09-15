@@ -6,6 +6,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pkpdutils.fit.model import ModelParameter
+from pkpdutils.result import decode_flags as decode_flag_names
 
 #: loss functions of `scipy.optimize.least_squares`
 LOSSES: tuple[str, ...] = ("linear", "soft_l1", "huber", "cauchy", "arctan")
@@ -65,9 +66,7 @@ def decode_fit_flags(value: int) -> list[str]:
     Returns:
         The names of the flags set in `value`, in bit order.
     """
-    return [
-        f.name for f in FitFlag if f.value and value & f.value and f.name is not None
-    ]
+    return decode_flag_names(FitFlag, value)
 
 
 class FitOptions(BaseModel):
@@ -85,10 +84,10 @@ class FitOptions(BaseModel):
         n_workers: worker processes for many samples or starts, `None` for
             the calling process. A pooled call (`n_workers > 1` with more
             than one row) must run under an `if __name__ == "__main__":`
-            guard on a platform whose default process start method is
-            `spawn` or `forkserver` (Windows and macOS; the NCA pool has the
-            same requirement), so the worker processes can re-import the
-            module without re-running it
+            guard, since python's `spawn` and `forkserver` process start
+            methods (the default on macOS and Windows, and on Linux from
+            python 3.14) re-import the module without re-running it; the
+            NCA pool (`NCAOptions.n_workers`) has the same requirement
         ci_level: level of the confidence intervals
         bootstrap: number of residual bootstrap replicates, 0 for none
         max_nfev: maximal function evaluations per start, `None` for the scipy default

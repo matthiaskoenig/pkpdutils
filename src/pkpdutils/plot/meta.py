@@ -7,8 +7,8 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from pkpdutils.plot._common import figure_of, plain_log_ticks
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.stats.meta import EffectKind, MetaResult
 
 #: axis label per kind of effect
@@ -34,7 +34,10 @@ def plot_forest(
 
     Args:
         result: the meta-analysis.
-        ax: axes to draw on, a new figure by default.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels (the
+            pooled effect labels) can clip unless the caller sets one
+            (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
         exp: exponentiate the effects; `None` does so for `LOG_RATIO`.
 
@@ -45,10 +48,11 @@ def plot_forest(
     transform: Callable[[Any], np.ndarray] = (
         np.exp if use_exp else (lambda v: np.asarray(v, dtype=float))
     )
-    fig, ax = _figure_of(ax)
-    # the pooled effect labels ("random effects (tau2 = ...)") are long and
-    # would otherwise be clipped at the left edge of the figure
-    fig.set_layout_engine("constrained")
+    # a new figure gets the constrained layout engine from `figure_of`, which
+    # keeps the long pooled effect labels ("random effects (tau2 = ...)")
+    # from being clipped at the left edge; a caller-supplied `ax` keeps
+    # whatever layout its figure already has
+    fig, ax = figure_of(ax)
     n = result.n_studies
     weights = result.random.weights
     for i, e in enumerate(result.effects):
@@ -90,7 +94,7 @@ def plot_forest(
     ax.invert_yaxis()
     if use_exp:
         ax.set_xscale("log")
-        _plain_log_ticks(ax.xaxis)
+        plain_log_ticks(ax.xaxis)
         ax.set_xlabel("ratio treatment / control")
     else:
         ax.set_xlabel(_LABELS[result.kind])

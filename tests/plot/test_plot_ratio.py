@@ -1,6 +1,7 @@
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
+import pytest
 from matplotlib.figure import Figure
 
 from pkpdutils.plot import plot_ratio
@@ -52,3 +53,8 @@ def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     assert sorted(dotted) == [0.2, 0.5, 0.8, 1.25, 2.0, 5.0]
     assert any("strong" in t.get_text() for t in ax.texts)
     matplotlib.pyplot.close("all")
+
+
+def test_plot_ratio_raises_for_an_empty_mapping() -> None:
+    with pytest.raises(ValueError):
+        plot_ratio({})

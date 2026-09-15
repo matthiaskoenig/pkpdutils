@@ -37,9 +37,15 @@ single dose curve by adding the shifted, dose-scaled single dose curves
 import numpy as np
 import xarray as xr
 
-from pkpdutils.nca.auc import interpolate_at, pack_valid
+from pkpdutils.nca.auc import interpolate_at, pack_valid, take_rows
 from pkpdutils.nca.intervals import compute_intervals
-from pkpdutils.nca.nca import compute_parameters, nca_single, reference_dose
+from pkpdutils.nca.nca import (
+    compute_parameters,
+    dose_counts,
+    nca_single,
+    positive_dose,
+    reference_dose,
+)
 from pkpdutils.nca.options import Kind, NCAFlag, NCAOptions
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.timecourse import Dosing, DosingRegimen, Route, Timecourse
@@ -58,19 +64,6 @@ SINGLE_DOSE_PARAMETERS: tuple[str, ...] = (
 )
 
 
-def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
-    """Element `idx[i]` of row `i`.
-
-    Args:
-        a: array `(N, n)`
-        idx: one column index per row `(N,)`
-
-    Returns:
-        The selected elements `(N,)`.
-    """
-    return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
-
-
 def _interval_length(times: np.ndarray, counts: np.ndarray) -> np.ndarray:
     """Length of the last dosing interval of every protocol, `t_K - t_{K-1}`.
 
@@ -84,7 +77,9 @@ def _interval_length(times: np.ndarray, counts: np.ndarray) -> np.ndarray:
     n_dose = times.shape[1]
     last = np.clip(counts - 1, 0, n_dose - 1)
     previous = np.clip(counts - 2, 0, n_dose - 1)
-    return np.where(counts >= 2, _take(times, last) - _take(times, previous), np.nan)
+    return np.where(
+        counts >= 2, take_rows(times, last) - take_rows(times, previous), np.nan
+    )
 
 
 def compute_steady_state(
@@ -165,7 +160,8 @@ def compute_steady_state(
     # every earlier dose as well, so `CL = D / AUC(0-inf)` of that slice is
     # biased low. The clearance of the analysis is `cl_ss` over the dosing
     # interval; the extrapolated areas stay and describe the decline after the
-    # last dose
+    # last dose. Only the multiple dose rows of a batch reach this function
+    # (`pkpdutils.nca.nca.is_multiple_dose`), so every row is blanked
     for name in SINGLE_DOSE_PARAMETERS:
         if name in out:
             out[name] = np.full(n_rows, np.nan)
@@ -210,7 +206,7 @@ def compute_steady_state(
         Returns:
             The column of the last interval `(N,)`.
         """
-        return np.where(has_interval, _take(intervals[name], last), np.nan)
+        return np.where(has_interval, take_rows(intervals[name], last), np.nan)
 
     def first_interval(name: str) -> np.ndarray:
         """The value of the first dosing interval of every row.
@@ -245,7 +241,7 @@ def compute_steady_state(
             # clearance of an extravascular dose is `CL/F`
             suffix = "" if route.is_iv else "_f"
             with np.errstate(divide="ignore", invalid="ignore"):
-                out[f"cl_ss{suffix}"] = amount / area
+                out[f"cl_ss{suffix}"] = positive_dose(amount) / area
     else:
         out["auec_tau"] = area
         out["emin_ss"] = last_interval("interval_emin")
@@ -254,9 +250,7 @@ def compute_steady_state(
         out["time_above_tau"] = last_interval("interval_time_above")
         out["accumulation_ratio_obs"] = accumulation_obs
     # a batch without a protocol carries no dose: the interval of `tau` only
-    out["n_doses"] = (
-        np.zeros(n_rows) if dose_time is None else counts.astype(np.float64)
-    )
+    out["n_doses"] = dose_counts(dose_time, n_rows)
     out["tau"] = np.where(has_interval, tau, np.nan)
 
     with np.errstate(invalid="ignore"):

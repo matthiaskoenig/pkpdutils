@@ -7,6 +7,7 @@ from pkpdutils.nca.auc import (
     interpolate_at,
     pack_valid,
     segment_areas,
+    take_rows,
 )
 from pkpdutils.nca.options import AUCMethod
 
@@ -124,3 +125,8 @@ def test_insert_point_keeps_time_order() -> None:
     np.testing.assert_allclose(cp2[0, :4], [0.0, 4.0, 2.5, 1.0])
     tp3, _, n3 = insert_point(tp, cp, n_valid, np.array([np.nan]), np.array([np.nan]))
     assert n3[0] == 3 and tp3.shape[1] == tp.shape[1] + 1
+
+
+def test_take_rows_selects_one_element_per_row() -> None:
+    a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    np.testing.assert_array_equal(take_rows(a, np.array([2, 0])), [3.0, 4.0])

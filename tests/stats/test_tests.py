@@ -1,15 +1,17 @@
+import warnings
+
 import numpy as np
 import pytest
 from scipy import stats
 
 from pkpdutils.stats import ParameterSample, Scale
+from pkpdutils.stats.sample import hedges_correction
 from pkpdutils.stats.tests import (
     AdjustMethod,
     Alternative,
     TestMethod,
     TestResult,
     compare,
-    hedges_correction,
     multiple_comparison,
 )
 
@@ -66,7 +68,7 @@ def test_paired_t() -> None:
 
 
 def test_paired_needs_equal_size() -> None:
-    with pytest.raises(ValueError, match="paired"):
+    with pytest.raises(ValueError, match=r"[Pp]aired samples need equal sizes"):
         compare(sample(A), sample(B), paired=True)
 
 
@@ -212,5 +214,61 @@ def test_multiple_comparison() -> None:
     assert bh.tolist() == pytest.approx(
         stats.false_discovery_control(p, method="bh").tolist()
     )
-    assert multiple_comparison([0.5], AdjustMethod.HOLM).tolist() == [0.5]
-    assert multiple_comparison([0.9, 0.9], AdjustMethod.BONFERRONI).max() == 1.0
+    assert multiple_comparison(np.array([0.5]), AdjustMethod.HOLM).tolist() == [0.5]
+    assert (
+        multiple_comparison(np.array([0.9, 0.9]), AdjustMethod.BONFERRONI).max() == 1.0
+    )
+
+
+def test_string_arguments_are_coerced() -> None:
+    # B1: a plain string ran a different analysis than the enumeration member
+    a = ParameterSample(values=np.array([10.0, 20.0, 40.0, 80.0]), labels=np.arange(4))
+    b = ParameterSample(values=np.array([12.0, 25.0, 30.0, 90.0]), labels=np.arange(4))
+    assert compare(a, b, scale="log").effect == compare(a, b, scale=Scale.LOG).effect
+    paired = compare(a, b, test="paired_t", paired=True)
+    enum_paired = compare(a, b, test=TestMethod.PAIRED_T, paired=True)
+    assert paired.df == enum_paired.df == 3.0
+    assert paired.to_dict() == enum_paired.to_dict()
+    less = compare(a, b, alternative="less")
+    assert less.p_value == compare(a, b, alternative=Alternative.LESS).p_value
+    p = np.array([0.001, 0.008, 0.014, 0.2])
+    assert multiple_comparison(p, "holm").tolist() == pytest.approx(
+        multiple_comparison(p, AdjustMethod.HOLM).tolist()
+    )
+    assert multiple_comparison(p, "bh")[1] != multiple_comparison(p, "holm")[1]
+    with pytest.raises(ValueError, match="not a valid Scale"):
+        compare(a, b, scale="logarithmic")
+    with pytest.raises(ValueError, match="not a valid TestMethod"):
+        compare(a, b, test="t")
+    with pytest.raises(ValueError, match="not a valid Alternative"):
+        compare(a, b, alternative="smaller")
+    with pytest.raises(ValueError, match="not a valid AdjustMethod"):
+        multiple_comparison(p, "hochberg")
+
+
+def test_sample_without_finite_values_gives_nan_statistics() -> None:
+    # B10: the division by the size of the empty sample raised ZeroDivisionError
+    empty = ParameterSample(values=np.array([np.nan, np.nan]), name="lambda_z")
+    other = ParameterSample(values=np.array([1.0, 2.0]))
+    for r in (compare(empty, other), compare(other, empty)):
+        assert r.n_a == 0 or r.n_b == 0
+        for field in ("statistic", "p_value", "df", "ci_low", "ci_high", "effect"):
+            assert np.isnan(getattr(r, field)), field
+        assert np.isnan(r.cohen_d) and np.isnan(r.hedges_g)
+    # the rank tests are just as degenerate, and the paired path names the samples
+    assert np.isnan(compare(empty, other, test=TestMethod.MANN_WHITNEY).p_value)
+    with pytest.raises(ValueError, match="no pair of finite values"):
+        compare(empty, other, paired=True)
+
+
+def test_identical_samples_do_not_leak_a_runtime_warning() -> None:
+    # B24: scipy's wilcoxon divides by the zero spread of the differences
+    values, labels = np.array([10.0, 12.0, 9.0, 11.0]), np.arange(4)
+    a = ParameterSample(values=values, labels=labels)
+    b = ParameterSample(values=values.copy(), labels=labels)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        w = compare(a, b, test=TestMethod.WILCOXON, paired=True)
+        mw = compare(a, b, test=TestMethod.MANN_WHITNEY)
+    assert w.p_value == 1.0 and w.effect == pytest.approx(1.0)
+    assert mw.p_value == 1.0

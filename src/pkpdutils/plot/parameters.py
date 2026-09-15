@@ -7,8 +7,8 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from pkpdutils.plot._common import figure_of, log_scale
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, summarize
 
@@ -44,10 +44,13 @@ def plot_parameters(
         dim: the sample dimension of the individuals.
         by: a coordinate along `dim` which groups the individuals, one
             group named after the parameter without it.
-        log: logarithmic y axis.
+        log: logarithmic y axis; without a positive value across every group
+            the axis stays linear (logged at debug level).
         scale: scale of the mean and its interval.
         ci_level: level of the interval.
-        ax: axes to draw on, a new figure by default.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
         **indexers: coordinate label per remaining sample dimension.
 
@@ -70,7 +73,7 @@ def plot_parameters(
         groups = {
             str(key): sample.select(keys == key) for key in dict.fromkeys(keys.tolist())
         }
-    fig, ax = _figure_of(ax)
+    fig, ax = figure_of(ax)
     rng = np.random.default_rng(0)
     positions = np.arange(1, len(groups) + 1)
     values = [g.finite_values for g in groups.values()]
@@ -119,6 +122,5 @@ def plot_parameters(
     if by is not None:
         ax.set_xlabel(by)
     if log:
-        ax.set_yscale("log")
-        _plain_log_ticks(ax.yaxis)
+        log_scale(ax, "y")
     return fig

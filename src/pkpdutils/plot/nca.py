@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -11,8 +10,14 @@ from matplotlib.ticker import MaxNLocator
 from pkpdutils.nca.intervals import INTERVAL_DIM
 from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
+from pkpdutils.plot._common import (
+    axes_of,
+    figure_of,
+    log_scale,
+    sample_colors,
+    sample_labels,
+)
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 
@@ -57,7 +62,8 @@ def draw_nca_panel(
         timecourse: the curve (times relative to its dose)
         values: parameter magnitudes of the curve
         flags: flag names of the curve
-        log: logarithmic value axis
+        log: logarithmic value axis; a curve without a positive value stays
+            linear (logged at debug level)
         title: title, the label of the curve by default
         style: colors and markers
     """
@@ -144,7 +150,7 @@ def draw_nca_panel(
     ax.set_xlabel(f"time [{tc.time_unit}]")
     ax.set_ylabel(f"{tc.substance} [{tc.unit}]")
     if log:
-        ax.set_yscale("log")
+        log_scale(ax, "y")
     else:
         ax.set_ylim(bottom=0)
     ax.set_xlim(left=0)
@@ -152,7 +158,8 @@ def draw_nca_panel(
     if flags:
         heading = f"{heading} [{', '.join(flags)}]"
     ax.set_title(heading)
-    ax.legend(fontsize="small")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize="small")
 
 
 def plot_nca(
@@ -176,8 +183,8 @@ def plot_nca(
         The figure.
     """
     values, flags = _sample_values(result, indexers)
-    fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(11, 4.5))
-    fig.set_layout_engine("constrained")
+    fig, axes = axes_of(None, nrows=1, ncols=2, figsize=(11, 4.5))
+    ax1, ax2 = axes[0]
     if title is None and indexers:
         title = "|".join(str(v) for v in indexers.values())
     draw_nca_panel(ax1, timecourse, values, flags, log=False, title=title, style=style)
@@ -208,10 +215,7 @@ def plot_nca_grid(
     curves = list(timecourses)
     n = len(curves)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = plt.subplots(
-        nrows=nrows, ncols=ncols, figsize=(4.5 * ncols, 3.5 * nrows), squeeze=False
-    )
-    fig.set_layout_engine("constrained")
+    fig, axes = axes_of(None, nrows, ncols, figsize=(4.5 * ncols, 3.5 * nrows))
     flat_axes = axes.ravel()
     indices = list(np.ndindex(*timecourses.sample_shape))
     for k, (tc, index) in enumerate(zip(curves, indices, strict=True)):
@@ -247,7 +251,9 @@ def plot_intervals(
     Args:
         result: the result of a multiple dose analysis
         name: name of the per-interval variable (`interval_*`)
-        ax: axes to draw on, a new figure by default
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
         style: colors and markers
         **indexers: coordinate label per sample dimension selecting one sample
 
@@ -262,7 +268,7 @@ def plot_intervals(
         raise ValueError("The result has no interval parameters")
     if name not in result.ds.data_vars or INTERVAL_DIM not in result.ds[name].dims:
         raise ValueError(f"'{name}' is not an interval variable of the result")
-    fig, ax = _figure_of(ax)
+    fig, ax = figure_of(ax)
     da = result[name]
     x = result.ds[INTERVAL_DIM].to_numpy()
     if indexers:
@@ -281,20 +287,14 @@ def plot_intervals(
         sizes = [result.ds.sizes[d] for d in sample_dims]
         indices = list(np.ndindex(*sizes))
         n = len(indices)
-        cmap = plt.get_cmap(style.cmap)
+        labels: list[str | None] = (
+            list(sample_labels(result.ds, sample_dims)) if sample_dims else [None]
+        )
+        colors = sample_colors(n, style.cmap)
         for i, index in enumerate(indices):
             sel = dict(zip(sample_dims, (int(k) for k in index), strict=True))
             sample = da.isel(sel)
-            label = (
-                "|".join(
-                    str(result.ds.coords[d].to_numpy()[k])
-                    if d in result.ds.coords
-                    else str(k)
-                    for d, k in zip(sample_dims, index, strict=True)
-                )
-                or None
-            )
-            color: Any = style.data_color if n <= 1 else cmap(i / max(n - 1, 1))
+            color: Any = style.data_color if n <= 1 else colors[i]
             y = np.ma.masked_invalid(sample.to_numpy().astype(float))
             ax.plot(
                 x,
@@ -302,7 +302,7 @@ def plot_intervals(
                 marker=style.data_marker,
                 linestyle="-",
                 color=color,
-                label=label,
+                label=labels[i],
                 linewidth=style.linewidth,
                 markersize=style.markersize,
             )

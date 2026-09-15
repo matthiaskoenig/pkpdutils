@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 from scipy.stats import t as student_t
@@ -195,6 +197,28 @@ def test_crossover_validation() -> None:
         tost(test, reference, limits=(1.25, 0.8))
 
 
+def test_identical_samples_give_nan_tests() -> None:
+    # B23: a zero within-subject variance divided by zero and claimed bioequivalence
+    values, labels = np.array([10.0, 12.0, 9.0, 11.0]), np.arange(4)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        res = tost(
+            ParameterSample(values=values, labels=labels),
+            ParameterSample(values=values.copy(), labels=labels),
+        )
+    assert res.gmr == pytest.approx(1.0) and res.se_log == 0.0
+    assert np.isnan(res.p_lower) and np.isnan(res.p_upper) and np.isnan(res.p_value)
+    assert np.isnan(res.ci_low) and np.isnan(res.ci_high)
+    assert not res.bioequivalent
+
+
+def test_string_design_is_coerced() -> None:
+    test, reference = crossover_samples()
+    assert tost(test, reference, design="parallel").design is Design.PARALLEL
+    with pytest.raises(ValueError, match="not a valid Design"):
+        tost(test, reference, design="cross-over")
+
+
 def batch(values: np.ndarray, period: np.ndarray) -> Timecourses:
     time = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
     curves = np.stack([v / 5 * np.exp(-0.2 * time) for v in values])
@@ -226,6 +250,9 @@ def test_bioequivalence_of_nca_results() -> None:
         test.sample("cmax", "individual"), reference.sample("cmax", "individual")
     )
     assert res["cmax"].gmr == direct.gmr
+    assert res.to_dict() == {
+        name: parameter.to_dict() for name, parameter in res.parameters.items()
+    }
     df = res.to_dataframe()
     assert list(df["parameter"]) == ["auc_inf_obs", "cmax"]
     assert {

@@ -92,5 +92,9 @@ def test_ema_and_sensitivity() -> None:
     assert substrate_sensitivity(5.0) is Sensitivity.SENSITIVE
     assert substrate_sensitivity(2.0) is Sensitivity.MODERATELY_SENSITIVE
     assert substrate_sensitivity(1.9) is Sensitivity.NONE
+    assert substrate_sensitivity(5.0, thresholds=ema) is Sensitivity.SENSITIVE
+    # the options of every stats function are keyword-only
+    with pytest.raises(TypeError, match="positional"):
+        substrate_sensitivity(5.0, ema)  # ty: ignore[too-many-positional-arguments]
     with pytest.raises(ValueError, match="positive"):
         ddi_classification(0.0)

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pkpdutils import Dosing, Route, Timecourses, nca
+from pkpdutils import Dose, Dosing, Route, Timecourses, nca
 from pkpdutils.io import read_adnca, read_events, read_pknca, write_events
 
 DATA = Path(__file__).parent / "data" / "formats"
@@ -177,19 +177,19 @@ def test_read_events_monolix_spelled_out_aliases() -> None:
 def test_read_events_rate_and_errors() -> None:
     df = pd.DataFrame(
         {
-            "ID": np.array([1, 1]),
-            "TIME": np.array([0.0, 1.0]),
-            "DV": np.array([np.nan, 2.0]),
-            "AMT": np.array([30.0, 0.0]),
-            "EVID": np.array([1, 0]),
-            "RATE": np.array([15.0, 0.0]),
+            "ID": np.array([1, 1, 1]),
+            "TIME": np.array([0.0, 1.0, 2.0]),
+            "DV": np.array([np.nan, 2.0, 1.0]),
+            "AMT": np.array([30.0, 0.0, 0.0]),
+            "EVID": np.array([1, 0, 0]),
+            "RATE": np.array([15.0, 0.0, 0.0]),
         }
     )
     d = read_events(
         df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.IV_INFUSION
     ).dosing_of(individual=1)
     assert d is not None and d.durations is not None and d.durations.tolist() == [2.0]
-    df["RATE"] = np.array([-1.0, 0.0])
+    df["RATE"] = np.array([-1.0, 0.0, 0.0])
     with pytest.raises(ValueError, match="Modelled rates"):
         read_events(
             df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.IV_INFUSION
@@ -338,3 +338,168 @@ def test_read_adnca() -> None:
     with pytest.raises(ValueError, match="analyte"):
         read_adnca(pd.concat([df, df.assign(PARAMCD="OTHER")]))
     assert Timecourses.from_adnca(df) == batch
+
+
+def test_events_round_trip_keeps_the_uncertainty() -> None:
+    # B6: `sd`, `se` and `n` were silently dropped by the only writer
+    batch = Timecourses.from_arrays(
+        np.array([1.0, 2.0, 4.0]),
+        np.array([[1.0, 2.0, 1.0], [1.2, 2.4, 1.1]]),
+        time_unit="hr",
+        unit="ng/ml",
+        sd=np.array([[0.1, 0.2, 0.1], [0.2, 0.3, 0.2]]),
+        n=np.array([8.0, 6.0]),
+        coords={"individual": [0, 1]},
+        dose=Dose(amount=100, unit="mg"),
+    )
+    table = write_events(batch)
+    assert list(table.columns) == [
+        "ID",
+        "TIME",
+        "DV",
+        "AMT",
+        "EVID",
+        "MDV",
+        "RATE",
+        "SD",
+        "SE",
+        "N",
+    ]
+    back = read_events(
+        table, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+    )
+    assert back == batch
+
+
+def test_write_events_without_uncertainty_has_no_extra_columns() -> None:
+    batch = read_events(
+        events(), time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL
+    )
+    assert "SD" not in write_events(batch).columns
+
+
+def test_read_events_rejects_a_subject_without_two_observations() -> None:
+    # B8: the reader built batches which `sel`/`isel`/`__iter__` then rejected
+    df = pd.DataFrame(
+        {
+            "ID": ["A", "A", "A", "B", "B"],
+            "TIME": [0.0, 1.0, 2.0, 0.0, 1.0],
+            "DV": [np.nan, 5.0, 3.0, np.nan, 4.0],
+            "AMT": [100.0, 0.0, 0.0, 100.0, 0.0],
+            "EVID": [1, 0, 0, 1, 0],
+        }
+    )
+    with pytest.raises(ValueError, match=r"subject B: .*2 time points"):
+        read_events(
+            df,
+            time_unit="hr",
+            unit="ng/ml",
+            dose_unit="mg",
+            route=Route.ORAL,
+            keep_missing=False,
+        )
+    only_doses = df[df["EVID"] == 1]
+    with pytest.raises(ValueError, match="subject A"):
+        read_events(
+            only_doses, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+        )
+
+
+def test_readers_reject_duplicate_sampling_times() -> None:
+    # B9: duplicate times passed the readers, crashed `sel` and skewed the NCA
+    conc = pd.DataFrame(
+        {
+            "subject": [1, 1, 1, 1],
+            "time": [0.5, 0.5, 1.0, 2.0],
+            "conc": [1.0, 1.0, 2.0, 1.5],
+        }
+    )
+    dose = pd.DataFrame({"subject": [1], "dose": [100.0], "time": [0.0]})
+    with pytest.raises(ValueError, match=r"subject 1: duplicate sampling time 0\.5"):
+        read_pknca(
+            conc, dose, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+        )
+    df = pd.DataFrame(
+        {
+            "ID": [1, 1, 1],
+            "TIME": [1.0, 1.0, 2.0],
+            "DV": [1.0, 9.0, 1.5],
+            "AMT": [0.0, 0.0, 0.0],
+            "EVID": [0, 0, 0],
+        }
+    )
+    with pytest.raises(ValueError, match="subject 1: duplicate sampling time 1"):
+        read_events(df, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL)
+
+
+def test_read_events_infusion_without_a_duration_names_the_subject() -> None:
+    # B30: a raw pydantic dump named neither the subject nor the column
+    df = pd.DataFrame(
+        {
+            "ID": [1, 1, 1, 1],
+            "TIME": [0.0, 1.0, 2.0, 4.0],
+            "DV": [np.nan, 5.0, 3.0, 1.0],
+            "AMT": [100.0, 0.0, 0.0, 0.0],
+            "EVID": [1, 0, 0, 0],
+        }
+    )
+    with pytest.raises(ValueError, match=r"subject 1: .*duration"):
+        read_events(
+            df,
+            time_unit="hr",
+            unit="mg/l",
+            dose_unit="mg",
+            route=Route.IV_INFUSION,
+        )
+
+
+def test_read_pknca_nan_dose_time_names_the_subject() -> None:
+    # B32: the error named the internal flat row, not the subject
+    conc = pd.DataFrame({"subject": [1, 1], "time": [1.0, 2.0], "conc": [1.0, 2.0]})
+    dose = pd.DataFrame({"subject": [1], "dose": [100.0], "time": [np.nan]})
+    with pytest.raises(ValueError, match=r"subject 1: .*finite"):
+        read_pknca(
+            conc, dose, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+        )
+
+
+def test_events_round_trip_keeps_a_shared_grid_with_missing_values() -> None:
+    # B33: BLQ points turned a shared grid into a ragged one on every round trip
+    values = np.array([[1.0, 2.0, 1.5, 0.8, 0.2], [1.1, 2.2, 1.4, 0.7, 0.1]])
+    values[0, 0] = np.nan
+    values[1, -1] = np.nan
+    batch = Timecourses.from_arrays(
+        np.array([0.5, 1.0, 2.0, 4.0, 8.0]),
+        values,
+        time_unit="hr",
+        unit="ng/ml",
+        coords={"individual": [0, 1]},
+        dose=Dose(amount=100, unit="mg"),
+    )
+    table = batch.to_events()
+    back = Timecourses.from_events(
+        table, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+    )
+    assert "times" not in back.ds
+    assert back == batch
+    dropped = read_events(
+        table,
+        time_unit="hr",
+        unit="ng/ml",
+        dose_unit="mg",
+        route=Route.ORAL,
+        keep_missing=False,
+    )
+    assert "times" in dropped.ds
+    assert dropped.sel(individual=0).time.tolist() == [1.0, 2.0, 4.0, 8.0]
+
+
+def test_readers_coerce_a_route_string() -> None:
+    batch = read_events(
+        events(),
+        time_unit="hr",
+        unit="mg/l",
+        dose_unit="mg",
+        route="oral",
+    )
+    assert batch.route is Route.ORAL

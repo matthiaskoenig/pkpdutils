@@ -136,13 +136,44 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
 )
 
 
-def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
+def repeat_rows(a: np.ndarray | None, n_rows: int, repeats: int) -> np.ndarray | None:
+    """Repeat every row of a per row dose array, keeping the rows grouped.
+
+    The replicates of the bootstrap and the perturbed curves of the delta
+    method are `repeats` copies of every row of the batch, in blocks; the dose
+    arrays follow them row by row.
+
+    Args:
+        a: the array of shape `(*sample_shape, n_dose)`, or `None`
+        n_rows: number of rows `N` of the batch
+        repeats: copies per row
+
+    Returns:
+        The repeated array `(N * repeats, n_dose)`, or `None`.
+    """
+    if a is None:
+        return None
+    return np.repeat(
+        np.asarray(a, dtype=np.float64).reshape(n_rows, -1), repeats, axis=0
+    )
+
+
+def resolve_spread(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    spread: BootstrapSpread | None = None,
+) -> np.ndarray:
     """The spread every time point is resampled with, `(n_samples, n_time)`.
 
     Args:
         timecourses: the batch
-        options: `bootstrap_spread` selects `se` or `sd`; the missing one is
-            derived from the other with `n`
+        options: `bootstrap_spread` selects `se` or `sd` when `spread` is not
+            given; the missing one is derived from the other with `n`
+
+    Keyword Args:
+        spread: the spread to return, overriding `options.bootstrap_spread`;
+            the delta method always propagates `se`, whatever the options say
 
     Returns:
         The spread per point (`NaN` where the batch has none).
@@ -150,6 +181,7 @@ def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
     Raises:
         ValueError: if the requested spread is neither present nor derivable.
     """
+    kind = spread if spread is not None else options.bootstrap_spread
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     se = None if timecourses.se is None else timecourses.se.reshape(n_rows, n_time)
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
@@ -158,7 +190,7 @@ def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
         if timecourses.n is None
         else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)[:, None]
     )
-    if options.bootstrap_spread is BootstrapSpread.SE:
+    if kind is BootstrapSpread.SE:
         if se is not None:
             return se
         if sd is not None and n is not None:
@@ -400,30 +432,13 @@ def bootstrap(
     )
     b = options.n_boot
 
-    def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row dose array `B` times (the rows stay grouped).
-
-        Args:
-            a: the array of shape `(*sample_shape, n_dose)`, or `None`.
-
-        Returns:
-            The repeated array `(N * B, n_dose)`, or `None`.
-        """
-        return (
-            None
-            if a is None
-            else np.repeat(
-                np.asarray(a, dtype=np.float64).reshape(n_rows, -1), b, axis=0
-            )
-        )
-
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
     values = run_rows(
         np.repeat(t, b, axis=0),
         draws.reshape(n_rows * b, n_time),
-        dose_amount=repeat(timecourses.dose_amount),
-        dose_time=repeat(timecourses.dose_time),
-        dose_duration=repeat(timecourses.dose_duration),
+        dose_amount=repeat_rows(timecourses.dose_amount, n_rows, b),
+        dose_time=repeat_rows(timecourses.dose_time, n_rows, b),
+        dose_duration=repeat_rows(timecourses.dose_duration, n_rows, b),
         route=timecourses.route,
         options=options,
     )
@@ -463,6 +478,17 @@ def delta(
     interval `x +- z se`, on the log scale for log-normal parameters; discrete
     parameters and the diagnostics of the terminal regression are skipped.
 
+    `x_sd = x_se sqrt(n)` is the spread of the parameter over subjects and
+    `x_geocv` is its geometric CV, as in the bootstrap: with `mu = x` and
+    `sd = x_sd`, the log-normal moment relation gives
+    `sigma_log² = ln(1 + (sd / mu)²)` and
+
+    `geocv = sqrt(exp(sigma_log²) - 1) = sd / mu`,
+
+    so the geometric CV equals the arithmetic CV over subjects (Efron &
+    Tibshirani 1993, ch. 13). Without `n` the between-subject scale is unknown
+    and `x_sd` and `x_geocv` are `NaN`.
+
     A perturbation which selects a different terminal window
     (`lambda_z_n_points` or `lambda_z_t_first` changes) makes the difference
     quotient a jump between two regressions instead of a derivative, which
@@ -492,9 +518,7 @@ def delta(
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     t = timecourses.times.reshape(n_rows, n_time)
     c = timecourses.values.reshape(n_rows, n_time)
-    se = resolve_spread(
-        timecourses, options.model_copy(update={"bootstrap_spread": BootstrapSpread.SE})
-    )
+    se = resolve_spread(timecourses, options, spread=BootstrapSpread.SE)
     with np.errstate(invalid="ignore"):
         usable = np.isfinite(se) & (se > 0) & np.isfinite(c)
     h = np.where(usable, options.delta_step * se, 0.0)
@@ -505,30 +529,13 @@ def delta(
     c_pert = np.repeat(c, n_time, axis=0)
     c_pert[rows, cols] += np.repeat(h, n_time, axis=0)[rows, cols]
 
-    def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row dose array `n_time` times (the rows stay grouped).
-
-        Args:
-            a: the array of shape `(*sample_shape, n_dose)`, or `None`.
-
-        Returns:
-            The repeated array `(N * n, n_dose)`, or `None`.
-        """
-        return (
-            None
-            if a is None
-            else np.repeat(
-                np.asarray(a, dtype=np.float64).reshape(n_rows, -1), n_time, axis=0
-            )
-        )
-
     logger.info("delta method: %d curves x %d perturbations", n_rows, n_time)
     perturbed = run_rows(
         np.repeat(t, n_time, axis=0),
         c_pert,
-        dose_amount=repeat(timecourses.dose_amount),
-        dose_time=repeat(timecourses.dose_time),
-        dose_duration=repeat(timecourses.dose_duration),
+        dose_amount=repeat_rows(timecourses.dose_amount, n_rows, n_time),
+        dose_time=repeat_rows(timecourses.dose_time, n_rows, n_time),
+        dose_duration=repeat_rows(timecourses.dose_duration, n_rows, n_time),
         route=timecourses.route,
         options=options,
     )
@@ -579,10 +586,12 @@ def delta(
                 rel = x_se / base
                 low = base * np.exp(-z * rel)
                 high = base * np.exp(z * rel)
+                # the geometric CV is the spread over subjects, as in the
+                # bootstrap: with mu = x and sd = x_sd the log-normal moment
+                # relation gives sigma_log² = ln(1 + (sd/mu)²), so
+                # geocv = sqrt(exp(sigma_log²) - 1) = |sd/mu|, the arithmetic CV
                 out[f"{name}_geomean"] = np.where(valid, base, np.nan)
-                out[f"{name}_geocv"] = np.where(
-                    valid, np.sqrt(np.expm1(rel * rel)), np.nan
-                )
+                out[f"{name}_geocv"] = np.where(valid, np.abs(x_sd / base), np.nan)
             else:
                 low = base - z * x_se
                 high = base + z * x_se

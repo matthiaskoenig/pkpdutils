@@ -2,67 +2,12 @@
 
 from typing import Any
 
-import matplotlib.pyplot as plt
-import xarray as xr
 from matplotlib.axes import Axes
-from matplotlib.axis import Axis
 from matplotlib.figure import Figure
-from matplotlib.ticker import LogFormatter
 
+from pkpdutils.plot._common import figure_of, log_scale, sample_colors, sample_labels
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.timecourse import TIME_DIM, Timecourse, Timecourses
-
-
-def _figure_of(ax: Axes | None) -> tuple[Figure, Axes]:
-    """The axes to draw on and its figure, a new figure without `ax`.
-
-    Args:
-        ax: axes to draw on, `None` for a new figure.
-
-    Returns:
-        The figure and the axes to draw on.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        fig.set_layout_engine("constrained")
-        return fig, ax
-    fig = ax.get_figure()
-    assert isinstance(fig, Figure)
-    return fig, ax
-
-
-class _PlainLogFormatter(LogFormatter):
-    """A `LogFormatter` which writes the labels as plain numbers, not as `10^n`.
-
-    Only the rendering of a labelled tick is changed; which ticks carry a
-    label stays with `LogFormatter`, which drops the labels between the
-    decades once an axis spans more than a couple of them.
-    """
-
-    def _num_to_string(self, x: float, vmin: float, vmax: float) -> str:
-        """The label of a tick value.
-
-        Args:
-            x: the tick value.
-            vmin: lower bound of the view interval (unused).
-            vmax: upper bound of the view interval (unused).
-
-        Returns:
-            The value as a plain number.
-        """
-        return f"{x:g}"
-
-
-def _plain_log_ticks(axis: Axis) -> None:
-    """Format the major and minor ticks of a logarithmic axis as plain numbers.
-
-    Args:
-        axis: the axis (`ax.xaxis` or `ax.yaxis`) to format.
-    """
-    axis.set_major_formatter(_PlainLogFormatter())
-    axis.set_minor_formatter(
-        _PlainLogFormatter(labelOnlyBase=False, minor_thresholds=(2, 0.5))
-    )
+from pkpdutils.timecourse import Timecourse, Timecourses
 
 
 def _draw_curve(
@@ -128,8 +73,11 @@ def plot_timecourse(
 
     Args:
         timecourses: the curve or the batch
-        ax: axes to draw on, a new figure by default
-        log: logarithmic value axis
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
+        log: logarithmic value axis; a curve without a positive value stays
+            linear (logged at debug level)
         errorbars: draw `se` (or `sd`) as error bars when present
         by: coordinate of the batch used as legend label, the sample label by default
         style: colors and markers
@@ -137,7 +85,7 @@ def plot_timecourse(
     Returns:
         The figure.
     """
-    fig, ax = _figure_of(ax)
+    fig, ax = figure_of(ax)
     curves: list[Timecourse]
     labels: list[str | None]
     if isinstance(timecourses, Timecourse):
@@ -148,17 +96,12 @@ def plot_timecourse(
         curves = list(timecourses)
         first = curves[0]
         if by is not None:
-            template = timecourses.ds["value"].isel({TIME_DIM: 0}, drop=True)
-            coord, _ = xr.broadcast(timecourses.ds[by], template)
-            values = coord.transpose(*timecourses.sample_dims).to_numpy().reshape(-1)
-            labels = [str(v) for v in values]
+            labels = list(sample_labels(timecourses.ds, timecourses.sample_dims, by=by))
         else:
             labels = [tc.label for tc in curves]
-    cmap = plt.get_cmap(style.cmap)
+    colors = sample_colors(len(curves), style.cmap)
     for i, (tc, label) in enumerate(zip(curves, labels, strict=True)):
-        color: Any = (
-            style.data_color if len(curves) == 1 else cmap(i / max(len(curves) - 1, 1))
-        )
+        color: Any = style.data_color if len(curves) == 1 else colors[i]
         _draw_curve(ax, tc, color=color, label=label, errorbars=errorbars, style=style)
     if (
         isinstance(timecourses, Timecourse)
@@ -172,7 +115,7 @@ def plot_timecourse(
     ax.set_xlabel(f"time [{first.time_unit}]")
     ax.set_ylabel(f"{first.substance} [{first.unit}]")
     if log:
-        ax.set_yscale("log")
-    if any(label is not None for label in labels):
+        log_scale(ax, "y")
+    if ax.get_legend_handles_labels()[0]:
         ax.legend()
     return fig

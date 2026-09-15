@@ -108,6 +108,15 @@ def test_unpaired_single_value_gives_nan_statistics() -> None:
     assert np.isfinite(summary.gmr)
 
 
+def test_unpaired_sample_without_finite_values_gives_nan_statistics() -> None:
+    # B10: the division by the size of the empty sample raised ZeroDivisionError
+    empty = ParameterSample(values=np.array([np.nan, np.nan]), name="auc")
+    res = ratio(empty, ParameterSample(values=REF))
+    assert res.n_test == 0 and np.isnan(res.gmr)
+    assert np.isnan(res.se_log) and np.isnan(res.df)
+    assert np.isnan(res.ci_low) and np.isnan(res.ci_high)
+
+
 def test_paired_needs_finite_pairs() -> None:
     t = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))
     r = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))
