@@ -1,0 +1,22 @@
+{
+  "source": "Colditz et al. 1994, JAMA 271:698-702; metafor dat.bcg; results of rma(yi, vi, method='FE') and method='DL' from the metafor documentation, recomputed from the counts",
+  "columns": ["trial", "tpos", "tneg", "cpos", "cneg"],
+  "trials": [
+    ["Aronson 1948", 4, 119, 11, 128],
+    ["Ferguson & Simes 1949", 6, 300, 29, 274],
+    ["Rosenthal 1960", 3, 228, 11, 209],
+    ["Hart & Sutherland 1977", 62, 13536, 248, 12619],
+    ["Frimodt-Moller 1973", 33, 5036, 47, 5761],
+    ["Stein & Aronson 1953", 180, 1361, 372, 1079],
+    ["Vandiviere 1973", 8, 2537, 10, 619],
+    ["TPT Madras 1980", 505, 87886, 499, 87892],
+    ["Coetzee & Berjak 1968", 29, 7470, 45, 7232],
+    ["Rosenthal 1961", 17, 1699, 65, 1600],
+    ["Comstock 1974", 186, 50448, 141, 27197],
+    ["Comstock & Webster 1969", 5, 2493, 3, 2338],
+    ["Comstock 1976", 27, 16886, 29, 17825]
+  ],
+  "fixed": {"estimate": -0.430285, "se": 0.040499},
+  "random_dl": {"estimate": -0.714117, "se": 0.178742, "tau2": 0.308760},
+  "heterogeneity": {"q": 152.233008, "df": 12, "i2": 92.1173, "h2": 12.6861}
+}
