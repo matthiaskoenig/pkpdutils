@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pkpdutils import Dose, Route, Timecourse, Timecourses
+from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
 from pkpdutils.nca import (
     AUCMethod,
     C0Method,
@@ -198,7 +198,9 @@ def test_dose_time_shifts_time_axis() -> None:
     shifted = tc.model_copy(
         update={
             "time": tc.time + 10.0,
-            "dose": tc.dose.model_copy(update={"time": 10.0}) if tc.dose else None,
+            "dosing": Dosing.single(tc.dose.model_copy(update={"time": 10.0}))
+            if tc.dose
+            else None,
         }
     )
     a = nca_single(tc).to_quantities()

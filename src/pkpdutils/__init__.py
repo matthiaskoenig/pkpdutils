@@ -35,7 +35,14 @@ from pkpdutils.stats import (
     meta_analysis,
     ratio,
 )
-from pkpdutils.timecourse import Dose, DosingRegimen, Route, Timecourse, Timecourses
+from pkpdutils.timecourse import (
+    Dose,
+    Dosing,
+    DosingRegimen,
+    Route,
+    Timecourse,
+    Timecourses,
+)
 from pkpdutils.units import Q_, Quantity, ureg
 
 __version__ = "1.0.1.dev0"
@@ -43,6 +50,7 @@ __version__ = "1.0.1.dev0"
 __all__ = [
     "Q_",
     "Dose",
+    "Dosing",
     "DosingRegimen",
     "FitOptions",
     "FitResult",

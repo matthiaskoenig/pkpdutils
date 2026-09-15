@@ -1,15 +1,23 @@
-"""Timecourses, doses and dosing regimens.
+"""Timecourses, doses and dosing protocols.
 
 The data model of the package:
 
 - `Timecourse` is one curve, i.e. values over time with units, an optional
-  uncertainty (`sd`/`se` and `n` for group data), a `Dose` and metadata.
+  uncertainty (`sd`/`se` and `n` for group data), a `Dosing` protocol and
+  metadata.
+- `Dosing` is the dosing protocol of a timecourse: the vector of doses given
+  and the times they were given, one route and one unit for all of them; a
+  single administration stays a `Dose`, `Dosing.single` wraps one into a
+  protocol of one dose. `Timecourse` keeps accepting a single `dose=Dose(...)`
+  keyword, converted into a protocol of one dose; `Timecourse.dose` reads back
+  the first dose of the protocol.
 - `Timecourses` is a batch of curves as an `xarray.Dataset` with a `time`
   dimension and any number of sample dimensions (individuals, groups, studies,
   the dimensions of a simulation scan). Every analysis of the package works on
   a `Timecourses` object and returns an `xarray.Dataset` over the same sample
   dimensions.
-- `DosingRegimen` describes repeated dosing for steady state analyses.
+- `DosingRegimen` describes repeated dosing for steady state analyses;
+  `DosingRegimen.dosing()` builds the corresponding `Dosing` protocol.
 
 ```python
 from pkpdutils.timecourse import Dose, Route, Timecourse
@@ -28,7 +36,7 @@ tc = Timecourse(
 import logging
 from collections.abc import Iterator, Mapping, Sequence
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import numpy as np
 import pandas as pd
@@ -129,6 +137,19 @@ class DosingRegimen(BaseModel):
             raise ValueError("'n_doses' is required for the dose times")
         return self.dose.time + self.interval * np.arange(self.n_doses, dtype=float)
 
+    def dosing(self) -> "Dosing":
+        """The protocol of the regimen, `Dosing.regimen` of `dose`, `interval` and `n_doses`.
+
+        Returns:
+            The protocol.
+
+        Raises:
+            ValueError: if `n_doses` is `None`.
+        """
+        if self.n_doses is None:
+            raise ValueError("'n_doses' is required for the dosing protocol")
+        return Dosing.regimen(self.dose, self.interval, self.n_doses)
+
 
 def _as_float_array(name: str, values: Any) -> np.ndarray:
     """Convert to a 1-D float64 array.
@@ -164,6 +185,277 @@ def _values_equal(a: float | np.ndarray | None, b: float | np.ndarray | None) ->
     return bool(np.array_equal(a, b, equal_nan=True))
 
 
+class Dosing(BaseModel):
+    """The dosing protocol of a timecourse: the doses given and the times they were given.
+
+    A protocol has one route and one unit for every dose; `Dose` stays the
+    single administration and `Dosing.single` wraps one into a protocol of one
+    dose. The doses are stored sorted by time.
+
+    Attributes:
+        amounts: amount of every dose (non-negative), 1-D
+        times: time of every dose in the time unit of the timecourse, 1-D,
+            strictly increasing after validation
+        durations: duration of every infusion in the time unit of the
+            timecourse, `None` when no dose is an infusion; required with
+            every value positive for `Route.IV_INFUSION`, not allowed
+            otherwise
+        unit: unit of the amounts, see `pkpdutils.units.check_dose_unit`
+        route: route of administration, shared by every dose of the protocol
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    amounts: Any
+    times: Any
+    durations: Any = None
+    unit: str
+    route: Route = Route.ORAL
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        """Convert the arrays, sort by time and check the doses against the route.
+
+        Returns:
+            The validated protocol.
+
+        Raises:
+            ValueError: if `amounts`, `times` or `durations` mismatch in
+                length, if there is no dose, if an amount is negative, if the
+                dose times contain duplicates, or if `durations` does not fit
+                `route`.
+        """
+        amounts = _as_float_array("amounts", self.amounts)
+        times = _as_float_array("times", self.times)
+        if amounts.size != times.size:
+            raise ValueError(
+                f"'amounts' has length {amounts.size}, 'times' has length {times.size}"
+            )
+        if amounts.size == 0:
+            raise ValueError("A dosing protocol needs at least one dose")
+        if (amounts < 0).any():
+            raise ValueError("'amounts' must be non-negative")
+        check_dose_unit(self.unit)
+
+        durations: np.ndarray | None = None
+        if self.durations is not None:
+            durations = _as_float_array("durations", self.durations)
+            if durations.size != times.size:
+                raise ValueError(
+                    f"'durations' has length {durations.size}, "
+                    f"'times' has length {times.size}"
+                )
+
+        order = np.argsort(times, kind="stable")
+        if not np.array_equal(order, np.arange(times.size)):
+            logger.warning("The dose times of the protocol were not sorted")
+            times = times[order]
+            amounts = amounts[order]
+            if durations is not None:
+                durations = durations[order]
+        if np.unique(times).size != times.size:
+            raise ValueError("Duplicate dose times")
+
+        if self.route is Route.IV_INFUSION:
+            if durations is None or (durations <= 0).any():
+                raise ValueError(
+                    "An infusion needs a positive 'duration' for every dose"
+                )
+        elif durations is not None:
+            if np.isnan(durations).all():
+                durations = None
+            else:
+                raise ValueError("'durations' is only allowed for Route.IV_INFUSION")
+
+        object.__setattr__(self, "amounts", amounts)
+        object.__setattr__(self, "times", times)
+        object.__setattr__(self, "durations", durations)
+        return self
+
+    @classmethod
+    def single(cls, dose: Dose) -> "Dosing":
+        """Wrap one dose into a protocol of one dose.
+
+        Args:
+            dose: the dose.
+
+        Returns:
+            The protocol.
+        """
+        return cls(
+            amounts=[dose.amount],
+            times=[dose.time],
+            durations=None if dose.duration is None else [dose.duration],
+            unit=dose.unit,
+            route=dose.route,
+        )
+
+    @classmethod
+    def from_doses(cls, doses: Sequence[Dose]) -> "Dosing":
+        """Build a protocol from individual doses.
+
+        Args:
+            doses: the doses, at least one, all with the same `unit` and `route`.
+
+        Returns:
+            The protocol.
+
+        Raises:
+            ValueError: if `doses` is empty, or the doses have different
+                `unit` or `route`.
+        """
+        if not doses:
+            raise ValueError("'doses' needs at least one dose")
+        routes = {dose.route for dose in doses}
+        if len(routes) != 1:
+            raise ValueError(
+                f"All doses need the same route, found {sorted(r.value for r in routes)}"
+            )
+        units = {dose.unit for dose in doses}
+        if len(units) != 1:
+            raise ValueError(f"All doses need the same unit, found {sorted(units)}")
+        durations = [dose.duration for dose in doses]
+        return cls(
+            amounts=[dose.amount for dose in doses],
+            times=[dose.time for dose in doses],
+            durations=None if all(d is None for d in durations) else durations,
+            unit=units.pop(),
+            route=routes.pop(),
+        )
+
+    @classmethod
+    def regimen(cls, dose: Dose, interval: float, n_doses: int) -> "Dosing":
+        """Build a regular protocol, `dose` repeated every `interval`.
+
+        Args:
+            dose: the dose given at every administration; its `time` is the
+                time of the first dose
+            interval: dosing interval, must be positive
+            n_doses: number of doses, must be at least 1
+
+        Returns:
+            The protocol with times `dose.time + k * interval`.
+
+        Raises:
+            ValueError: if `interval` is not positive or `n_doses` is less
+                than 1.
+        """
+        if interval <= 0:
+            raise ValueError("'interval' must be positive")
+        if n_doses < 1:
+            raise ValueError("'n_doses' must be at least 1")
+        times = dose.time + interval * np.arange(n_doses, dtype=float)
+        amounts = np.full(n_doses, dose.amount)
+        durations = None if dose.duration is None else np.full(n_doses, dose.duration)
+        return cls(
+            amounts=amounts,
+            times=times,
+            durations=durations,
+            unit=dose.unit,
+            route=dose.route,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Compare two protocols field by field, `NaN` equals `NaN` in `durations`.
+
+        Args:
+            other: the object to compare with.
+
+        Returns:
+            Whether `other` is a protocol with the same fields;
+            `NotImplemented` for any other type, so that python falls back to
+            the identity comparison.
+        """
+        if not isinstance(other, Dosing):
+            return NotImplemented
+        return (
+            bool(np.array_equal(self.amounts, other.amounts))
+            and bool(np.array_equal(self.times, other.times))
+            and _values_equal(self.durations, other.durations)
+            and self.unit == other.unit
+            and self.route == other.route
+        )
+
+    def __len__(self) -> int:
+        """Number of doses, `n_doses`."""
+        return self.n_doses
+
+    @property
+    def n_doses(self) -> int:
+        """Number of doses."""
+        return int(self.times.size)
+
+    @property
+    def doses(self) -> list[Dose]:
+        """The doses of the protocol as individual `Dose` objects."""
+        return [
+            Dose(
+                amount=float(self.amounts[i]),
+                unit=self.unit,
+                route=self.route,
+                time=float(self.times[i]),
+                duration=None if self.durations is None else float(self.durations[i]),
+            )
+            for i in range(self.n_doses)
+        ]
+
+    @property
+    def first(self) -> Dose:
+        """The first dose of the protocol."""
+        return self.doses[0]
+
+    @property
+    def last(self) -> Dose:
+        """The last dose of the protocol."""
+        return self.doses[-1]
+
+    @property
+    def intervals(self) -> np.ndarray:
+        """Time between consecutive doses, `np.diff(times)`."""
+        return np.diff(self.times)
+
+    @property
+    def tau(self) -> float | None:
+        """The common dosing interval, `None` without at least two doses or an irregular protocol."""
+        if self.n_doses < 2:
+            return None
+        intervals = self.intervals
+        if not np.allclose(intervals, intervals[0], rtol=1e-9, atol=0):
+            return None
+        return float(intervals[0])
+
+    @property
+    def is_regular(self) -> bool:
+        """Whether the protocol has a common dosing interval, `tau is not None`."""
+        return self.tau is not None
+
+    @property
+    def total_amount(self) -> float:
+        """Sum of the dose amounts."""
+        return float(self.amounts.sum())
+
+    @property
+    def quantity(self) -> Quantity:
+        """The total dose amount as a quantity."""
+        return Q_(self.total_amount, self.unit)
+
+    @property
+    def per_bodyweight(self) -> bool:
+        """Whether the doses are an amount per body weight."""
+        return is_per_bodyweight(self.unit)
+
+    def shifted(self, offset: float) -> "Dosing":
+        """Copy with every dose time shifted by `-offset`.
+
+        Args:
+            offset: the offset to subtract from every dose time.
+
+        Returns:
+            The shifted protocol.
+        """
+        return self.model_copy(update={"times": self.times - offset})
+
+
 class Timecourse(BaseModel):
     """One curve of values over time with units, uncertainty, dose and metadata.
 
@@ -184,7 +476,9 @@ class Timecourse(BaseModel):
         sd: standard deviation per time point (group data)
         se: standard error per time point (group data)
         n: number of subjects, one number or one per time point
-        dose: the dose of the substance, `None` without dose information
+        dosing: the dosing protocol, `None` without dose information; the
+            constructor also accepts a single `dose: Dose` keyword, wrapped
+            into a protocol of one dose
         substance: name of the substance or of the effect
         label: label of the curve, e.g. the group or the individual
         tissue: tissue or matrix the values were measured in, e.g. `"plasma"`
@@ -199,10 +493,32 @@ class Timecourse(BaseModel):
     sd: np.ndarray | None = None
     se: np.ndarray | None = None
     n: float | np.ndarray | None = None
-    dose: Dose | None = None
+    dosing: Dosing | None = None
     substance: str = "substance"
     label: str | None = None
     tissue: str | None = None
+
+    def __init__(
+        self,
+        *,
+        dose: Dose | Dosing | None = None,
+        dosing: Dosing | None = None,
+        **data: Any,
+    ) -> None:
+        """Construct a timecourse, `dose` and `dosing` handled by `_dose_to_dosing`.
+
+        `dose` is not a field of the model (kept only for backwards
+        compatibility with `Dose(...)`); declaring it here, rather than
+        relying on the `model_validator(mode="before")` alone, keeps it a
+        recognized keyword argument for static type checkers.
+
+        Args:
+            dose: a single dose, converted into a protocol of one dose; not
+                allowed together with `dosing`
+            dosing: the dosing protocol
+            **data: the remaining fields of `Timecourse`.
+        """
+        super().__init__(dose=dose, dosing=dosing, **data)
 
     @model_validator(mode="before")
     @classmethod
@@ -287,6 +603,37 @@ class Timecourse(BaseModel):
         data.update({"time": time, "value": value, "n": n, **arrays})
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _dose_to_dosing(cls, data: Any) -> Any:
+        """Move a `dose` keyword into `dosing`, converting a `Dose` to a `Dosing`.
+
+        Declared after `_normalize` so that it runs first (pydantic runs
+        several `mode="before"` validators in reverse declaration order): the
+        "not both" check below must fire before `_normalize` rejects the
+        arrays for an unrelated reason.
+
+        Args:
+            data: the raw input to the model.
+
+        Returns:
+            `data` unchanged if it is not a `dict` or has no `dose` key,
+            otherwise `data` with `dose` removed and `dosing` set.
+
+        Raises:
+            ValueError: if both `dose` and `dosing` are given.
+        """
+        if not isinstance(data, dict) or "dose" not in data:
+            return data
+        data = dict(data)
+        dose = data.pop("dose")
+        if dose is None:
+            return data
+        if data.get("dosing") is not None:
+            raise ValueError("Give 'dose' or 'dosing', not both")
+        data["dosing"] = dose if isinstance(dose, Dosing) else Dosing.single(dose)
+        return data
+
     @model_validator(mode="after")
     def _check_units(self) -> Self:
         """Check that `time_unit` and `unit` are valid units.
@@ -352,6 +699,11 @@ class Timecourse(BaseModel):
         return int(self.time.size)
 
     @property
+    def dose(self) -> Dose | None:
+        """First dose of the protocol, `None` without `dosing`."""
+        return None if self.dosing is None else self.dosing.first
+
+    @property
     def time_q(self) -> Quantity:
         """The times as a quantity."""
         return Q_(self.time, self.time_unit)
@@ -371,21 +723,30 @@ class Timecourse(BaseModel):
         """The standard errors as a quantity, `None` without `se`."""
         return None if self.se is None else Q_(self.se, self.unit)
 
-    def relative_to_dose(self) -> "Timecourse":
-        """Copy with the time shifted so that the dose is given at time 0.
+    def relative_to_dose(
+        self, which: Literal["first", "last"] = "first"
+    ) -> "Timecourse":
+        """Copy with the time shifted so that a dose of the protocol is given at time 0.
 
-        Returns the timecourse itself when it has no dose or the dose is at 0.
+        Returns the timecourse itself when it has no protocol or the chosen
+        dose is already at time 0.
+
+        Args:
+            which: `"first"` shifts by the time of the first dose, `"last"`
+                by the time of the last dose.
 
         Returns:
             The shifted timecourse, or `self` when there is nothing to shift.
         """
-        if self.dose is None or self.dose.time == 0.0:
+        if self.dosing is None:
             return self
-        shift = self.dose.time
+        shift = self.dosing.first.time if which == "first" else self.dosing.last.time
+        if shift == 0.0:
+            return self
         return self.model_copy(
             update={
                 "time": self.time - shift,
-                "dose": self.dose.model_copy(update={"time": 0.0}),
+                "dosing": self.dosing.shifted(shift),
             }
         )
 

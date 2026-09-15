@@ -248,7 +248,7 @@ def test_delta_linear_auc_matches_closed_form() -> None:
     # `se(auc) = sqrt(sum_i (w_i se_i)^2` exactly; a bolus dose would insert the
     # back extrapolated `(0, c0)` segment, whose weights depend on the first two
     # points, so the closed form is compared on a dose-less curve
-    tc_nd = tc.model_copy(update={"dose": None})
+    tc_nd = tc.model_copy(update={"dosing": None})
     q = nca_single(tc_nd, options).to_quantities()
     assert tc_nd.se is not None
     w = np.empty(T.size)
