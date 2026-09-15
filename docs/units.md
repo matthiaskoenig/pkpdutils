@@ -10,11 +10,11 @@ Two families of parameters have conventional units the package converts to: volu
 
 ## Dose units
 
-A dose is an amount, in mass (`mg`, `g`) or in substance (`mmol`, `µmol`), or such an amount per body weight (`mg/kg`, `µmol/kg`). `check_dose_unit` accepts exactly these four dimensionalities. Concentrations in mass per volume with a dose in substance (or the other way round) give parameters in mixed units such as `mmol/(ng/ml)`; convert one of them with the molar mass of the substance before the analysis when clearances in `liter/hour` are wanted.
+A dose is an amount, in mass (`mg`, `g`), in substance (`mmol`, `µmol`) or in activity (`IU`, for insulin, heparin, vaccines and enzyme replacement), or such an amount per body weight (`mg/kg`, `µmol/kg`, `IU/kg`). `check_dose_unit` accepts exactly these six dimensionalities. Concentrations in mass per volume with a dose in substance (or the other way round) give parameters in mixed units such as `mmol/(ng/ml)`; convert one of them with the molar mass of the substance before the analysis when clearances in `liter/hour` are wanted.
 
 ## Custom units
 
-The registry defines `none` (dimensionless count, for data without a unit) and `IU` (international units, a dimension of its own) in addition to the pint defaults, which already know `percent`.
+The registry defines `none` (dimensionless count, for data without a unit) and `IU` (international units, a dimension of its own) in addition to the pint defaults, which already know `percent`. A dimensionless quantity is spelled `"dimensionless"`: the empty string is not a unit and `parse_unit("")` says so, because an empty unit composes into the derived units of a result as `"()"`.
 
 ## API
 

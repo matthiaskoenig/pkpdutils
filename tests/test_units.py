@@ -24,7 +24,17 @@ def test_parse_unit() -> None:
         parse_unit("not_a_unit")
 
 
-@pytest.mark.parametrize("unit", ["mg", "mmol", "mg/kg", "µmol/kg", "g"])
+@pytest.mark.parametrize("unit", ["", "   "])
+def test_parse_unit_rejects_the_empty_unit(unit: str) -> None:
+    # B4: '' parses as `dimensionless` and then breaks the derived units of the
+    # analyses; the spelling of a dimensionless quantity is 'dimensionless'
+    with pytest.raises(ValueError, match="dimensionless"):
+        parse_unit(unit)
+
+
+@pytest.mark.parametrize(
+    "unit", ["mg", "mmol", "mg/kg", "µmol/kg", "g", "IU", "IU/kg", "kIU"]
+)
 def test_check_dose_unit_valid(unit: str) -> None:
     check_dose_unit(unit)
 
@@ -37,7 +47,9 @@ def test_check_dose_unit_invalid(unit: str) -> None:
 
 def test_is_per_bodyweight() -> None:
     assert is_per_bodyweight("mg/kg")
+    assert is_per_bodyweight("IU/kg")
     assert not is_per_bodyweight("mg")
+    assert not is_per_bodyweight("IU")
 
 
 def test_normalize_volume() -> None:

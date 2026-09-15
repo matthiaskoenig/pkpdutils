@@ -10,7 +10,7 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 
 **The ADaM layout.** The CDISC ADaM ADNCA (ADPC) dataset is one row per concentration record of one analyte, already reshaped for a non-compartmental analysis: the time is given twice, once since the first dose of the subject (`AFRLT`) and once since the reference (most recent) dose (`ARRLT`), so the dose times of a subject are recovered as the distinct values of `AFRLT - ARRLT`. A predose sample can appear twice, once for the current interval and once, duplicated, for the previous one (`DTYPE == "COPY"`); `pkpdutils` drops the duplicate.
 
-**What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
+**What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. A subject which is not a curve is an error naming the subject, a `ValueError` and never a pydantic dump: fewer than two observations, a time which is not a number, duplicate sampling times, or dose records which are not a protocol (an infusion without a duration, a dose time which is not a number). Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
 
 ## NONMEM / Monolix event records
 
@@ -23,7 +23,8 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 | `DV` (Monolix `OBSERVATION`) | observed value | in `unit`; a dose row leaves it empty |
 | `AMT` (Monolix `AMOUNT`) | dose amount | in `dose_unit`; `0` or empty for an observation |
 | `EVID` | event kind | `1` dose, `0` observation, `2`/`3` dropped (logged), `4` (reset and dose) raises: the reader would merge the periods it separates into one protocol; without this column `AMT > 0` is a dose only and a value in `DV` on such a row is ignored (logged) |
-| `MDV` | missing dependent value | `1` excludes the row from the observations even with a value in `DV` |
+| `MDV` | missing dependent value | `1` marks the value of the row as missing even with a value in `DV`; the row keeps its sampling time and is read as `NaN` (`keep_missing=False` drops it instead) |
+| `SD`/`SE`/`N` | uncertainty of a group curve | written by `write_events` when the batch carries them and read back into `sd`, `se` and `n`; `N` is constant within a subject |
 | `RATE` | infusion rate | duration `= AMT / RATE` for `RATE > 0`; `RATE -1`/`-2` (a modelled rate) is not data and raises |
 | `TINF` (Monolix `INFUSION DURATION`) | infusion duration | wins over `RATE` when positive |
 | `ADDL` (Monolix `ADDITIONAL DOSES`) | additional doses | expands into `ADDL` further doses at `II` |

@@ -675,3 +675,154 @@ def test_dose_index_is_a_reserved_sample_dimension() -> None:
             dims=("dose_index",),
             dose=Dose(amount=100, unit="mg"),
         )
+
+
+def test_tissue_survives_the_batch_round_trip() -> None:
+    # B5: `tissue` was the only field of `Timecourse` a batch dropped
+    tc = Timecourse(
+        time=np.array([0.5, 1.0, 2.0, 4.0]),
+        value=np.array([1.0, 2.0, 1.5, 0.5]),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg"),
+        substance="caffeine",
+        label="A",
+        tissue="plasma",
+    )
+    batch = Timecourses.from_timecourses([tc])
+    assert batch.tissue == "plasma"
+    assert batch.ds.attrs["tissue"] == "plasma"
+    back = batch.sel(individual="A")
+    assert back.tissue == "plasma"
+    assert back == tc
+    assert next(iter(batch)) == tc
+
+
+def test_from_timecourses_rejects_differing_tissues() -> None:
+    def curve(tissue: str | None) -> Timecourse:
+        return Timecourse(
+            time=T,
+            value=V[0],
+            time_unit="hr",
+            unit="mg/l",
+            label=str(tissue),
+            tissue=tissue,
+        )
+
+    with pytest.raises(ValueError, match="tissue"):
+        Timecourses.from_timecourses([curve("plasma"), curve("urine")])
+    without = Timecourses.from_timecourses([curve(None), curve(None)])
+    assert without.tissue is None
+    assert "tissue" not in without.ds.attrs
+
+
+def test_from_arrays_and_from_dataframe_carry_the_tissue() -> None:
+    batch = Timecourses.from_arrays(T, V, time_unit="hr", unit="mg/l", tissue="plasma")
+    assert batch.tissue == "plasma"
+    df = pd.DataFrame(
+        {
+            "individual": np.repeat(["a", "b"], 4),
+            "time": np.tile(T, 2),
+            "value": np.concatenate([V[0], V[1]]),
+        }
+    )
+    from_df = Timecourses.from_dataframe(
+        df, sample=["individual"], time_unit="hr", unit="mg/l", tissue="serum"
+    )
+    assert from_df.tissue == "serum"
+    assert from_df.sel(individual="a").tissue == "serum"
+
+
+def test_ragged_batch_survives_the_dataframe_round_trip() -> None:
+    # B7: the `NaN` time padding was written into the frame and rejected on the
+    # way back; B31: the samples came back sorted instead of in their order
+    tc1 = Timecourse(
+        time=np.array([0.5, 1.0, 2.0, 4.0]),
+        value=np.array([1.0, 2.0, 1.5, 0.8]),
+        time_unit="hr",
+        unit="ng/ml",
+        label="b",
+    )
+    tc2 = Timecourse(
+        time=np.array([0.25, 1.0, 3.0]),
+        value=np.array([0.5, 2.1, 1.1]),
+        time_unit="hr",
+        unit="ng/ml",
+        label="a",
+    )
+    batch = Timecourses.from_timecourses([tc1, tc2])
+    df = batch.to_dataframe()
+    assert not df["time"].isna().any()
+    assert len(df) == 7
+    back = Timecourses.from_dataframe(
+        df, sample=["individual"], time_unit="hr", unit="ng/ml"
+    )
+    assert back.ds["individual"].to_numpy().tolist() == ["b", "a"]
+    assert back == batch
+
+
+def test_shared_grid_batch_keeps_the_sample_order_through_the_dataframe() -> None:
+    batch = Timecourses.from_arrays(
+        np.array([1.0, 2.0]),
+        np.array([[1.0, 2.0], [3.0, 4.0]]),
+        time_unit="hr",
+        unit="ng/ml",
+        coords={"individual": ["b", "a"]},
+    )
+    back = Timecourses.from_dataframe(
+        batch.to_dataframe(), sample=["individual"], time_unit="hr", unit="ng/ml"
+    )
+    assert back.ds["individual"].to_numpy().tolist() == ["b", "a"]
+    assert back == batch
+
+
+def test_batch_constructors_coerce_a_route_string() -> None:
+    # B20: `from_arrays` crashed with an `AttributeError`, `from_dataframe` worked
+    batch = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dose={"amount": 100.0, "unit": "mg"},
+        route="oral",
+    )
+    assert batch.route is Route.ORAL
+    ds = xr.Dataset(
+        {"c": (("scan", "_time"), V, {"units": "mg/l"})},
+        coords={"_time": T, "scan": [0, 1, 2]},
+    )
+    scan = Timecourses.from_dataset(
+        ds,
+        "c",
+        unit="mg/l",
+        time_unit="hr",
+        dose={"amount": 100.0, "unit": "mg"},
+        route="IV_BOLUS",
+    )
+    assert scan.route is Route.IV_BOLUS
+    df = pd.DataFrame(
+        {
+            "id": ["a"] * 4,
+            "time": T,
+            "value": V[0],
+            "dose": [100.0] * 4,
+        }
+    )
+    from_df = Timecourses.from_dataframe(
+        df,
+        sample=["id"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="dose",
+        dose_unit="mg",
+        route="oral",
+    )
+    assert from_df.route is Route.ORAL
+
+
+def test_from_arrays_rejects_an_empty_unit() -> None:
+    # B4
+    with pytest.raises(ValueError, match="dimensionless"):
+        Timecourses.from_arrays(T, V, time_unit="hr", unit="")
+    with pytest.raises(ValueError, match="dimensionless"):
+        Timecourses.from_arrays(T, V, time_unit="", unit="mg/l")
