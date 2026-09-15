@@ -51,9 +51,29 @@ class FitResult(ParameterResult):
     `cov_q` of `RowFit` (not part of this dataset) is always Jacobian-based,
     bootstrap or not. Discrete derived parameters (`discrete_parameters`,
     e.g. `flip_flop`) carry no uncertainty variables at all.
+
+    The goodness of fit and the counts are `statistic_variables`: they
+    describe the fit of one sample, not a parameter of it, so `parameters`
+    leaves them out and `summarize` drops them instead of averaging them over
+    the samples. `to_dataframe`, which reports the individual fits, keeps
+    them.
     """
 
     flag_type: ClassVar[type[FitFlag]] = FitFlag
+    statistic_variables: ClassVar[frozenset[str]] = frozenset(
+        {
+            "cost",
+            "r2",
+            "rmse",
+            "aic",
+            "aicc",
+            "bic",
+            "n_points",
+            "n_parameters",
+            "n_starts_converged",
+            "n_bootstrap",
+        }
+    )
     discrete_parameters: ClassVar[frozenset[str]] = frozenset(
         {
             "n_points",

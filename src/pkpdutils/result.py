@@ -55,9 +55,11 @@ class ParameterResult:
     parameter which does not apply to a sample is `NaN`. The analysis of
     group curves adds the derived variables of the uncertainty (`x_se`,
     `x_ci_low`, ...) and the number of subjects `n`; `parameters` lists the
-    parameters themselves, `derived_variables` the derived ones and
-    `point_variables` the variables carrying an extra, non-sample dimension
-    (such as predicted curves).
+    parameters themselves, `derived_variables` the derived ones,
+    `statistics` the statistics of the analysis itself (`statistic_variables`,
+    e.g. the goodness of fit of a curve fit) and `point_variables` the
+    variables carrying an extra, non-sample dimension (such as predicted
+    curves).
     """
 
     #: the IntFlag type that decodes the `flags` variable
@@ -66,6 +68,10 @@ class ParameterResult:
     lognormal_parameters: ClassVar[frozenset[str]] = frozenset()
     #: parameters without uncertainty variables
     discrete_parameters: ClassVar[frozenset[str]] = frozenset()
+    #: variables describing the analysis of a sample rather than a parameter
+    #: of it (the goodness of fit and the counts of a fit); they are no
+    #: parameters and are not summarized over samples
+    statistic_variables: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a result dataset.
@@ -101,14 +107,24 @@ class ParameterResult:
 
     @property
     def parameters(self) -> list[str]:
-        """Names of the parameters (the data variables except `flags`, `n`, the derived and the point variables)."""
+        """Names of the parameters (the data variables except `flags`, `n`, the statistics, the derived and the point variables)."""
         point = set(self.point_variables)
         return [
             str(name)
             for name in self.ds.data_vars
             if name not in ("flags", "n")
+            and str(name) not in self.statistic_variables
             and base_name(str(name)) is None
             and name not in point
+        ]
+
+    @property
+    def statistics(self) -> list[str]:
+        """Names of the statistics of the analysis present in the result (`statistic_variables`)."""
+        return [
+            str(name)
+            for name in self.ds.data_vars
+            if str(name) in self.statistic_variables
         ]
 
     @property
@@ -296,7 +312,11 @@ class ParameterResult:
         at `ci_level`, `x_median`, `x_q25`, `x_q75`, the count of finite values
         `x_n` and, for log-normal parameters (`lognormal_parameters`),
         `x_geomean` and `x_geocv`; `flags` is the union of the flags of the
-        samples. Derived and point variables of the input are dropped.
+        samples. The derived, the point and the statistic variables of the
+        input are dropped: a statistic (`statistic_variables`, the goodness
+        of fit and the counts of a fit) describes the analysis of one sample,
+        not a quantity of which a mean over samples would mean anything, and
+        is read from the unsummarized result.
 
         The two counts differ: `n` is the number of samples along `dim`,
         `x_n` the number of them at which `x` is finite, and every statistic of

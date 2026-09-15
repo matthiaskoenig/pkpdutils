@@ -216,6 +216,20 @@ def test_too_few_points_and_no_data() -> None:
     assert "NO_DATA" in r.flags()
 
 
+def test_n_points_of_a_row_without_a_fit_counts_the_used_points() -> None:
+    """`n_points` is the number of points the fit used, not the width of the row."""
+    x = np.arange(1.0, 10.0)  # nine points
+    empty = fit(MonoExp(), x, np.full(x.size, np.nan))
+    assert int(empty["n_points"].values) == 0
+    assert empty["y_data"].sizes["point"] == 9
+    y = np.full(x.size, np.nan)
+    y[:2] = [5.0, 4.0]
+    too_few = fit(Emax(), x, y)
+    assert "TOO_FEW_POINTS" in too_few.flags()
+    assert int(too_few["n_points"].values) == 2
+    assert too_few["y_data"].sizes["point"] == 9
+
+
 def test_bateman_flip_flop_flag_and_derived() -> None:
     """The Bateman fit reports its derived parameters and the flip-flop."""
     y = Bateman().predict(T, np.array([10.0, 0.2, 0.6])) * np.random.default_rng(
@@ -346,6 +360,51 @@ def test_cv_is_not_a_parameter() -> None:
     assert "k_cv" in result.derived_variables
     summary = result.summarize("individual")
     assert "k_cv_sd" not in summary and "k_sd" in summary
+
+
+def test_statistics_are_not_parameters() -> None:
+    """The goodness-of-fit statistics and the counts are `statistics`, not `parameters`."""
+    ys = np.stack(
+        [
+            noisy_monoexp(np.random.default_rng(i), k=k)[1]
+            for i, k in ((16, 0.2), (17, 0.3), (18, 0.4))
+        ]
+    )
+    result = fit(MonoExp(), T, ys, dims=("individual",))
+    assert set(result.statistics) == {
+        "cost",
+        "r2",
+        "rmse",
+        "aic",
+        "aicc",
+        "bic",
+        "n_points",
+        "n_parameters",
+        "n_starts_converged",
+        "n_bootstrap",
+    }
+    assert not set(result.parameters) & set(result.statistics)
+    assert result.parameters == ["a", "k", "thalf", "auc"]
+    # they stay in the data frame, which reports the individual fits
+    assert set(result.to_dataframe().columns) >= set(result.statistics)
+
+
+def test_summarize_drops_the_statistics() -> None:
+    """A summary over samples averages the parameters, never the statistics of the single fits."""
+    ys = np.stack(
+        [
+            Bateman().predict(T, np.array([10.0, 1.5, k]))
+            * np.random.default_rng(i).lognormal(0.0, 0.02, T.size)
+            for i, k in ((19, 0.2), (20, 0.3), (21, 0.4))
+        ]
+    )
+    summary = fit(Bateman(), T, ys, dims=("individual",)).summarize("individual")
+    for name in ("aic", "cost", "n_points", "r2", "rmse", "aicc", "bic"):
+        assert name not in summary
+        for suffix in ("_se", "_sd", "_ci_high", "_q75", "_n"):
+            assert f"{name}{suffix}" not in summary
+    assert "tmax" in summary and "tmax_sd" in summary and "ka_ci_low" in summary
+    assert float(summary["n"].values) == 3.0
 
 
 def test_at_bound_at_a_zero_lower_bound() -> None:

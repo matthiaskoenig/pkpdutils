@@ -18,6 +18,7 @@ class MyResult(ParameterResult):
     flag_type = MyFlag
     lognormal_parameters = frozenset({"a"})
     discrete_parameters = frozenset({"k"})
+    statistic_variables = frozenset({"cost"})
 
 
 def make() -> MyResult:
@@ -26,6 +27,7 @@ def make() -> MyResult:
             "a": (("s",), np.array([1.0, 2.0, 4.0]), {"units": "mg"}),
             "a_se": (("s",), np.array([0.1, 0.2, 0.4]), {"units": "mg"}),
             "k": (("s",), np.array([3.0, 3.0, 4.0]), {"units": "dimensionless"}),
+            "cost": (("s",), np.array([1.0, 2.0, 3.0]), {"units": "dimensionless"}),
             "y_pred": (("s", "point"), np.ones((3, 2)), {"units": "mg"}),
             "n": (("s",), np.array([5.0, 5.0, 5.0]), {"units": "dimensionless"}),
             "flags": (("s",), np.array([0, 1, 3]), {"units": "dimensionless"}),
@@ -39,12 +41,21 @@ def test_generic_result_classification() -> None:
     r = make()
     assert r.sample_dims == ("s",)
     assert r.parameters == ["a", "k"]
+    assert r.statistics == ["cost"]
     assert r.derived_variables == ["a_se"]
     assert r.point_variables == ["y_pred"]
     assert r.has_uncertainty
     assert r.flags(s="z") == ["BAD", "WORSE"]
-    assert set(r.to_quantities(s="x")) == {"a", "a_se", "k", "n"}
-    assert list(r.to_dataframe().columns) == ["s", "a", "a_se", "k", "n", "flags"]
+    assert set(r.to_quantities(s="x")) == {"a", "a_se", "k", "cost", "n"}
+    assert list(r.to_dataframe().columns) == [
+        "s",
+        "a",
+        "a_se",
+        "k",
+        "cost",
+        "n",
+        "flags",
+    ]
     assert r.flag_table()["WORSE"].tolist() == [False, False, True]
 
 
@@ -55,6 +66,7 @@ def test_generic_summarize_uses_class_sets() -> None:
     assert q["a_geomean"].magnitude == pytest.approx(2.0)
     assert "k_geomean" not in s
     assert "y_pred" not in s
+    assert "cost" not in s and "cost_sd" not in s  # a statistic is not summarized
     assert s.flags() == ["BAD", "WORSE"]
 
 

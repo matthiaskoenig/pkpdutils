@@ -361,12 +361,18 @@ def _start_vector(
     return np.clip(inside, lower + span, upper - span)
 
 
-def _nan_rowfit(k: int, n: int, flags: int, model: Model) -> RowFit:
+def _nan_rowfit(k: int, width: int, n_points: int, flags: int, model: Model) -> RowFit:
     """A row without a fit.
+
+    `n_points` is the number of points the fit would have used, so that a row
+    which was never fitted reports how much data it had: zero without data,
+    the finite points otherwise. The point arrays keep the width of the row,
+    like every fitted row, so the result stacks into one `point` dimension.
 
     Args:
         k: number of parameters of the model.
-        n: number of points of the row.
+        width: number of points of the row (the width of the point arrays).
+        n_points: number of usable points of the row.
         flags: the flags explaining why there is no fit.
         model: the model (for the names of the derived parameters).
 
@@ -393,10 +399,10 @@ def _nan_rowfit(k: int, n: int, flags: int, model: Model) -> RowFit:
         aic=math.nan,
         aicc=math.nan,
         bic=math.nan,
-        n_points=n,
+        n_points=n_points,
         n_starts_converged=0,
-        y_pred=np.full(n, np.nan),
-        residuals=np.full(n, np.nan),
+        y_pred=np.full(width, np.nan),
+        residuals=np.full(width, np.nan),
         flags=flags,
         nfev=0,
     )
@@ -536,9 +542,10 @@ def fit_row(
     k = int(free.sum())
     n = int(ok.sum())
     if n < 2:
-        return _nan_rowfit(k_all, x.size, int(FitFlag.NO_DATA), model)
+        # fewer than two points is no curve at all, there is nothing to fit
+        return _nan_rowfit(k_all, x.size, 0, int(FitFlag.NO_DATA), model)
     if n < k + 1:
-        return _nan_rowfit(k_all, x.size, int(FitFlag.TOO_FEW_POINTS), model)
+        return _nan_rowfit(k_all, x.size, n, int(FitFlag.TOO_FEW_POINTS), model)
     xs, ys = x[ok], y[ok]
     var = variance_of(ys, None if sd is None else sd[ok], options.weighting)
     sqrt_var = np.sqrt(var)
@@ -604,7 +611,7 @@ def fit_row(
         ):
             best = (solution, converged)
     if best is None:
-        return _nan_rowfit(k_all, x.size, int(FitFlag.NOT_CONVERGED), model)
+        return _nan_rowfit(k_all, x.size, n, int(FitFlag.NOT_CONVERGED), model)
     solution, converged = best
     flags = 0 if converged else int(FitFlag.NOT_CONVERGED)
 
