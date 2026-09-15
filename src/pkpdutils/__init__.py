@@ -15,6 +15,7 @@ from pkpdutils.fit import (
     fit_table,
     fit_timecourse,
     fit_timecourses,
+    proportionality_test,
 )
 from pkpdutils.nca import (
     NCAOptions,
@@ -51,5 +52,6 @@ __all__ = [
     "nca",
     "nca_single",
     "partial_auc",
+    "proportionality_test",
     "ureg",
 ]

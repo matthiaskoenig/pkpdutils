@@ -15,11 +15,11 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.uncertainty import (
     DISCRETE_PARAMETERS,
     LOGNORMAL_PARAMETERS,
-    base_name,
     reduce_replicates,
     resample_values,
     resolve_spread,
 )
+from pkpdutils.result import base_name
 
 K, C0 = 0.3, 10.0
 T = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])

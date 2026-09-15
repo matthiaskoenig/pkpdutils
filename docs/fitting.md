@@ -176,8 +176,7 @@ fits.summarize("individual")  # mean, sd, se, interval over the individuals
 A parameter against a dose or a covariate is fitted along one dimension of any dataset, the result of another analysis included:
 
 ```python
-from pkpdutils import compare_models, fit_table
-from pkpdutils.fit import proportionality_test
+from pkpdutils import compare_models, fit_table, proportionality_test
 from pkpdutils.fit.models import Allometric, BiExp, MonoExp, Power
 
 power = fit_table(Power(), nca_result.ds, "dose", "auc_inf_obs", dim="dose")
