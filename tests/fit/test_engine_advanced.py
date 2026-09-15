@@ -203,14 +203,28 @@ def test_a_degenerate_row_does_not_abort_the_fit() -> None:
 
 
 def test_a_parameter_at_zero_gives_no_derived_uncertainty() -> None:
-    """A rate constant driven to zero has no logarithm, so the delta method gradient is skipped."""
+    """A rate constant of zero has no logarithm, so the delta method gradient is skipped."""
+    x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0])
+    y = 8.0 * np.exp(-2.0 * x) + 2.0
+    result = fit(BiExp(), x, y, options=FitOptions(fixed={"k2": 0.0}))
+    assert float(result["k2"].values) == 0.0
+    assert float(result["k1"].values) == pytest.approx(2.0, rel=1e-6)
+    assert np.isfinite(float(result["a1_se"].values))
+    assert np.isnan(float(result["thalf_2_se"].values))
+    assert np.isnan(float(result["auc_ci_low"].values))
+
+
+def test_constant_data_collapses_a_rate_without_raising() -> None:
+    """Constant data drives a rate to the zero bound; the row is flagged, never raises.
+
+    Where exactly the optimizer stops depends on the platform (zero on one
+    BLAS, 1e-12 on another), so only the collapse and the flags are checked.
+    """
     x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0])
     result = fit(
         BiExp(), x, np.full(x.size, 1e12), options=FitOptions(n_starts=3, seed=29)
     )
-    assert float(result["k2"].values) == 0.0
-    assert np.isnan(float(result["thalf_2_se"].values))
-    assert np.isnan(float(result["auc_ci_low"].values))
+    assert float(result["k2"].values) < 1e-6
     assert "SINGULAR" in result.flags()
 
 
