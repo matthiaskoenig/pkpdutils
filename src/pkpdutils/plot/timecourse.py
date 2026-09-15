@@ -73,7 +73,9 @@ def plot_timecourse(
 
     Args:
         timecourses: the curve or the batch
-        ax: axes to draw on, a new figure by default
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
         log: logarithmic value axis; a curve without a positive value stays
             linear (logged at debug level)
         errorbars: draw `se` (or `sd`) as error bars when present

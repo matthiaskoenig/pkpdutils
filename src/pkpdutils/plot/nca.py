@@ -251,7 +251,9 @@ def plot_intervals(
     Args:
         result: the result of a multiple dose analysis
         name: name of the per-interval variable (`interval_*`)
-        ax: axes to draw on, a new figure by default
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
         style: colors and markers
         **indexers: coordinate label per sample dimension selecting one sample
 

@@ -53,7 +53,9 @@ def plot_ratio(
         limits: acceptance limits drawn as dashed lines, `None` for none.
         thresholds: interaction thresholds drawn as dotted lines with the
             class names, `None` for none.
-        ax: axes to draw on, a new figure by default.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
 
     Returns:

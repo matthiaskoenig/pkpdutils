@@ -21,7 +21,9 @@ def figure_of(
 
     A function drawing into a caller-supplied `ax` never touches its
     figure's layout engine or size; only a figure created here gets the
-    constrained layout engine.
+    constrained layout engine, so a caller-supplied `ax` keeps its figure's
+    own layout, meaning long tick labels can clip unless the caller sets one
+    (`fig.set_layout_engine("constrained")`).
 
     Args:
         ax: axes to draw on, `None` for a new figure.
