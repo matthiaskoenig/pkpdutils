@@ -17,7 +17,9 @@ class FitResult(ParameterResult):
     Variables: every parameter `p` with `p_se`, `p_ci_low`, `p_ci_high`,
     `p_cv`; the derived parameters likewise; the statistics `cost`, `r2`,
     `rmse`, `aic`, `aicc`, `bic`, `n_points`, `n_parameters`,
-    `n_starts_converged`; the data and the prediction per point (`x_data`,
+    `n_starts_converged`, `n_bootstrap` (number of successful residual
+    bootstrap replicates, 0 without bootstrap; `attrs["bootstrap"]` holds the
+    requested count); the data and the prediction per point (`x_data`,
     `y_data`, `y_pred`, `residuals` over `point`); the correlation matrix over
     `(parameter, parameter_)`; and the integer `flags` (`FitFlag`). The model
     object is kept for `predict`.
@@ -28,9 +30,13 @@ class FitResult(ParameterResult):
     fitted on a log scale, so asymmetric around the estimate), while the
     interval of a derived parameter is the delta method interval
     `d +- t se(d)` and is always symmetric around `d`, even for a strongly
-    non-linear function of the parameters such as a half-life. Discrete
-    derived parameters (`discrete_parameters`, e.g. `flip_flop`) carry no
-    uncertainty variables at all.
+    non-linear function of the parameters such as a half-life. When the fit
+    was run with `FitOptions.bootstrap > 0` (Efron & Tibshirani 1993, ch. 9),
+    `p_se` and the derived standard errors are instead the standard deviation
+    of the residual bootstrap replicates and the intervals are their
+    percentiles at `ci_level`, so they need not be symmetric around the
+    estimate. Discrete derived parameters (`discrete_parameters`, e.g.
+    `flip_flop`) carry no uncertainty variables at all.
     """
 
     flag_type: ClassVar[type[FitFlag]] = FitFlag

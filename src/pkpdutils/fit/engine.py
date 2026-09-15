@@ -11,6 +11,18 @@ statistics (Seber & Wild 1989, ch. 2; Gabrielsson & Weiner 2016, ch. 6):
 - `se(p) = se(q) |dp/dq|`, interval `q ± t_{n-k} se(q)` transformed back
 - derived parameters by the delta method with a central difference gradient
 - `R²`, `RMSE` on the unweighted residuals; `AIC`, `AICc`, `BIC` on the weighted ones
+
+When `options.bootstrap > 0`, `fit_row` also runs a residual bootstrap (Efron
+& Tibshirani 1993, ch. 9): the weighted residuals of the fit are resampled
+with replacement `B` times, each replicate is refitted from the fitted `p`,
+and the standard errors, the confidence intervals and the correlation matrix
+are the empirical statistics of the replicate parameters, an alternative to
+the Jacobian-based ones above that does not rely on the local linear
+approximation. `fit_rows` distributes the rows over a `ProcessPoolExecutor`
+when `options.n_workers > 1`, with one child seed per row drawn up front so
+serial and pooled runs agree; `pkpdutils.fit.compare` ranks several models on
+the same data by the corrected Akaike information criterion (Burnham &
+Anderson 2002).
 """
 
 import logging
@@ -62,6 +74,7 @@ class RowFit:
         residuals: the weighted residual per point (`NaN` for unused points)
         flags: the `FitFlag` combination of the row
         nfev: number of function evaluations over all starts
+        n_bootstrap: number of successful residual bootstrap replicates, 0 without bootstrap
     """
 
     p: np.ndarray
@@ -87,6 +100,7 @@ class RowFit:
     residuals: np.ndarray
     flags: int
     nfev: int
+    n_bootstrap: int = 0
 
 
 def variance_of(
@@ -529,6 +543,7 @@ def fit_row(
             lower, upper = lower[order], upper[order]
             scales = [scales[i] for i in order]
             fixed_values = fixed_values[order]
+            q0_all = q0_all[order]
     cov_free, singular = covariance(jac, float(solution.cost), n, k)
     if singular:
         flags |= int(FitFlag.SINGULAR)
@@ -594,6 +609,78 @@ def fit_row(
     full_res = np.full(x.size, np.nan)
     full_pred[ok] = y_pred
     full_res[ok] = r
+    # residual bootstrap (Efron & Tibshirani 1993, ch. 9): the weighted
+    # residuals of the fit are resampled with replacement and the model is
+    # refitted from the fitted `p`, single start, the same bounds and scale;
+    # the standard errors, the intervals and the correlation matrix are then
+    # the empirical statistics of the replicate parameters, an alternative to
+    # the Jacobian-based ones above that does not rely on the local linear
+    # approximation of the covariance. A replicate whose refit fails or does
+    # not converge is skipped; the phases of a sum of exponentials are
+    # reordered exactly as the reported fit was (never when a parameter is
+    # pinned by `options.fixed` or `options.bounds`), so every replicate is
+    # compared under the same parameter labelling as `p`.
+    n_boot = 0
+    if options.bootstrap > 0:
+        q_free = q_all[free]
+        rows_p: list[np.ndarray] = []
+        rows_q: list[np.ndarray] = []
+        rows_d: list[dict[str, float]] = []
+        for _ in range(options.bootstrap):
+            r_star = rng.choice(r, size=r.size, replace=True)
+            y_star = y_pred + r_star * sqrt_var
+
+            def residuals_star(
+                qf: np.ndarray, y_star: np.ndarray = y_star
+            ) -> np.ndarray:
+                """The weighted residuals of one bootstrap replicate."""
+                return (y_star - model.predict(xs, full_p(qf))) / sqrt_var
+
+            try:
+                sol_star: Any = least_squares(
+                    residuals_star,
+                    q_free,
+                    bounds=(lq_all[free], uq_all[free]),
+                    method="trf",
+                    loss=options.loss,
+                    max_nfev=options.max_nfev,
+                    ftol=options.ftol,
+                    xtol=options.xtol,
+                    gtol=options.gtol,
+                )
+            except (ValueError, np.linalg.LinAlgError) as err:
+                logger.debug("bootstrap replicate failed: %s", err)
+                continue
+            if sol_star.status <= 0:
+                continue
+            p_star = full_p(np.array(sol_star.x, dtype=np.float64))
+            if order_fn is not None and not pinned:
+                order_star = np.asarray(order_fn(p_star))
+                p_star = p_star[order_star]
+            rows_p.append(p_star)
+            rows_q.append(to_scale(p_star, scales))
+            rows_d.append(model.derived(p_star))
+        n_boot = len(rows_p)
+        if n_boot >= 2:
+            arr_p = np.stack(rows_p)
+            arr_q = np.stack(rows_q)
+            alpha = 1.0 - options.ci_level
+            se_p = np.where(free, arr_p.std(axis=0, ddof=1), np.nan)
+            ci_low = np.where(
+                free, np.percentile(arr_p, 100 * alpha / 2, axis=0), np.nan
+            )
+            ci_high = np.where(
+                free, np.percentile(arr_p, 100 * (1 - alpha / 2), axis=0), np.nan
+            )
+            with np.errstate(invalid="ignore", divide="ignore"):
+                corr_b = np.corrcoef(arr_q[:, free], rowvar=False)
+            corr = np.full((k_all, k_all), np.nan)
+            corr[np.ix_(free, free)] = np.atleast_2d(corr_b)
+            for name in derived:
+                values = np.array([d[name] for d in rows_d], dtype=np.float64)
+                derived_se[name] = float(values.std(ddof=1))
+                derived_lo[name] = float(np.percentile(values, 100 * alpha / 2))
+                derived_hi[name] = float(np.percentile(values, 100 * (1 - alpha / 2)))
     return RowFit(
         p=p,
         q=q_all,
@@ -618,7 +705,25 @@ def fit_row(
         residuals=full_res,
         flags=flags,
         nfev=nfev,
+        n_bootstrap=n_boot,
     )
+
+
+def _fit_row_job(
+    args: tuple[Model, np.ndarray, np.ndarray, np.ndarray | None, FitOptions, int],
+) -> RowFit:
+    """Worker entry point for `fit_rows`: fit one row from its arguments and seed.
+
+    A module-level function so it can be pickled for a `ProcessPoolExecutor`.
+
+    Args:
+        args: `(model, x, y, sd, options, seed)` of one row.
+
+    Returns:
+        The fit of the row.
+    """
+    model, x, y, sd, options, seed = args
+    return fit_row(model, x, y, sd, options, np.random.default_rng(int(seed)))
 
 
 def fit_rows(
@@ -628,7 +733,11 @@ def fit_rows(
     sd: np.ndarray | None,
     options: FitOptions,
 ) -> list[RowFit]:
-    """Fit every row of `(N, n)` arrays serially (Task 6 adds the worker pool).
+    """Fit every row of `(N, n)` arrays, serially or in a process pool.
+
+    Row seeds are drawn from `options.seed` before the rows are distributed,
+    one child seed per row, so the result does not depend on `options.n_workers`
+    or the order the rows finish in.
 
     Args:
         model: the model
@@ -638,21 +747,20 @@ def fit_rows(
         options: the options
 
     Returns:
-        One `RowFit` per row.
+        One `RowFit` per row, in row order.
     """
     rng = np.random.default_rng(options.seed)
     seeds = rng.integers(0, 2**32 - 1, size=y.shape[0])
-    return [
-        fit_row(
-            model,
-            x[i],
-            y[i],
-            None if sd is None else sd[i],
-            options,
-            np.random.default_rng(int(seeds[i])),
-        )
+    jobs = [
+        (model, x[i], y[i], None if sd is None else sd[i], options, int(seeds[i]))
         for i in range(y.shape[0])
     ]
+    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
+            return list(pool.map(_fit_row_job, jobs))
+    return [_fit_row_job(job) for job in jobs]
 
 
 def _as_rows(
@@ -870,6 +978,7 @@ def build_result(
     n_free = int(np.sum([name not in options.fixed for name in names]))
     scalar("n_parameters", [n_free for _ in rows], "dimensionless")
     scalar("n_starts_converged", [r.n_starts_converged for r in rows], "dimensionless")
+    scalar("n_bootstrap", [r.n_bootstrap for r in rows], "dimensionless")
     point_dims = (*dims, "point")
     point_shape = (*sample_shape, n_points)
     data_vars["x_data"] = (point_dims, x.reshape(point_shape), {"units": x_unit})
@@ -906,6 +1015,7 @@ def build_result(
         "y_unit": y_unit,
         "weighting": str(options.weighting),
         "parameter_scale": str(options.parameter_scale),
+        "bootstrap": options.bootstrap,
     }
     return FitResult(
         xr.Dataset(data_vars=data_vars, coords=all_coords, attrs=attrs), model
