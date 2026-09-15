@@ -357,3 +357,20 @@ def test_nca_keeps_sample_coordinates() -> None:
     sample = result.sample("auc_inf_obs", dim="individual")
     assert sample.coords["period"].tolist() == [1, 2]
     assert sample.labels is not None and sample.labels.tolist() == ["a", "b"]
+
+
+def test_nca_rejects_coordinate_named_like_a_variable() -> None:
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"], "n": ("individual", [1, 2])},
+        dose={"amount": np.array([100.0, 100.0]), "unit": "mg"},
+        route=Route.IV_BOLUS,
+    )
+    with pytest.raises(ValueError, match="collides"):
+        nca(batch)

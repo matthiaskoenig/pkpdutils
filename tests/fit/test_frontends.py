@@ -256,3 +256,20 @@ def test_fit_timecourses_keeps_sample_coordinates() -> None:
         "RT",
         "TR",
     ]
+
+
+def test_fit_timecourses_rejects_coordinate_named_like_a_parameter() -> None:
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"], "k": ("individual", [1.0, 2.0])},
+        dose={"amount": np.array([100.0, 100.0]), "unit": "mg"},
+        route=Route.IV_BOLUS,
+    )
+    with pytest.raises(ValueError, match="collides"):
+        fit_timecourses(MonoExp(), batch)

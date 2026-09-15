@@ -1,7 +1,7 @@
 """Shared container of parameter results (`NCAResult`, `FitResult`): an `xarray.Dataset` over sample dimensions, units per variable, an integer `flags` variable, quantities, data frames and summaries."""
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
@@ -40,6 +40,35 @@ def sample_coordinates(
         for name, coord in ds.coords.items()
         if {str(d) for d in coord.dims} <= dims
     }
+
+
+def check_coordinate_collision(
+    coords: Mapping[str, Any], variables: Iterable[str]
+) -> None:
+    """Raise if a coordinate of the batch shares its name with a result variable.
+
+    `xr.Dataset` and `xr.DataArray` refuse a name that is both a coordinate
+    and a data variable (`ValueError: variables {...} are found in both
+    data_vars and coords`); a batch coordinate carried over by
+    `sample_coordinates` (e.g. an individual attribute happening to be named
+    `n` or after a parameter such as `cmax`) would otherwise only surface as
+    that opaque error deep inside the construction of the result. Calling
+    this first turns it into a clear message that names the batch coordinate
+    to rename.
+
+    Args:
+        coords: the coordinates that are about to be attached to the result.
+        variables: the names of the data variables of the result.
+
+    Raises:
+        ValueError: if a name is both a coordinate and a data variable.
+    """
+    clash = set(coords) & set(variables)
+    if clash:
+        raise ValueError(
+            f"coordinate {sorted(clash)} of the batch collides with a result "
+            "variable; rename the coordinate"
+        )
 
 
 #: suffixes of the uncertainty variables of a parameter (`_cv` is the

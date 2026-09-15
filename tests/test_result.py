@@ -150,3 +150,11 @@ def test_sample_summary_data() -> None:
         MyResult(ds.drop_vars(["a_sd", "a_geomean", "a_geocv"])).sample("a")
     with pytest.raises(ValueError, match="remaining"):
         make().sample("a")
+
+
+def test_check_coordinate_collision() -> None:
+    from pkpdutils.result import check_coordinate_collision
+
+    check_coordinate_collision({"period": [1, 2]}, {"a", "flags"})
+    with pytest.raises(ValueError, match="collides"):
+        check_coordinate_collision({"n": [1, 2]}, {"a", "n", "flags"})

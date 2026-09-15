@@ -48,7 +48,7 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
-from pkpdutils.result import base_name
+from pkpdutils.result import base_name, check_coordinate_collision
 
 logger = logging.getLogger(__name__)
 
@@ -1148,9 +1148,11 @@ def build_result(
 
     Raises:
         ValueError: if a parameter or derived name of the model ends in a
-            reserved suffix (`_check_no_reserved_suffix`), or if a name in
+            reserved suffix (`_check_no_reserved_suffix`), if a name in
             `dims` collides with a variable the result writes or a reserved
-            dimension (`_check_no_dimension_collision`).
+            dimension (`_check_no_dimension_collision`), or if a name in
+            `coords` collides with a data variable of the result
+            (`check_coordinate_collision`).
     """
     n_rows, n_points = y.shape
     sample_shape: tuple[int, ...] = (
@@ -1244,6 +1246,7 @@ def build_result(
         np.array([r.flags for r in rows], dtype=np.int64).reshape(sample_shape),
         {"units": "dimensionless"},
     )
+    check_coordinate_collision(coords, data_vars)
     all_coords: dict[str, Any] = {
         **coords,
         "parameter": list(names),
