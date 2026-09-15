@@ -10,7 +10,7 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 
 **The ADaM layout.** The CDISC ADaM ADNCA (ADPC) dataset is one row per concentration record of one analyte, already reshaped for a non-compartmental analysis: the time is given twice, once since the first dose of the subject (`AFRLT`) and once since the reference (most recent) dose (`ARRLT`), so the dose times of a subject are recovered as the distinct values of `AFRLT - ARRLT`. A predose sample can appear twice, once for the current interval and once, duplicated, for the previous one (`DTYPE == "COPY"`); `pkpdutils` drops the duplicate.
 
-**What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. A subject which is not a curve is an error naming the subject, a `ValueError` and never a pydantic dump: fewer than two observations, a time which is not a number, duplicate sampling times, or dose records which are not a protocol (an infusion without a duration, a dose time which is not a number). Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
+**The column keywords.** Every column name a reader takes is a keyword ending in `_col` (`id_col`, `time_col`, `dv_col`, `amt_col`, `subject_col`, `conc_col`, `dose_col`, ...), the default being the name the format uses; the columns kept as coordinates are named by `covariates` on all three readers. **What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. A subject which is not a curve is an error naming the subject, a `ValueError` and never a pydantic dump: fewer than two observations, a time which is not a number, duplicate sampling times, or dose records which are not a protocol (an infusion without a duration, a dose time which is not a number). Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
 
 ## NONMEM / Monolix event records
 
@@ -56,7 +56,7 @@ events = batch.to_events()  # the inverse, one row per dose and observation
 | `time` | doses | dose time | in `time_unit`, `0` when the column is absent |
 | `dose` | doses | dose amount | in `dose_unit` |
 | `duration_col` | doses | infusion duration | optional, `None` without infusions |
-| `groups` | either | grouping columns | constant per subject, become coordinates along the sample dimension |
+| `covariates` | either | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
 from pkpdutils import Route, Timecourses
@@ -82,6 +82,7 @@ batch = Timecourses.from_pknca(
 | | infusion duration | not in the dataset: an infusion protocol cannot be read and `Route.IV_INFUSION` raises, such a study is read from the event records or the PKNCA tables |
 | `DTYPE` | derivation type | `COPY` rows (the predose record duplicated into the previous interval) are dropped |
 | `ALLOQ` | lower limit of quantification | kept as the coordinate `lloq` along the sample dimension |
+| `covariates` | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
 import pandas as pd

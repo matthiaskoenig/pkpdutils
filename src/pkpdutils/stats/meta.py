@@ -375,6 +375,12 @@ def effect_size(
 ) -> EffectSize:
     r"""Effect size of a treatment against a control.
 
+    The control comes first, the convention of the meta-analysis literature
+    (Hedges 1981; Borenstein et al. 2009) and of `Study(label, control,
+    treatment)`; the comparisons of `pkpdutils.stats.tests`,
+    `pkpdutils.stats.ratio` and `pkpdutils.stats.bioequivalence` put the test
+    or treatment sample first, as their own literature does.
+
     Hedges' g: \(d = (\bar x_T - \bar x_C) / s_p\) with the pooled standard deviation,
     \(\mathrm{var}(d) = N / (n_C n_T) + d^2 / (2N)\), \(g = J d\),
     \(\mathrm{var}(g) = J^2 \mathrm{var}(d)\) (Hedges 1981). Mean difference:
@@ -430,9 +436,9 @@ def effect_size(
 def effects_from_arrays(
     estimates: ArrayLike,
     variances: ArrayLike,
+    *,
     labels: Sequence[str] | None = None,
     kind: EffectKind | str = EffectKind.HEDGES_G,
-    *,
     ci_level: float = 0.95,
 ) -> list[EffectSize]:
     """Effect sizes from estimates and variances computed elsewhere.
@@ -440,6 +446,8 @@ def effects_from_arrays(
     Args:
         estimates: the effects.
         variances: their variances.
+
+    Keyword Args:
         labels: labels of the studies, the positions by default.
         kind: the kind of effect, as the member or as its string.
         ci_level: level of the intervals.

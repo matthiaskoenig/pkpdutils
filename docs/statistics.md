@@ -24,7 +24,7 @@ Statistics on pharmacokinetic parameters: comparisons of two groups, geometric m
 
 **Pairing and degenerate samples.** Paired analyses (`compare(paired=True)`, `ratio`, `tost`) match the two samples with `paired_values`: by label when both samples carry labels, so the order of the individuals does not matter and an individual only one sample holds is dropped, and by position otherwise, which then needs equal sizes. A pair is dropped when either of its values is missing, which is logged at debug level; the analysis runs on the remaining pairs, so a missing parameter of one subject costs that subject and does not shift the pairing of the others. A sample of a single value and two samples without variance leave the statistic undefined: `statistic`, `p_value`, `df` and the interval come back as `NaN` instead of raising, while the effect itself (the difference or the ratio of the means) stays finite. A sample without a finite value at all (a parameter no subject of the group has) gives `NaN` throughout an unpaired `compare` or `ratio` and raises on a paired one, where no pair remains; `tost` reports `NaN` p values and no bioequivalence when the design leaves no standard error; `effect_size` gives a `NaN` effect and variance for such a group instead of raising, and the pooling drops that study with a warning naming it, keeps it with a `NaN` weight in `MetaResult.to_dataframe` and raises only when no study is left; a variance which is zero or negative is an error rather than a missing value, it carries an infinite weight and is named in a `ValueError`. `ParameterSample` rejects a negative `sd` or `geocv`, a non-positive `geomean` and an `n` which is not a whole number.
 
-**Strings instead of enumeration members.** Every option of `pkpdutils.stats` is taken either as its enumeration member or as the string of the member, so `compare(a, b, scale="log", test="paired_t")`, `multiple_comparison(p, "holm")`, `effect_size(control, treatment, "log_ratio")` and `tost(test, reference, design="parallel")` run the analysis their members name. An unknown string raises a `ValueError` listing the members rather than falling back to a default.
+**Strings instead of enumeration members.** Every option of `pkpdutils.stats` is taken either as its enumeration member or as the string of the member, so `compare(a, b, scale="log", test="paired_t")`, `multiple_comparison(p, method="holm")`, `effect_size(control, treatment, "log_ratio")` and `tost(test, reference, design="parallel")` run the analysis their members name. An unknown string raises a `ValueError` listing the members rather than falling back to a default.
 
 **2x2 crossover.** With the log values \(y_{i1}\), \(y_{i2}\) of subject \(i\) in the two periods, the period differences \(d_i = (y_{i2} - y_{i1})/2\) and the totals \(u_i = y_{i1} + y_{i2}\), and the sequences A (test in period 2) and B (test in period 1)[^chow]:
 
@@ -55,6 +55,8 @@ with \(\mathrm{var}(\hat F) = \mathrm{var}(\hat P) = \sigma_d^2 (1/n_A + 1/n_B)\
 | `meta_analysis` | `MetaResult` | `effects`, `fixed`, `random`, `heterogeneity`, `to_dataframe()` |
 
 The `effect` of `compare` is `a - b` on the linear scale and the ratio of the geometric means `a / b` on the log scale; `ratio`, `tost` and `ddi_classification` report test over reference and with over without the perpetrator. `p_value` of a `BEParameter` is the larger of the two one-sided p values, `bioequivalent` is `p_value < (1 - ci_level) / 2`, which is the interval within the limits.
+
+**Confidence levels and argument order.** `ci_level` is 0.95 everywhere except `ratio`, `tost` and `bioequivalence`, which default to 0.90, the regulatory interval of the two one-sided tests: the 90 % interval of the ratio is the interval the bioequivalence decision reads[^schuirmann]. Every function takes `ci_level` as a keyword, so a comparison at another level is one argument away. The samples of a comparison are given test (or treatment) first: `compare(a, b)`, `ratio(test, reference)`, `tost(test, reference)`, `bioequivalence(test, reference)`; the meta-analysis reverses it, `effect_size(control, treatment)` and `Study(label, control, treatment)`, the convention of its own literature[^hedges].
 
 ## API
 
@@ -139,7 +141,9 @@ studies = [
 meta = meta_analysis(studies, EffectKind.LOG_RATIO)
 meta.random.estimate, meta.heterogeneity.i2, meta.to_dataframe()
 random_effects(
-    effects_from_arrays(log_ratios, variances, labels, EffectKind.LOG_RATIO)
+    effects_from_arrays(
+        log_ratios, variances, labels=labels, kind=EffectKind.LOG_RATIO
+    )
 )  # effects computed elsewhere
 ```
 

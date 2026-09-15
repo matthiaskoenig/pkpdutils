@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from pkpdutils.plot._common import figure_of, plain_log_ticks
+from pkpdutils.plot._common import figure_of, log_scale
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.stats.meta import EffectKind, MetaResult
 
@@ -22,9 +22,9 @@ _LABELS = {
 def plot_forest(
     result: MetaResult,
     *,
+    exp: bool | None = None,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
-    exp: bool | None = None,
 ) -> Figure:
     """Forest plot: the effect of every study with its interval, the pooled effects as diamonds.
 
@@ -34,12 +34,14 @@ def plot_forest(
 
     Args:
         result: the meta-analysis.
+
+    Keyword Args:
+        exp: exponentiate the effects; `None` does so for `LOG_RATIO`.
         ax: axes to draw on, a new figure by default; a caller-supplied `ax`
             keeps its figure's own layout engine, so long tick labels (the
             pooled effect labels) can clip unless the caller sets one
             (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
-        exp: exponentiate the effects; `None` does so for `LOG_RATIO`.
 
     Returns:
         The figure.
@@ -93,8 +95,7 @@ def plot_forest(
     ax.set_ylim(-0.6, n + 1.6)
     ax.invert_yaxis()
     if use_exp:
-        ax.set_xscale("log")
-        plain_log_ticks(ax.xaxis)
+        log_scale(ax, "x")
         ax.set_xlabel("ratio treatment / control")
     else:
         ax.set_xlabel(_LABELS[result.kind])

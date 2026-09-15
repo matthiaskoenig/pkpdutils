@@ -118,21 +118,22 @@ def test_fit_table_dose_proportionality() -> None:
     )
     assert pooled.sample_dims == ()
     test = proportionality_test(pooled, dose_range=(25.0, 200.0))
-    assert set(test.data_vars) >= {
-        "b",
-        "b_ci_low",
-        "b_ci_high",
-        "bound_low",
-        "bound_high",
+    assert set(test.to_dict()) == {
+        "slope",
+        "ci_low",
+        "ci_high",
+        "bounds",
         "proportional",
         "inconclusive",
+        "dose_range",
+        "criterion",
     }
     r = 200.0 / 25.0
-    assert float(test["bound_low"].values) == pytest.approx(1 + np.log(0.8) / np.log(r))
-    assert float(test["bound_high"].values) == pytest.approx(
-        1 + np.log(1.25) / np.log(r)
-    )
-    assert bool(test["proportional"].values) or bool(test["inconclusive"].values)
+    assert test.bounds[0] == pytest.approx(1 + np.log(0.8) / np.log(r))
+    assert test.bounds[1] == pytest.approx(1 + np.log(1.25) / np.log(r))
+    assert float(test.slope) == pytest.approx(float(pooled["b"]))
+    assert test.dose_range == (25.0, 200.0) and test.criterion == (0.8, 1.25)
+    assert bool(test.proportional) or bool(test.inconclusive)
 
 
 def test_fit_table_row_pairing_independent_of_dim_order() -> None:
@@ -201,9 +202,8 @@ def test_proportionality_test_detects_nonproportional() -> None:
         dim="dose",
     )
     test = proportionality_test(result, dose_range=(10.0, 400.0))
-    assert not bool(test["proportional"].values) and not bool(
-        test["inconclusive"].values
-    )
+    assert not bool(test.proportional) and not bool(test.inconclusive)
+    assert test.to_dict()["proportional"] is False
     with pytest.raises(ValueError, match="b"):
         proportionality_test(
             fit_table(

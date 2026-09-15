@@ -8,7 +8,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import NullLocator
 
-from pkpdutils.plot._common import figure_of
+from pkpdutils.plot._common import figure_of, log_scale
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.stats.bioequivalence import BEResult
 from pkpdutils.stats.ddi import DDIThresholds
@@ -50,6 +50,8 @@ def plot_ratio(
 
     Args:
         ratios: name to ratio, or a bioequivalence result (its parameters).
+
+    Keyword Args:
         limits: acceptance limits drawn as dashed lines, `None` for none.
         thresholds: interaction thresholds drawn as dotted lines with the
             class names, `None` for none.
@@ -96,7 +98,7 @@ def plot_ratio(
             )
             tick_values.add(limit)
     top, bottom = -0.6, len(names) - 0.4
-    ax.set_xscale("log")
+    log_scale(ax, "x")
     ax.set_yticks(ys, names)
     ax.set_ylim(top, bottom)
     ax.invert_yaxis()

@@ -118,6 +118,16 @@ tcs = Timecourses.from_dataframe(
     route=Route.ORAL,
 )
 tcs = Timecourses.from_timecourses([tc_a, tc_b], dim="group")
+tcs = tc.to_batch(dim="individual", label="s1")  # one curve as a batch of one
+```
+
+The labels of the samples keep the dtype of what they came from: a subject column of integers gives an integer coordinate in `from_dataframe`, as the `labels` of `from_timecourses` do.
+
+`Timecourses.relative_to_dose(which="first" | "last")` is the batch counterpart of `Timecourse.relative_to_dose`: every sample is shifted by the time of its own first (or last) dose, and its protocol with it. Equal shifts keep the layout of the batch; shifts which differ from sample to sample move the samples against each other, so the values are placed on the union of the shifted grids with `NaN` where a sample has no point at the time of another.
+
+```python
+aligned = tcs.relative_to_dose()  # every first dose at time 0
+last = tcs.relative_to_dose(which="last")
 ```
 
 From a simulation: a dataset with a `_time` dimension and scan dimensions, e.g. the `XResult` of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim):

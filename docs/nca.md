@@ -166,7 +166,7 @@ options = NCAOptions(
     lloq=0.05,
     extrapolation_warning=0.2,
 )
-result = nca(batch, options)  # batch: Timecourses over (study, individual)
+result = nca(batch, options=options)  # batch: Timecourses over (study, individual)
 result.ds  # xarray.Dataset, one variable per parameter
 result["thalf"]  # DataArray over (study, individual), attrs["units"]
 result.to_dataframe()  # one row per sample, flags decoded
@@ -181,8 +181,8 @@ from pkpdutils.nca import accumulation_ratio, superposition
 
 dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
 # the dosing interval of a curve given with its last dose only
-ss = nca(batch_ss, NCAOptions(tau=12))  # auc_tau, cavg, fluctuation, ...
-sd = nca(batch_single, NCAOptions(tau=12))
+ss = nca(batch_ss, options=NCAOptions(tau=12))  # auc_tau, cavg, fluctuation, ...
+sd = nca(batch_single, options=NCAOptions(tau=12))
 ratio = accumulation_ratio(ss, sd)  # observed accumulation
 predicted = superposition(tc_single, Dosing.regimen(dose, interval=12, n_doses=10))
 ```
@@ -197,7 +197,7 @@ protocol = Dosing.regimen(dose, interval=12, n_doses=4)
 tc_protocol = Timecourse(
     time=..., value=..., dosing=protocol, time_unit="hr", unit="mg/l"
 )
-result = nca_single(tc_protocol, NCAOptions(auc_method=AUCMethod.LOG))
+result = nca_single(tc_protocol, options=NCAOptions(auc_method=AUCMethod.LOG))
 result.intervals()  # one row per dosing interval: interval_auc, interval_cmax, ...
 result.to_quantities()["auc_tau"]  # the last, complete interval
 result.to_quantities()["accumulation_ratio_obs"]  # last interval over first interval

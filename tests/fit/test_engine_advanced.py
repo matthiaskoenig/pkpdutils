@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from pkpdutils import Dose, Route, Timecourse, Timecourses
 from pkpdutils.fit import FitFlag, FitOptions, compare_models, fit
 from pkpdutils.fit.engine import fit_row, replicate_statistics
 from pkpdutils.fit.models import BiExp, Emax, Linear, MonoExp, SigmoidEmax
@@ -110,6 +111,29 @@ def test_compare_models_batch() -> None:
     assert len(comparison.table) == 6
     weights = comparison.table.groupby("individual")["akaike_weight"].sum()
     np.testing.assert_allclose(weights.values, 1.0)
+
+
+def test_compare_models_of_a_timecourse_and_a_batch() -> None:
+    """U9: a curve or a batch carries the data, the units and the dose times."""
+    y = data(seed=6)
+    tc = Timecourse(
+        time=T,
+        value=y,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+    )
+    comparison = compare_models([MonoExp(), BiExp()], tc)
+    assert set(comparison.results) == {"monoexp", "biexp"}
+    assert comparison.results["monoexp"].units("a") == "milligram / liter"
+    assert str(comparison.best.values) == "monoexp"
+    batch = Timecourses.from_timecourses([tc.model_copy(update={"label": "a"})])
+    on_batch = compare_models([MonoExp(), BiExp()], batch)
+    assert on_batch.best.dims == ("individual",)
+    with pytest.raises(ValueError, match="must not be given"):
+        compare_models([MonoExp()], tc, y)
+    with pytest.raises(ValueError, match="'y' is required"):
+        compare_models([MonoExp()], T)
 
 
 def test_compare_models_with_a_failed_model() -> None:

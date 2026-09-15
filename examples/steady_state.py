@@ -28,7 +28,7 @@ single = Timecourse(
 if __name__ == "__main__":
     options = NCAOptions(auc_method=AUCMethod.LOG)
     protocol = Dosing.regimen(dose, interval=tau, n_doses=n_doses)
-    predicted = superposition(single, protocol, options).model_copy(
+    predicted = superposition(single, protocol, options=options).model_copy(
         update={"label": f"{n_doses} doses"}
     )
     console.rule(f"Predicted curve of {n_doses} doses every {tau:g} hr")
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     # the protocol drives the analysis: every dosing interval, the steady state
     # parameters of the last one and the point parameters from the last dose on
-    result = nca_single(predicted, options)
+    result = nca_single(predicted, options=options)
 
     console.rule("Parameters of the dosing intervals")
     console.print(

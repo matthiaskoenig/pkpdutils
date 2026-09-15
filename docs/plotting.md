@@ -1,6 +1,8 @@
 # Plotting
 
-The figures of `pkpdutils.plot` are matplotlib figures. Every function returns the `Figure` it drew and never shows it, so a script saves it (`fig.savefig("name.png")`) and a notebook displays it; pass `ax` to draw into an existing axes. Colors and markers come from a `PlotStyle`.
+The figures of `pkpdutils.plot` are matplotlib figures. Every function returns the `Figure` it drew and never shows it, so a script saves it (`fig.savefig("name.png")`) and a notebook displays it. Colors and markers come from a `PlotStyle`.
+
+Every signature has the same shape, `f(data, *, <options>, ax=None, style=DEFAULT_STYLE)`: the data first and positionally, every option as a keyword, and `ax` and `style` last. A figure of several panels takes `axes` instead of `ax` (`plot_nca` and `plot_fit` two of them, `plot_nca_grid` one per sample), and a logarithmic axis is `log_x` or `log_y`, with plain tick labels (`10`, `100`) rather than powers of ten; an axis without a positive value stays linear and says so in a debug log. `draw_nca_panel` draws a single NCA panel into an axes and returns the `Axes`, for a figure the caller lays out itself.
 
 ## Timecourses
 
@@ -9,7 +11,7 @@ The figures of `pkpdutils.plot` are matplotlib figures. Every function returns t
 ```python
 from pkpdutils.plot import plot_timecourse
 
-fig = plot_timecourse(batch, log=True, by="dose")
+fig = plot_timecourse(batch, log_y=True, by="dose")
 fig.savefig("curves.png")
 ```
 
@@ -18,11 +20,20 @@ fig.savefig("curves.png")
 `plot_nca` shows what the analysis did with one curve, on a linear and a logarithmic axis: the data, the area to \(t_\mathrm{last}\), the extrapolated tail, the terminal regression line and the points it used, \(C_\mathrm{max}\)/\(t_\mathrm{max}\), \(C_0\) for a bolus, and the flags in the title. A multiple dose result (carrying `auc_tau`) shades the analysed last dosing interval `[0, tau]`, relative to the last dose, labelled `AUC(0-tau)` instead of `AUC(0-tlast)`. For a batch, `plot_nca_grid` draws one such panel per sample.
 
 ```python
-from pkpdutils.plot import plot_nca, plot_nca_grid
+import matplotlib.pyplot as plt
 
-fig = plot_nca(tc, nca_single(tc))
+from pkpdutils.plot import draw_nca_panel, plot_nca, plot_nca_grid
+
+single = nca_single(tc)
+fig = plot_nca(tc, single)
 fig = plot_nca(batch.sel(individual="s2"), result, individual="s2")
 fig = plot_nca_grid(batch, result, ncols=4)
+
+# one panel into an axes of a figure the caller lays out
+fig, axes = plt.subplots(ncols=2, figsize=(11, 4.5))
+values = {name: float(single[name]) for name in single.parameters}
+draw_nca_panel(tc, values, single.flags(), ax=axes[0])
+draw_nca_panel(tc, values, single.flags(), log_y=True, ax=axes[1])
 ```
 
 `plot_intervals` plots a per-interval parameter (`interval_*`) against the interval number, one line per sample of a batch result or a single line with `**indexers` selecting one sample; a missing (incomplete) interval breaks the line rather than raising.
@@ -47,7 +58,7 @@ from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of
 
 fig = plot_fit(result, log_y=True)  # 0-D result: no indexers
 fig = plot_fit(fits, individual="s2", log_x=True)  # one sample of a batch
-fig = plot_goodness_of_fit(fits, log=True)
+fig = plot_goodness_of_fit(fits, log_x=True, log_y=True)
 fig = plot_dose_proportionality(
     power, test=proportionality_test(power, dose_range=(25, 400))
 )
@@ -63,13 +74,13 @@ The images are written by `examples/fitting_exponential.py`, `examples/emax.py` 
 from pkpdutils.plot import plot_bland_altman, plot_forest, plot_parameters, plot_ratio
 from pkpdutils.stats import DDIThresholds
 
-fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log=True)
+fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log_y=True)
 fig = plot_ratio(be)  # a BEResult with the 80-125 % limits
 fig = plot_ratio(
     {"auc": auc_ratio, "cmax": cmax_ratio}, limits=None, thresholds=DDIThresholds.fda()
 )
 fig = plot_forest(meta)
-fig = plot_bland_altman(fit_result, log=True)
+fig = plot_bland_altman(fit_result, log_ratio=True)
 ```
 
 The images are written by `examples/bioequivalence.py`, `examples/ddi.py` and `examples/meta_analysis.py`.

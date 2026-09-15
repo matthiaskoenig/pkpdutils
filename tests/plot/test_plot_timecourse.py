@@ -63,7 +63,7 @@ def test_plot_timecourse_log_without_positive_values_stays_linear() -> None:
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        fig = plot_timecourse(tc, log=True)
+        fig = plot_timecourse(tc, log_y=True)
         fig.canvas.draw()
     assert fig.axes[0].get_yscale() == "linear"
     matplotlib.pyplot.close(fig)

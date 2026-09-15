@@ -20,9 +20,11 @@ import pandas as pd
 import xarray as xr
 
 from pkpdutils.fit.engine import fit
+from pkpdutils.fit.frontends import fit_timecourse, fit_timecourses
 from pkpdutils.fit.model import Model
 from pkpdutils.fit.options import FitOptions
 from pkpdutils.fit.result import FitResult
+from pkpdutils.timecourse import Timecourse, Timecourses
 
 
 @dataclass
@@ -45,7 +47,7 @@ class ModelComparison:
 def compare_models(
     models: Sequence[Model],
     x: Any,
-    y: Any,
+    y: Any = None,
     *,
     sd: Any | None = None,
     options: FitOptions | None = None,
@@ -61,10 +63,20 @@ def compare_models(
     2002, ch. 2) are computed independently for every sample, so a different
     model can be the best fit of different samples of a batch.
 
+    A `Timecourse` or a `Timecourses` batch is given as `x` alone: every
+    model is then fitted with `fit_timecourse` or `fit_timecourses`, which
+    take the times relative to the first dose and the units from the data, so
+    that choosing between `MonoExp`, `BiExp` and `Bateman` for a curve or a
+    batch needs no flattening and no unit by hand. `sd`, `x_unit`, `y_unit`,
+    `dims` and `coords` come from the data then and must not be given.
+
     Args:
         models: the candidate models, with distinct `name`s.
-        x: independent variable, as for `fit`.
-        y: dependent variable, as for `fit`.
+        x: independent variable as for `fit`, or a `Timecourse` or a
+            `Timecourses` batch carrying both variables.
+        y: dependent variable, as for `fit`; left out for a curve or a batch.
+
+    Keyword Args:
         sd: standard deviations, as for `fit`.
         options: fit options shared by every model.
         x_unit: unit of `x`.
@@ -76,25 +88,57 @@ def compare_models(
         The comparison.
 
     Raises:
-        ValueError: if two models share a `name`.
+        ValueError: if two models share a `name`, if `y` is missing for data
+            which is not a curve or a batch, or if an argument of the array
+            form is given with a curve or a batch.
     """
     names = [m.name for m in models]
     if len(set(names)) != len(names):
         raise ValueError(f"Model names must be distinct: {names}")
-    results = {
-        m.name: fit(
-            m,
-            x,
-            y,
-            sd=sd,
-            options=options,
-            x_unit=x_unit,
-            y_unit=y_unit,
-            dims=dims,
-            coords=coords,
-        )
-        for m in models
-    }
+    results: dict[str, FitResult]
+    if isinstance(x, Timecourse | Timecourses):
+        given = [
+            name
+            for name, value in (
+                ("y", y),
+                ("sd", sd),
+                ("dims", dims),
+                ("coords", coords),
+            )
+            if value is not None
+        ]
+        if x_unit != "dimensionless" or y_unit != "dimensionless":
+            given.append("x_unit/y_unit")
+        if given:
+            raise ValueError(
+                f"A {type(x).__name__} carries the data and the units: "
+                f"{', '.join(given)} must not be given"
+            )
+        results = {
+            m.name: (
+                fit_timecourse(m, x, options=options)
+                if isinstance(x, Timecourse)
+                else fit_timecourses(m, x, options=options)
+            )
+            for m in models
+        }
+    else:
+        if y is None:
+            raise ValueError("'y' is required unless 'x' is a Timecourse batch")
+        results = {
+            m.name: fit(
+                m,
+                x,
+                y,
+                sd=sd,
+                options=options,
+                x_unit=x_unit,
+                y_unit=y_unit,
+                dims=dims,
+                coords=coords,
+            )
+            for m in models
+        }
     first = next(iter(results.values()))
     sample_dims = first.sample_dims
     aicc = np.stack(

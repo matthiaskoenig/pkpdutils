@@ -48,15 +48,15 @@ if __name__ == "__main__":
     console.rule("Confidence interval criterion of Smith et al. over 25-400 mg")
     verdict = (
         "proportional"
-        if bool(test["proportional"])
+        if bool(test.proportional)
         else "inconclusive"
-        if bool(test["inconclusive"])
+        if bool(test.inconclusive)
         else "not proportional"
     )
     console.print(
-        f"b = {float(test['b']):.3f} "
-        f"[{float(test['b_ci_low']):.3f}, {float(test['b_ci_high']):.3f}], "
-        f"acceptance bounds [{float(test['bound_low']):.3f}, {float(test['bound_high']):.3f}]"
+        f"b = {float(test.slope):.3f} "
+        f"[{float(test.ci_low):.3f}, {float(test.ci_high):.3f}], "
+        f"acceptance bounds [{test.bounds[0]:.3f}, {test.bounds[1]:.3f}]"
     )
     console.print("verdict:", verdict)
     plot_dose_proportionality(power, test=test).savefig(

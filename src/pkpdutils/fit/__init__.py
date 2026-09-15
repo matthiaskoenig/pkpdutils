@@ -20,7 +20,7 @@ from pkpdutils.fit.options import (
     Weighting,
     decode_fit_flags,
 )
-from pkpdutils.fit.proportionality import proportionality_test
+from pkpdutils.fit.proportionality import ProportionalityResult, proportionality_test
 from pkpdutils.fit.result import FitResult
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     "ModelComparison",
     "ModelParameter",
     "ParameterScale",
+    "ProportionalityResult",
     "RowFit",
     "Weighting",
     "build_result",

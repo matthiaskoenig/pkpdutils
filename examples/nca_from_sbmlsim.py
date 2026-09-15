@@ -52,7 +52,7 @@ if __name__ == "__main__":
         dose=Dose(amount=100, unit="mg", route=Route.ORAL),
         substance="drug",
     )
-    result = nca(batch, NCAOptions(auc_method=AUCMethod.LINEAR_LOG))
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LINEAR_LOG))
     console.rule("NCA over the scan dimension")
     console.print(
         result.to_dataframe()[

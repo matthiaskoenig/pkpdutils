@@ -820,6 +820,21 @@ class Timecourse(BaseModel):
             }
         )
 
+    def to_batch(self, dim: str = "individual", label: Any = None) -> "Timecourses":
+        """The curve as a batch of one sample, the counterpart of `Timecourses.sel`.
+
+        Args:
+            dim: name of the sample dimension of the batch
+            label: coordinate label of the single sample, the `label` of the
+                curve (or 0 when it has none) by default
+
+        Returns:
+            The batch with one sample.
+        """
+        return Timecourses.from_timecourses(
+            [self], dim=dim, labels=None if label is None else [label]
+        )
+
     def to_dataframe(self) -> pd.DataFrame:
         """Convert the curve to a data frame.
 
@@ -2688,6 +2703,112 @@ class Timecourses:
         if not parts:
             return None
         return parts[0] if len(parts) == 1 else "|".join(parts)
+
+    def relative_to_dose(
+        self, which: Literal["first", "last"] = "first"
+    ) -> "Timecourses":
+        """Copy with the times of every sample relative to a dose of its own protocol.
+
+        Every sample is shifted by the time of its first (or last) dose, so
+        that this dose is at time 0; the dose times of its protocol are
+        shifted with it and a sample without a protocol stays where it is.
+        The batch is returned unchanged when it carries no doses or when
+        every dose time is already 0.
+
+        Equal shifts keep the layout of the batch, a shared sampling grid
+        included. Shifts which differ from sample to sample move the samples
+        against each other: the times of every sample are then placed on the
+        union of the shifted grids, with `NaN` values where a sample has no
+        point at a time of another sample.
+
+        Args:
+            which: `"first"` shifts every sample by the time of its first
+                dose, `"last"` by the time of its last dose.
+
+        Returns:
+            The shifted batch, or `self` when there is nothing to shift.
+        """
+        dose_time = self.first_dose_time if which == "first" else self.last_dose_time
+        if dose_time is None:
+            return self
+        shift = np.where(np.isfinite(dose_time), dose_time, 0.0).astype(np.float64)
+        if not shift.any():
+            return self
+        flat_shift = shift.reshape(-1)
+        uniform = bool(np.all(flat_shift == flat_shift[0]))
+        ds = self._shifted_times(shift, uniform=uniform)
+        offsets = xr.DataArray(shift, dims=self.sample_dims)
+        for name in ("dose_time",):
+            if name in ds:
+                attrs = dict(ds[name].attrs)
+                ds[name] = ds[name] - offsets
+                ds[name].attrs.update(attrs)
+        return Timecourses(ds)
+
+    def _shifted_times(self, shift: np.ndarray, *, uniform: bool) -> xr.Dataset:
+        """The dataset with the sampling times shifted by one offset per sample.
+
+        Args:
+            shift: the offset of every sample, of shape `sample_shape`.
+            uniform: whether every offset is the same, in which case the
+                layout of the batch is kept and only the times are moved.
+
+        Returns:
+            The dataset with the shifted times; a non-uniform shift puts the
+            values on the union of the shifted grids.
+        """
+        ds = self.ds.copy()
+        if uniform:
+            offset = float(shift.reshape(-1)[0])
+            if TIMES_VAR in ds:
+                attrs = dict(ds[TIMES_VAR].attrs)
+                ds[TIMES_VAR] = ds[TIMES_VAR] - offset
+                ds[TIMES_VAR].attrs.update(attrs)
+            else:
+                attrs = dict(ds[TIME_DIM].attrs)
+                ds = ds.assign_coords(
+                    {TIME_DIM: ds[TIME_DIM].to_numpy().astype(np.float64) - offset}
+                )
+                ds[TIME_DIM].attrs.update(attrs)
+            return ds
+
+        n_rows, n_time = self.n_samples, self.n_time
+        times = (self.times - shift[..., None]).reshape(n_rows, n_time)
+        finite = np.isfinite(times)
+        grid = np.unique(times[finite])
+        rows = np.repeat(np.arange(n_rows), finite.sum(axis=1))
+        columns = np.searchsorted(grid, times[finite])
+        time_vars = [
+            str(name)
+            for name, da in self.ds.data_vars.items()
+            if TIME_DIM in da.dims and str(name) != TIMES_VAR
+        ]
+        regridded: dict[str, tuple[tuple[str, ...], np.ndarray, dict[str, Any]]] = {}
+        for name in time_vars:
+            values = (
+                self.ds[name]
+                .transpose(*self.sample_dims, TIME_DIM)
+                .to_numpy()
+                .astype(np.float64)
+                .reshape(n_rows, n_time)
+            )
+            placed = np.full((n_rows, grid.size), np.nan)
+            placed[rows, columns] = values[finite]
+            regridded[name] = (
+                (*self.sample_dims, TIME_DIM),
+                placed.reshape(*self.sample_shape, grid.size),
+                dict(self.ds[name].attrs),
+            )
+        time_attrs = dict(
+            (self.ds[TIMES_VAR] if TIMES_VAR in self.ds else self.ds[TIME_DIM]).attrs
+        )
+        ds = ds.drop_vars([*time_vars, *([TIMES_VAR] if TIMES_VAR in ds else [])])
+        ds = ds.drop_dims(TIME_DIM) if TIME_DIM in ds.dims else ds
+        ds = ds.assign_coords({TIME_DIM: grid})
+        ds[TIME_DIM].attrs.update(time_attrs)
+        for name, (dims, values, attrs) in regridded.items():
+            ds[name] = xr.DataArray(values, dims=dims, attrs=attrs)
+        return ds
 
     def dosing_of(self, **indexers: Any) -> Dosing | None:
         """The dosing protocol of one sample, selected by coordinate label.

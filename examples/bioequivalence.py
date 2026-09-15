@@ -91,7 +91,7 @@ if __name__ == "__main__":
     )
     console.print("bioequivalent:", result.bioequivalent)
     plot_ratio(result).savefig("bioequivalence.png", dpi=120)
-    plot_parameters(test, "cmax", "individual", by="sequence", log=True).savefig(
+    plot_parameters(test, "cmax", "individual", by="sequence", log_y=True).savefig(
         "bioequivalence_parameters.png", dpi=120
     )
     console.print("written: bioequivalence.png, bioequivalence_parameters.png")

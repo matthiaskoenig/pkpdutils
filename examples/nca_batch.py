@@ -41,7 +41,7 @@ batch = Timecourses.from_arrays(
 )
 
 if __name__ == "__main__":
-    result = nca(batch, NCAOptions())
+    result = nca(batch, options=NCAOptions())
     console.rule("Parameters over (dose, individual)")
     console.print(result.ds)
     df = result.to_dataframe()
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     console.rule("Dose proportionality at a glance: AUC / dose")
     console.print(result["auc_inf_dn"].mean(dim="individual").values)
 
-    plot_timecourse(batch, log=True, by="individual").savefig(
+    plot_timecourse(batch, log_y=True, by="individual").savefig(
         "nca_batch_curves.png", dpi=120
     )
     plot_nca_grid(batch, result, ncols=4).savefig("nca_batch.png", dpi=100)

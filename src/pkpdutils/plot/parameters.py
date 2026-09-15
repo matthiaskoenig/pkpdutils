@@ -21,7 +21,7 @@ def plot_parameters(
     dim: str,
     *,
     by: str | None = None,
-    log: bool = False,
+    log_y: bool = False,
     scale: Scale = Scale.LOG,
     ci_level: float = 0.95,
     ax: Axes | None = None,
@@ -34,7 +34,7 @@ def plot_parameters(
     geometric mean (`scale=LOG`) or the arithmetic mean with the t interval
     of `summarize` at `ci_level` a marker with an error bar. A group with a
     non-positive value gets the arithmetic mean marker instead of the
-    geometric one, which is logged at debug level. With `log=True` the
+    geometric one, which is logged at debug level. With `log_y=True` the
     non-positive points are left out of the strip, since a logarithmic axis
     cannot show them.
 
@@ -42,9 +42,11 @@ def plot_parameters(
         result: the result the parameter is taken from.
         name: name of the parameter.
         dim: the sample dimension of the individuals.
+
+    Keyword Args:
         by: a coordinate along `dim` which groups the individuals, one
             group named after the parameter without it.
-        log: logarithmic y axis; without a positive value across every group
+        log_y: logarithmic y axis; without a positive value across every group
             the axis stays linear (logged at debug level).
         scale: scale of the mean and its interval.
         ci_level: level of the interval.
@@ -80,7 +82,7 @@ def plot_parameters(
     ax.boxplot(values, positions=positions, widths=0.5, showfliers=False, zorder=1)
     for pos, (label, group) in zip(positions, groups.items(), strict=True):
         v = group.finite_values
-        v_plot = v[v > 0] if log else v
+        v_plot = v[v > 0] if log_y else v
         ax.plot(
             pos + rng.uniform(-0.15, 0.15, v_plot.size),
             v_plot,
@@ -121,6 +123,6 @@ def plot_parameters(
     ax.set_ylabel(f"{name} [{sample.unit}]")
     if by is not None:
         ax.set_xlabel(by)
-    if log:
+    if log_y:
         log_scale(ax, "y")
     return fig

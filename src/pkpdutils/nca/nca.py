@@ -69,6 +69,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "cmax_half": "{unit}",
     "tmax_half": "{time}",
     "auc_last": "({unit}) * ({time})",
+    "auc_partial": "({unit}) * ({time})",
     "auc_inf_obs": "({unit}) * ({time})",
     "auc_inf_pred": "({unit}) * ({time})",
     "auc_extrap_fraction": "dimensionless",
@@ -806,7 +807,7 @@ def run_rows(
     return values
 
 
-def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
+def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCAResult:
     """Non-compartmental analysis of a batch of timecourses.
 
     The rows are analysed in chunks of at most `options.chunk_rows` rows, in
@@ -834,6 +835,8 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
 
     Args:
         timecourses: the batch
+
+    Keyword Args:
         options: the options, defaults for `None`
 
     Returns:
@@ -969,18 +972,22 @@ def _to_result(
     return NCAResult(ds)
 
 
-def nca_single(timecourse: Timecourse, options: NCAOptions | None = None) -> NCAResult:
+def nca_single(
+    timecourse: Timecourse, *, options: NCAOptions | None = None
+) -> NCAResult:
     """Non-compartmental analysis of one timecourse.
 
     Args:
         timecourse: the curve
+
+    Keyword Args:
         options: the options, defaults for `None`
 
     Returns:
         The parameters, without sample dimensions.
     """
     batch = Timecourses.from_timecourses([timecourse], dim="_single")
-    result = nca(batch, options)
+    result = nca(batch, options=options)
     return NCAResult(result.ds.isel(_single=0).drop_vars("_single"))
 
 
@@ -1034,6 +1041,7 @@ def partial_auc(
     timecourses: Timecourses,
     t_start: float,
     t_end: float,
+    *,
     options: NCAOptions | None = None,
 ) -> xr.DataArray:
     """Area under the curve of every sample between two times relative to the first dose.
@@ -1062,6 +1070,8 @@ def partial_auc(
         t_start: start of the interval, in the time unit of the batch, relative
             to the first dose of the protocol
         t_end: end of the interval, greater than `t_start`
+
+    Keyword Args:
         options: the options, defaults for `None`
 
     Returns:
@@ -1097,7 +1107,7 @@ def partial_auc(
     area, _ = auc_aumc(tp, cp, n_valid, options.auc_method, t_start=start, t_end=end)
     area = np.where(np.isfinite(c_start) & np.isfinite(c_end), area, np.nan)
     unit, factor = parameter_unit(
-        PARAMETER_UNITS["auc_last"],
+        PARAMETER_UNITS["auc_partial"],
         unit=timecourses.unit,
         time_unit=timecourses.time_unit,
         dose_unit=timecourses.dose_unit,

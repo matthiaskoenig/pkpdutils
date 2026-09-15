@@ -34,7 +34,7 @@ group = Timecourse(
 
 if __name__ == "__main__":
     console.rule("Bootstrap (default for group data): uncertainty of the mean curve")
-    boot = nca_single(group, NCAOptions(seed=1, n_boot=2000))
+    boot = nca_single(group, options=NCAOptions(seed=1, n_boot=2000))
     df = boot.to_dataframe().T
     console.print(
         df.loc[
@@ -50,7 +50,8 @@ if __name__ == "__main__":
         "Bootstrap with the spread of individuals (sd) instead of the mean (se)"
     )
     spread = nca_single(
-        group, NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD)
+        group,
+        options=NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD),
     )
     # `ci_low`/`ci_high` stay an interval of the estimate, `pi_low`/`pi_high`
     # are the percentiles of the individual replicates
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     )
 
     console.rule("Delta method")
-    delta = nca_single(group, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    delta = nca_single(group, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
     for name in ("auc_inf_obs", "cmax", "thalf"):
         console.print(
             f"{name:<12} {delta.to_quantities()[name]:~P}  se {delta.to_quantities()[name + '_se']:~P}"
@@ -84,9 +85,9 @@ if __name__ == "__main__":
         for i in range(8)
     ]
     individuals = Timecourses.from_timecourses(curves)
-    summary = nca(individuals, NCAOptions(auc_method=AUCMethod.LINEAR_LOG)).summarize(
-        "individual"
-    )
+    summary = nca(
+        individuals, options=NCAOptions(auc_method=AUCMethod.LINEAR_LOG)
+    ).summarize("individual")
     console.print(
         summary.to_dataframe().T.loc[
             [

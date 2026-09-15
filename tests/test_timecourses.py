@@ -1061,3 +1061,149 @@ def test_from_dataframe_of_an_empty_frame() -> None:
         Timecourses.from_dataframe(
             empty, sample=["subject"], time_unit="hr", unit="mg/l"
         )
+
+
+def test_relative_to_dose_of_a_shared_grid_keeps_it_shared() -> None:
+    """Every row shifted by the same dose time keeps the shared time coordinate."""
+    batch = Timecourses.from_arrays(
+        T + 2.0,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=2.0),
+        substance="x",
+    )
+    shifted = batch.relative_to_dose()
+    np.testing.assert_allclose(shifted.ds["time"].to_numpy(), T)
+    assert "times" not in shifted.ds
+    dose_time = shifted.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time, np.zeros((3, 1)))
+    np.testing.assert_allclose(shifted.values, batch.values)
+    assert shifted.ds["time"].attrs["units"] == "hr"
+    assert shifted.unit == "mg/l" and shifted.substance == "x"
+
+
+def test_relative_to_dose_of_different_dose_times_uses_the_union_grid() -> None:
+    """Rows shifted by their own dose time are placed on the union of the grids."""
+    curves = [
+        Timecourse(
+            time=np.array([0.0, 1.0, 2.0]) + offset,
+            value=np.array([1.0, 2.0, 3.0]) * (i + 1),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=offset),
+            label=label,
+        )
+        for i, (label, offset) in enumerate((("a", 0.0), ("b", 0.5)))
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    shifted = batch.relative_to_dose()
+    np.testing.assert_allclose(shifted.times[0], [0.0, 1.0, 2.0])
+    np.testing.assert_allclose(shifted.times[1], [0.0, 1.0, 2.0])
+    np.testing.assert_allclose(shifted.values[1], [2.0, 4.0, 6.0])
+    dose_time = shifted.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time, np.zeros((2, 1)))
+    # a row which no longer aligns keeps its own points and is NaN elsewhere
+    ragged = Timecourses.from_timecourses(
+        [
+            curves[0],
+            curves[1].model_copy(update={"time": np.array([0.5, 1.7, 2.5])}),
+        ]
+    )
+    on_grid = ragged.relative_to_dose()
+    np.testing.assert_allclose(on_grid.ds["time"].to_numpy(), [0.0, 1.0, 1.2, 2.0])
+    np.testing.assert_allclose(on_grid.values[0], [1.0, 2.0, np.nan, 3.0])
+    np.testing.assert_allclose(on_grid.values[1], [2.0, np.nan, 4.0, 6.0])
+
+
+def test_relative_to_dose_last_shifts_by_the_last_dose() -> None:
+    protocol = Dosing.regimen(
+        Dose(amount=100, unit="mg", route=Route.ORAL), interval=12.0, n_doses=2
+    )
+    tc = Timecourse(
+        time=np.array([0.0, 6.0, 12.0, 18.0]),
+        value=np.array([1.0, 2.0, 3.0, 4.0]),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    batch = tc.to_batch()
+    last = batch.relative_to_dose(which="last")
+    np.testing.assert_allclose(last.times[0], [-12.0, -6.0, 0.0, 6.0])
+    dose_time = last.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time[0], [-12.0, 0.0])
+    # a batch without doses is returned unchanged
+    plain = Timecourses.from_arrays(T, V, time_unit="hr", unit="mg/l")
+    assert plain.relative_to_dose() is plain
+
+
+def test_relative_to_dose_keeps_the_uncertainty_and_the_coordinates() -> None:
+    curves = [
+        Timecourse(
+            time=np.array([0.0, 1.0, 2.0]) + offset,
+            value=np.array([1.0, 2.0, 3.0]),
+            sd=np.array([0.1, 0.2, 0.3]),
+            n=6,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=offset),
+            label=label,
+        )
+        for label, offset in (("a", 0.0), ("b", 0.5))
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    batch.ds.coords["sex"] = ("individual", ["m", "f"])
+    shifted = batch.relative_to_dose()
+    assert shifted.sd is not None
+    np.testing.assert_allclose(shifted.sd[1], [0.1, 0.2, 0.3])
+    subjects = shifted.n
+    assert subjects is not None
+    np.testing.assert_allclose(subjects, [6, 6])
+    assert list(shifted.ds.coords["sex"].to_numpy()) == ["m", "f"]
+    assert shifted.ds["sd"].attrs["units"] == "mg/l"
+
+
+def test_to_batch_of_a_single_timecourse() -> None:
+    tc = Timecourse(
+        time=T,
+        value=V[0],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        label="s1",
+        substance="x",
+    )
+    batch = tc.to_batch()
+    assert isinstance(batch, Timecourses)
+    assert batch.sample_dims == ("individual",)
+    assert list(batch.ds.coords["individual"].to_numpy()) == ["s1"]
+    assert batch.sel(individual="s1") == tc
+    named = tc.to_batch(dim="subject", label="other")
+    assert named.sample_dims == ("subject",)
+    assert list(named.ds.coords["subject"].to_numpy()) == ["other"]
+
+
+def test_from_dataframe_keeps_the_label_dtype() -> None:
+    """An integer subject column gives integer labels, as `from_timecourses` does."""
+    frame = pd.DataFrame(
+        {
+            "subject": [1, 1, 1, 2, 2, 2],
+            "time": [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+            "value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    batch = Timecourses.from_dataframe(
+        frame, sample=["subject"], time_unit="hr", unit="mg/l"
+    )
+    labels = batch.ds.coords["subject"].to_numpy()
+    assert labels.dtype.kind == "i"
+    assert list(labels) == [1, 2]
+    assert batch.sel(subject=2).value[0] == 4.0
+    curves = [
+        Timecourse(time=T, value=V[i], time_unit="hr", unit="mg/l") for i in range(2)
+    ]
+    from_curves = Timecourses.from_timecourses(curves, labels=[1, 2])
+    assert from_curves.ds.coords["individual"].to_numpy().dtype.kind == "i"

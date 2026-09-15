@@ -29,7 +29,7 @@ def individuals(n: int = 6) -> Timecourses:
 
 
 def test_summarize_statistics() -> None:
-    result = nca(individuals(), NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca(individuals(), options=NCAOptions(auc_method=AUCMethod.LOG))
     summary = result.summarize("individual")
     assert summary.sample_dims == ()
     values = result["auc_inf_obs"].values
@@ -61,7 +61,7 @@ def test_summarize_statistics() -> None:
 def test_summarize_keeps_other_dims_and_ors_flags() -> None:
     tcs = individuals(4)
     ds = tcs.ds.assign_coords(individual=["a", "b", "c", "d"])
-    result = nca(Timecourses(ds), NCAOptions())
+    result = nca(Timecourses(ds), options=NCAOptions())
     # a second sample dimension: stack two copies along "study"
     two = Timecourses(
         xr.concat([tcs.ds, tcs.ds], dim="study").assign_coords(study=["s1", "s2"])

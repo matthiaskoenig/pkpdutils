@@ -76,17 +76,17 @@ group = Timecourse(
     dose=Dose(amount=100, unit="mg", route=Route.ORAL),
     substance="caffeine",
 )
-result = nca_single(group, NCAOptions(seed=1, n_boot=2000))
+result = nca_single(group, options=NCAOptions(seed=1, n_boot=2000))
 q = result.to_quantities()
 q["auc_inf_obs"], q["auc_inf_obs_se"], q["auc_inf_obs_ci_low"], q["auc_inf_obs_ci_high"]
 result = nca_single(
     group,
-    NCAOptions(
+    options=NCAOptions(
         bootstrap_spread=BootstrapSpread.SD,
         bootstrap_distribution=BootstrapDistribution.LOGNORMAL,
     ),
 )
-result = nca_single(group, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+result = nca_single(group, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
 ```
 
 Individual curves:

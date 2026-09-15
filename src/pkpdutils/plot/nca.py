@@ -1,5 +1,6 @@
 """Diagnostic figures of the non-compartmental analysis."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -41,15 +42,15 @@ def _sample_values(
 
 
 def draw_nca_panel(
-    ax: Axes,
     timecourse: Timecourse,
     values: dict[str, float],
     flags: list[str],
     *,
-    log: bool,
-    title: str | None,
-    style: PlotStyle,
-) -> None:
+    log_y: bool = False,
+    title: str | None = None,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+) -> Axes:
     """Draw the NCA diagnostics of one curve into one axes.
 
     A multiple dose result (carrying `auc_tau`) shades the analysed last
@@ -58,15 +59,21 @@ def draw_nca_panel(
     `[0, tlast]` as `AUC(0-tlast)`.
 
     Args:
-        ax: the axes
         timecourse: the curve (times relative to its dose)
         values: parameter magnitudes of the curve
         flags: flag names of the curve
-        log: logarithmic value axis; a curve without a positive value stays
+
+    Keyword Args:
+        log_y: logarithmic value axis; a curve without a positive value stays
             linear (logged at debug level)
         title: title, the label of the curve by default
+        ax: axes to draw on, a new figure by default
         style: colors and markers
+
+    Returns:
+        The axes the panel was drawn on.
     """
+    _, ax = figure_of(ax)
     tc = timecourse.relative_to_dose(which="last")
     t, c = tc.time, tc.value
     ok = np.isfinite(c)
@@ -149,7 +156,7 @@ def draw_nca_panel(
     )
     ax.set_xlabel(f"time [{tc.time_unit}]")
     ax.set_ylabel(f"{tc.substance} [{tc.unit}]")
-    if log:
+    if log_y:
         log_scale(ax, "y")
     else:
         ax.set_ylim(bottom=0)
@@ -160,6 +167,7 @@ def draw_nca_panel(
     ax.set_title(heading)
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small")
+    return ax
 
 
 def plot_nca(
@@ -167,6 +175,7 @@ def plot_nca(
     result: NCAResult,
     *,
     title: str | None = None,
+    axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
 ) -> Figure:
@@ -175,7 +184,11 @@ def plot_nca(
     Args:
         timecourse: the curve
         result: the result of its analysis (a batch result with `indexers`, or a single result)
+
+    Keyword Args:
         title: title of the panels, the label of the curve by default; the flags are appended
+        axes: the two axes to draw the linear and the logarithmic panel into,
+            a new figure by default
         style: colors and markers
         **indexers: coordinate labels selecting the sample of a batch result
 
@@ -183,12 +196,16 @@ def plot_nca(
         The figure.
     """
     values, flags = _sample_values(result, indexers)
-    fig, axes = axes_of(None, nrows=1, ncols=2, figsize=(11, 4.5))
-    ax1, ax2 = axes[0]
+    fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
+    ax1, ax2 = grid[0]
     if title is None and indexers:
         title = "|".join(str(v) for v in indexers.values())
-    draw_nca_panel(ax1, timecourse, values, flags, log=False, title=title, style=style)
-    draw_nca_panel(ax2, timecourse, values, flags, log=True, title=title, style=style)
+    draw_nca_panel(
+        timecourse, values, flags, log_y=False, title=title, ax=ax1, style=style
+    )
+    draw_nca_panel(
+        timecourse, values, flags, log_y=True, title=title, ax=ax2, style=style
+    )
     return fig
 
 
@@ -197,7 +214,8 @@ def plot_nca_grid(
     result: NCAResult,
     *,
     ncols: int = 3,
-    log: bool = True,
+    log_y: bool = True,
+    axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
     """One NCA panel per sample of a batch.
@@ -205,8 +223,12 @@ def plot_nca_grid(
     Args:
         timecourses: the batch
         result: its result
+
+    Keyword Args:
         ncols: panels per row
-        log: logarithmic value axes
+        log_y: logarithmic value axes
+        axes: the `nrows * ncols` axes to draw the panels into, a new figure by
+            default
         style: colors and markers
 
     Returns:
@@ -215,8 +237,8 @@ def plot_nca_grid(
     curves = list(timecourses)
     n = len(curves)
     nrows = int(np.ceil(n / ncols))
-    fig, axes = axes_of(None, nrows, ncols, figsize=(4.5 * ncols, 3.5 * nrows))
-    flat_axes = axes.ravel()
+    fig, grid = axes_of(axes, nrows, ncols, figsize=(4.5 * ncols, 3.5 * nrows))
+    flat_axes = grid.ravel()
     indices = list(np.ndindex(*timecourses.sample_shape))
     for k, (tc, index) in enumerate(zip(curves, indices, strict=True)):
         sample = result.ds.isel(
@@ -225,7 +247,7 @@ def plot_nca_grid(
         values = {name: float(sample[name].values) for name in result.parameters}
         flags = decode_flags(int(sample["flags"].values))
         draw_nca_panel(
-            flat_axes[k], tc, values, flags, log=log, title=None, style=style
+            tc, values, flags, log_y=log_y, title=None, ax=flat_axes[k], style=style
         )
     for ax in flat_axes[n:]:
         ax.set_visible(False)
@@ -251,6 +273,8 @@ def plot_intervals(
     Args:
         result: the result of a multiple dose analysis
         name: name of the per-interval variable (`interval_*`)
+
+    Keyword Args:
         ax: axes to draw on, a new figure by default; a caller-supplied `ax`
             keeps its figure's own layout engine, so long tick labels can
             clip unless the caller sets one (`fig.set_layout_engine("constrained")`)

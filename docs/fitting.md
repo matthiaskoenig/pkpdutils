@@ -103,7 +103,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `p` | \(\hat p\) | unit of the parameter | the estimate |
 | `p_se` | \(\mathrm{se}(\hat p)\) | unit of `p` | standard error, from the Jacobian or from the bootstrap replicates |
 | `p_ci_low`, `p_ci_high` | \(p(q \pm t\,\mathrm{se}(q))\) | unit of `p` | confidence interval at `ci_level` (percentiles of the replicates with a bootstrap) |
-| `p_cv` | \(100\,\mathrm{se}(\hat p) / \lvert \hat p \rvert\) | % | relative standard error |
+| `p_cv` | \(\mathrm{se}(\hat p) / \lvert \hat p \rvert\) | 1 | relative standard error, a fraction |
 | `cost` | \(\tfrac12\sum_i \rho(r_i^2)\) | - | the objective at the optimum |
 | `r2` | see Math | - | coefficient of determination of the unweighted residuals |
 | `rmse` | see Math | unit of `y` | root mean squared error of the unweighted residuals |
@@ -117,7 +117,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `correlation` | \(\mathrm{cov}(q)_{ij} / (\mathrm{se}(q_i)\mathrm{se}(q_j))\) | - | correlation matrix over `(parameter, parameter_)` |
 | `flags` | | - | `FitFlag` bits, see above |
 
-Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. Four kinds of variable carry `attrs["units"] = "dimensionless"` without being dimensionless: `rmse` carries the unit of `y`, a weighted residual is dimensionless only under `INV_SD` (it is the residual divided by the square root of the variance model otherwise), `cost` is the sum of the squared weighted residuals and carries \([y]^2\) under `NONE`, and the `_cv` variables are percentages. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
+Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. The `_cv` variables are fractions (`0.12` is a relative standard error of 12 %, the convention of the whole package, which a table formats as a percentage where it prints). Three kinds of variable carry `attrs["units"] = "dimensionless"` without being dimensionless: `rmse` carries the unit of `y`, a weighted residual is dimensionless only under `INV_SD` (it is the residual divided by the square root of the variance model otherwise), and `cost` is the sum of the squared weighted residuals and carries \([y]^2\) under `NONE`. `proportionality_test` returns a `ProportionalityResult` with `slope`, `ci_low`, `ci_high`, `bounds`, `proportional`, `inconclusive`, `dose_range` and `criterion`, and `to_dict`.
 
 ## API
 
@@ -181,7 +181,8 @@ from pkpdutils.fit.models import Allometric, BiExp, MonoExp, Power
 
 power = fit_table(Power(), nca_result.ds, "dose", "auc_inf_obs", dim="dose")
 test = proportionality_test(power, dose_range=(25, 400))
-bool(test["proportional"]), bool(test["inconclusive"])
+test.slope, test.bounds, bool(test.proportional), bool(test.inconclusive)
+test.to_dict()  # the verdict as plain python values
 
 allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="individual")
 

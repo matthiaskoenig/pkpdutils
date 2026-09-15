@@ -58,11 +58,11 @@ def _draw_curve(
 
 def plot_timecourse(
     timecourses: Timecourse | Timecourses,
-    ax: Axes | None = None,
     *,
-    log: bool = False,
+    log_y: bool = False,
     errorbars: bool = True,
     by: str | None = None,
+    ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
     """Plot one timecourse or every timecourse of a batch.
@@ -73,13 +73,15 @@ def plot_timecourse(
 
     Args:
         timecourses: the curve or the batch
-        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
-            keeps its figure's own layout engine, so long tick labels can
-            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
-        log: logarithmic value axis; a curve without a positive value stays
+
+    Keyword Args:
+        log_y: logarithmic value axis; a curve without a positive value stays
             linear (logged at debug level)
         errorbars: draw `se` (or `sd`) as error bars when present
         by: coordinate of the batch used as legend label, the sample label by default
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
         style: colors and markers
 
     Returns:
@@ -114,7 +116,7 @@ def plot_timecourse(
             )
     ax.set_xlabel(f"time [{first.time_unit}]")
     ax.set_ylabel(f"{first.substance} [{first.unit}]")
-    if log:
+    if log_y:
         log_scale(ax, "y")
     if ax.get_legend_handles_labels()[0]:
         ax.legend()

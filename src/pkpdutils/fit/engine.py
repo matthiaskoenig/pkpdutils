@@ -1067,17 +1067,21 @@ def fit(
 
 
 def _cv(se: float, value: float) -> float:
-    """The coefficient of variation in percent, `NaN` for a zero or missing value.
+    """The coefficient of variation as a fraction, `NaN` for a zero or missing value.
+
+    The package reports every coefficient of variation as a fraction
+    (`NCAResult` `x_geocv`, `stats.Summary.cv`); a table which shows percent
+    multiplies by 100 where it formats.
 
     Args:
         se: the standard error.
         value: the estimate.
 
     Returns:
-        `100 se / |value|`.
+        `se / |value|`.
     """
     with np.errstate(divide="ignore", invalid="ignore"):
-        return float(100.0 * np.float64(se) / np.abs(np.float64(value)))
+        return float(np.float64(se) / np.abs(np.float64(value)))
 
 
 #: dimension names `build_result` reserves for the parameter and point axes,

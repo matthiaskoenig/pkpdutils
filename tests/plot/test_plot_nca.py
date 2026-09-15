@@ -58,7 +58,7 @@ def test_plot_timecourse_single_and_batch() -> None:
     ax = fig.axes[0]
     assert ax.get_xlabel() == "time [hr]" and ax.get_ylabel() == "caffeine [mg/l]"
     batch = Timecourses.from_timecourses([oral(1.0, "slow"), oral(4.0, "fast")])
-    fig2 = plot_timecourse(batch, log=True, errorbars=False)
+    fig2 = plot_timecourse(batch, log_y=True, errorbars=False)
     assert fig2.axes[0].get_yscale() == "log"
     labels = [line.get_label() for line in fig2.axes[0].get_lines()]
     assert "slow" in labels and "fast" in labels
@@ -105,7 +105,7 @@ def test_plot_nca_grid() -> None:
     batch = Timecourses.from_timecourses(
         [oral(k, str(k)) for k in (1.0, 2.0, 3.0, 4.0)]
     )
-    fig = plot_nca_grid(batch, nca(batch, NCAOptions()), ncols=2)
+    fig = plot_nca_grid(batch, nca(batch, options=NCAOptions()), ncols=2)
     assert len([ax for ax in fig.axes if ax.get_visible()]) == 4
     matplotlib.pyplot.close(fig)
 
@@ -153,7 +153,7 @@ def test_plot_nca_breaks_line_at_nan_without_bridging() -> None:
 
 def test_plot_nca_multiple_dose_shades_the_steady_state_interval() -> None:
     tc = multiple_dose_tc()
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     fig = plot_nca(tc, result)
     legend = fig.axes[0].get_legend()
     assert legend is not None
@@ -166,7 +166,7 @@ def test_plot_intervals_one_line_per_sample() -> None:
     a = multiple_dose_tc(n_doses=3, c0=10.0)
     b = multiple_dose_tc(n_doses=3, c0=20.0)
     batch = Timecourses.from_timecourses([a, b], labels=["one", "two"])
-    result = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     fig = plot_intervals(result)
     ax = fig.axes[0]
     assert len(ax.get_lines()) == 2
@@ -184,7 +184,7 @@ def test_plot_intervals_one_sample_with_indexers() -> None:
     a = multiple_dose_tc(n_doses=3, c0=10.0)
     b = multiple_dose_tc(n_doses=3, c0=20.0)
     batch = Timecourses.from_timecourses([a, b], labels=["one", "two"])
-    result = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     fig = plot_intervals(result, individual="two")
     ax = fig.axes[0]
     assert len(ax.get_lines()) == 1
@@ -200,6 +200,6 @@ def test_plot_intervals_raises_without_intervals() -> None:
 
 def test_plot_intervals_raises_for_a_non_interval_name() -> None:
     tc = multiple_dose_tc(n_doses=3)
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     with pytest.raises(ValueError):
         plot_intervals(result, name="cmax")

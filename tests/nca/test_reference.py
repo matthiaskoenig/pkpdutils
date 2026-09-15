@@ -51,7 +51,7 @@ def to_timecourse(case: dict) -> Timecourse:
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_reference_case(case: dict) -> None:
-    result = nca_single(to_timecourse(case), OPTIONS)
+    result = nca_single(to_timecourse(case), options=OPTIONS)
     quantities = result.to_quantities()
     for old, new in MAPPING.items():
         expected = case["parameters"][old]
@@ -67,7 +67,7 @@ def test_reference_case(case: dict) -> None:
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_reference_regression(case: dict) -> None:
-    result = nca_single(to_timecourse(case), OPTIONS)
+    result = nca_single(to_timecourse(case), options=OPTIONS)
     q = result.to_quantities()
     slope = case["regression"]["slope"]
     if slope is None:

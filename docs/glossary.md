@@ -44,7 +44,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |
 | `p_se` | | standard error of a fitted parameter `p`, from the Jacobian or the residual bootstrap | unit of `p` | [Curve fitting](fitting.md) |
 | `p_ci_low`, `p_ci_high` | | confidence interval of a fitted parameter `p` at `ci_level` | unit of `p` | [Curve fitting](fitting.md) |
-| `p_cv` | | relative standard error of a fitted parameter, \(100\,\mathrm{se}(p) / \lvert p \rvert\) | % | [Curve fitting](fitting.md) |
+| `p_cv` | | relative standard error of a fitted parameter, \(\mathrm{se}(p) / \lvert p \rvert\), a fraction | 1 | [Curve fitting](fitting.md) |
 | `cost` | | the objective of the fit at the optimum, \(\tfrac12 \sum \rho(r^2)\) | – | [Curve fitting](fitting.md) |
 | `r2`, `rmse` | \(R^2\), \(\mathrm{RMSE}\) | goodness of fit on the unweighted residuals (`rmse` carries the unit of the values, it is reported as dimensionless) | –, value | [Curve fitting](fitting.md) |
 | `aic`, `aicc`, `bic` | | information criteria of the fit, with \(K = k + 1\) estimated parameters | – | [Curve fitting](fitting.md) |

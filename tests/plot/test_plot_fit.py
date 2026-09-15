@@ -72,7 +72,7 @@ def test_plot_fit_single_and_batch() -> None:
 
 
 def test_plot_goodness_of_fit() -> None:
-    fig = plot_goodness_of_fit(monoexp_result(3), log=True)
+    fig = plot_goodness_of_fit(monoexp_result(3), log_x=True, log_y=True)
     ax = fig.axes[0]
     assert ax.get_xscale() == "log"
     assert any("identity" in str(line.get_label()) for line in ax.get_lines())
@@ -155,6 +155,6 @@ def test_plot_bland_altman() -> None:
     )
     # the mean difference and the two limits of agreement
     assert sum(1 for line in ax.get_lines() if line.get_linestyle() in ("--", ":")) >= 3
-    fig_log = plot_bland_altman(monoexp_result(), log=True)
+    fig_log = plot_bland_altman(monoexp_result(), log_ratio=True)
     assert fig_log.axes[0].get_ylabel().startswith("log ratio")
     matplotlib.pyplot.close("all")
