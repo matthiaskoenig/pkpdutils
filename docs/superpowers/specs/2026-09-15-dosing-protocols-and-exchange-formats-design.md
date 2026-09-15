@@ -14,7 +14,7 @@ A timecourse is accompanied by its dosing protocol: the vector of the doses give
 | protocol model | one `Dosing` object per timecourse: arrays `amounts`, `times`, `durations`, one `unit`, one `route`; a `Dose` stays the single administration and `Dosing.single(dose)` wraps it |
 | routes | one route per protocol and per batch (mixed routes are separate timecourses / batches), as today |
 | `DosingRegimen` | kept as a constructor of a regular protocol (`DosingRegimen(...).dosing()`); no longer an `NCAOptions` field |
-| batch layout | `Timecourses` carries `dose_amount`, `dose_time`, `dose_duration` over `(*sample_dims, "dose")`, padded with `NaN` for samples with fewer doses |
+| batch layout | `Timecourses` carries `dose_amount`, `dose_time`, `dose_duration` over `(*sample_dims, "dose_index")`, padded with `NaN` for samples with fewer doses (corrected from `"dose"` during implementation: `dose` stays free as a sample dimension, e.g. the dose groups of a dose proportionality study) |
 | analysis of multiple doses | the NCA derives the dosing intervals from the protocol; the result gains an `interval` dimension with the per-interval parameters, and the steady state parameters of the last complete interval without that dimension |
 | reference dose of the point parameters | with more than one dose the terminal phase, `cmax`, `tmax`, `clast`, `auc_last`, the extrapolated areas, `cl`, `vz`, `mrt` are computed from the last dose on (times relative to the last dose): the steady state analysis; with one dose everything is as today |
 | exchange formats | readers `Timecourses.from_events` (NONMEM/Monolix), `from_pknca` (PKNCA tables), `from_adnca` (CDISC ADaM); writer `to_events`; the existing `from_dataframe` long format stays |
@@ -37,7 +37,7 @@ A timecourse is accompanied by its dosing protocol: the vector of the doses give
 
 `Timecourses`:
 
-- data variables `dose_amount`, `dose_time`, `dose_duration` over `(*sample_dims, "dose")`, `NaN` padded; coordinate `dose` = `np.arange(n_doses_max)`; `attrs["route"]` as today
+- data variables `dose_amount`, `dose_time`, `dose_duration` over `(*sample_dims, "dose_index")`, `NaN` padded; `attrs["route"]` as today (corrected during implementation: the dimension is `dose_index`, not `dose`, so that `dose` stays free as a sample dimension)
 - properties `dose_amount`, `dose_time`, `dose_duration` return the 2-D arrays (`(*sample_shape, n_dose)`); `n_doses` the finite count per sample; `has_dose` unchanged; `dosing_of(**indexers) -> Dosing | None`
 - `from_arrays(..., dose=...)` accepts a `Dose`, a `Dosing` (same protocol for all samples) or a mapping with `amount`/`time`/`duration` arrays of shape `sample_shape` (one dose) or `(*sample_shape, n_dose)`; `from_timecourses` pads the protocols; `from_dataframe` (long format) keeps the single dose columns and gains `dose_time` rows: with several rows per sample carrying different dose times the doses form the protocol (a row per dose time; the amount may differ per row)
 - `_timecourse` (used by `sel`, `isel`, `__iter__`) rebuilds the `Dosing` from the finite entries

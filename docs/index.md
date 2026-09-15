@@ -11,9 +11,10 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 
 ## Features
 
-- **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
+- **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with dosing protocols, routes, uncertainties and metadata.
+- **[Data formats](formats.md)** - read the event records of NONMEM and Monolix, the two tables of PKNCA and the CDISC ADaM ADNCA dataset, and write event records back.
 - **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
-- **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
+- **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and multiple dosing (every dosing interval, steady state, accumulation), vectorized over a batch, with flags and units.
 - **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
 - **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.
 - **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.

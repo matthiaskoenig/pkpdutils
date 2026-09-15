@@ -7,8 +7,9 @@ The API reference is generated from the docstrings of the package.
 | module | description |
 | --- | --- |
 | [units](units.md) | the unit registry of the package and unit helpers |
-| [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Route` and `DosingRegimen`, the data model |
+| [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Dosing`, `Route` and `DosingRegimen`, the data model |
 | [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample` |
+| [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
 | [console](console.md) | shared rich console |
 | [log](log.md) | logging of the package |
 
@@ -23,7 +24,8 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.result](nca.result.md) | `NCAResult` and the units of the parameters |
 | [nca.auc](nca.auc.md) | vectorized trapezoid areas, interpolation |
 | [nca.terminal](nca.terminal.md) | vectorized terminal phase regression |
-| [nca.steady_state](nca.steady_state.md) | steady state parameters, accumulation ratio, superposition |
+| [nca.intervals](nca.intervals.md) | parameters of every dosing interval of a multiple dose curve |
+| [nca.steady_state](nca.steady_state.md) | steady state parameters of the last interval, accumulation ratio, superposition |
 | [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
 
 ## pkpdutils.fit
@@ -54,4 +56,4 @@ Figures, see [Plotting](../plotting.md).
 
 | module | description |
 | --- | --- |
-| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality`, `plot_parameters`, `plot_ratio`, `plot_forest`, `plot_bland_altman` |
+| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_intervals`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality`, `plot_parameters`, `plot_ratio`, `plot_forest`, `plot_bland_altman` |

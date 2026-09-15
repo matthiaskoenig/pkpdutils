@@ -10,7 +10,8 @@
 
 Features include
 
-- **non-compartmental analysis** - exposure, peak, terminal phase, clearance and volume parameters of concentration and effect timecourses, single dose and steady state, with units
+- **non-compartmental analysis** - exposure, peak, terminal phase, clearance and volume parameters of concentration and effect timecourses, single dose and multiple dosing (every dosing interval, steady state, accumulation), with units
+- **data formats** - read event records (NONMEM, Monolix), the two PKNCA tables and the CDISC ADaM ADNCA dataset, write event records back
 - **uncertainty** - bootstrap and delta method propagation for group timecourses (mean ± SD), summary statistics over individuals
 - **curve fitting** - exponential, Bateman, Emax, dose proportionality and covariate models with standard errors, confidence intervals and model comparison
 - **statistics on parameters** - significance tests, geometric mean ratios, bioequivalence, classification of drug–drug interactions, meta-analysis
