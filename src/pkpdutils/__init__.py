@@ -38,7 +38,7 @@ from pkpdutils.stats import (
 from pkpdutils.timecourse import Dose, DosingRegimen, Route, Timecourse, Timecourses
 from pkpdutils.units import Q_, Quantity, ureg
 
-__version__ = "1.0.0.dev0"
+__version__ = "1.0.0"
 
 __all__ = [
     "Q_",

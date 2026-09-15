@@ -172,7 +172,7 @@ The result variables `x`, `x_sd`, `x_se`, `x_ci_low`, `x_ci_high` and `n` are th
 
 ### Model library
 
-- exponential: `MonoExp`, `BiExp`, `TriExp` (`Σ Aᵢ·exp(-λᵢ·t)`, λ sorted ascending, derived `thalf_i`, `lambda_z = min λ`), `Bateman` (`A·ka/(ka - ke)·(exp(-ke(t - tlag)) - exp(-ka(t - tlag)))` with optional `tlag`, `flip_flop` flag when `ka < ke`); initial guesses by the method of residuals and from the NCA. No compartmental interpretation of the coefficients
+- exponential: `MonoExp`, `BiExp`, `TriExp` (`Σ Aᵢ·exp(-λᵢ·t)`, λ sorted descending (the fastest phase first, as implemented in 1.0.0; the spec originally said ascending), derived `thalf_i`, `lambda_z = min λ`), `Bateman` (`A·ka/(ka - ke)·(exp(-ke(t - tlag)) - exp(-ka(t - tlag)))` with optional `tlag`, `flip_flop` flag when `ka < ke`); initial guesses by the method of residuals and from the NCA. No compartmental interpretation of the coefficients
 - Emax family: `Emax(e0, emax, ec50)`, `SigmoidEmax(+ hill)`, `Imax`, `SigmoidImax`, `Linear`, `LogLinear`; derived `ec90`/`ic90`. Used for effect against concentration and for a parameter against an inhibitor dose or concentration
 - dose proportionality: `PowerModel` (`a·xᵇ`), `LinearModel` (with intercept); `proportionality_test(result, criterion=(0.8, 1.25), dose_range) -> ProportionalityResult` on the confidence interval of `b` (Smith et al. 2000)
 - covariate: `Allometric(a, b)` with `b` free or fixed (0.75 for clearance, 1 for volumes), `LinearCovariate`, `LogLinearCovariate`

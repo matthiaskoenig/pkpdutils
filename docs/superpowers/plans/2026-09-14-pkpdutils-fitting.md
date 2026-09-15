@@ -3177,7 +3177,7 @@ API pages: `docs/api/fit.md` (`::: pkpdutils.fit.engine` under `# fit`, with `##
 ```
 
 `docs/fitting.md`:
-```markdown
+````markdown
 # Curve fitting
 
 Non-compartmental analysis reads parameters from the observed points; some questions need a curve through them: the rate constants of the phases of a decline, the absorption rate of an oral curve, the concentration of half-maximal effect, whether the exposure grows in proportion to the dose, how a clearance scales with body weight. `pkpdutils.fit` fits small parametric models to one curve or to every curve of a batch with the same engine, reports standard errors, confidence intervals and goodness of fit, compares models and applies the dose proportionality criterion. The models are descriptive; compartmental interpretation of the coefficients and population (mixed effects) modelling are outside the scope of the package.
@@ -3283,10 +3283,10 @@ allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="indiv
 [^seber]: Seber GAF, Wild CJ. *Nonlinear Regression*. Wiley; 1989. See [References](references.md#statistics).
 [^burnham]: Burnham KP, Anderson DR. *Model Selection and Multimodel Inference*. 2nd ed. Springer; 2002. See [References](references.md#statistics).
 [^smith]: Smith BP et al. Confidence interval criteria for assessment of dose proportionality. *Pharm Res.* 2000. See [References](references.md#statistics).
-```
+````
 
 `docs/pd.md`:
-```markdown
+````markdown
 # Pharmacodynamics
 
 A pharmacodynamic timecourse measures an effect over time, a concentration-effect relationship measures the effect against the concentration. `pkpdutils` treats both with the tools of the previous pages: effect timecourses go through the non-compartmental analysis with `Kind.EFFECT`, concentration-effect data are fitted with the Emax family.
@@ -3321,9 +3321,9 @@ The example is `examples/emax.py`.
 ## References
 
 [^gw]: Gabrielsson J, Weiner D. *Pharmacokinetic and Pharmacodynamic Data Analysis*. 5th ed. 2016, ch. 4. See [References](references.md#textbooks).
-```
+````
 
-`docs/index.md`: feature bullets `- **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.` and `- **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.`; `docs/plotting.md`: a section "Fits" describing `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality` with a code block; `docs/glossary.md`: rows for `p_se`, `p_ci_low`/`p_ci_high`, `p_cv`, `cost`, `r2`, `rmse`, `aic`, `aicc`, `bic`, `n_points`, `n_parameters`, `n_starts_converged`, `n_bootstrap`, `y_pred`, `residuals`, `correlation`, `akaike_weight`, `bound_low`/`bound_high` pointing at [Curve fitting](fitting.md); `CLAUDE.md`: commands for the four examples and an architecture paragraph `**\`fit/\` - curve fitting.**` naming `model.py` (`Model`, `ModelParameter`, `parameter_unit_expression`), `options.py`, `models_exponential.py`/`models_response.py`/`models_linear.py` (re-exported by `models.py`), `engine.py` (`fit_row`: scaled space, `least_squares`, Jacobian covariance, t intervals, delta method for derived parameters, statistics, residual bootstrap; `fit_rows`: seeds and pool; `build_result`), `result.py` (`FitResult(ParameterResult)`), `frontends.py`, `compare.py`, `proportionality.py`; and a sentence for `result.py` at the package root (`ParameterResult`, the base of `NCAResult` and `FitResult`).
+`docs/index.md`: feature bullets `- **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.` and `- **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.`; `docs/plotting.md`: a section "Fits" describing `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality` with a code block; `docs/glossary.md`: rows for `p_se`, `p_ci_low`/`p_ci_high`, `p_cv`, `cost`, `r2`, `rmse`, `aic`, `aicc`, `bic`, `n_points`, `n_parameters`, `n_starts_converged`, `n_bootstrap`, `y_pred`, `residuals`, `correlation`, `akaike_weight`, `bound_low`/`bound_high` pointing at `[Curve fitting](fitting.md)`; `CLAUDE.md`: commands for the four examples and an architecture paragraph `**\`fit/\` - curve fitting.**` naming `model.py` (`Model`, `ModelParameter`, `parameter_unit_expression`), `options.py`, `models_exponential.py`/`models_response.py`/`models_linear.py` (re-exported by `models.py`), `engine.py` (`fit_row`: scaled space, `least_squares`, Jacobian covariance, t intervals, delta method for derived parameters, statistics, residual bootstrap; `fit_rows`: seeds and pool; `build_result`), `result.py` (`FitResult(ParameterResult)`), `frontends.py`, `compare.py`, `proportionality.py`; and a sentence for `result.py` at the package root (`ParameterResult`, the base of `NCAResult` and `FitResult`).
 
 - [ ] **Step 4: Build and check**
 

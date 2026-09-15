@@ -39,7 +39,7 @@ jobs:
       - name: Build the documentation
         # the API reference is rendered from the docstrings by mkdocstrings,
         # so the package has to be importable
-        run: uv run zensical build --clean
+        run: uv run zensical build --clean --strict
       - name: Generate the agent facing files
         # llms.txt, llms-full.txt and the markdown of every page
         run: uv run python scripts/llms_txt.py

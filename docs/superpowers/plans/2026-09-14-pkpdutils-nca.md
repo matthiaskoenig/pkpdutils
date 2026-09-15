@@ -3212,7 +3212,7 @@ Figures, see [Plotting](../plotting.md).
 
 - [ ] **Step 2: Write `docs/nca.md`**
 
-```markdown
+````markdown
 # Non-compartmental analysis
 
 Non-compartmental analysis (NCA) describes a concentration timecourse by parameters computed directly from the measured points, without a model of the body: the exposure as the area under the curve, the peak, the terminal half-life, and, with the dose, the clearance and the volume of distribution. `pkpdutils.nca` computes these parameters for one curve or for a whole batch of curves in one vectorized call; every parameter carries its unit and every sample carries flags for the conditions that limit its interpretation. The definitions follow Gabrielsson & Weiner [^gw] and the NCA of Phoenix WinNonlin [^phoenix].
@@ -3374,7 +3374,7 @@ Large batches run in worker processes with `NCAOptions(n_workers=4)`; the analys
 [^gw]: Gabrielsson J, Weiner D. *Pharmacokinetic and Pharmacodynamic Data Analysis: Concepts and Applications*. 5th ed. Swedish Pharmaceutical Press; 2016. See [References](references.md#textbooks).
 [^phoenix]: Certara. *Phoenix WinNonlin User's Guide: Noncompartmental Analysis*. See [References](references.md#non-compartmental-analysis).
 [^rt]: Rowland M, Tozer TN. *Clinical Pharmacokinetics and Pharmacodynamics*. 4th ed. 2011, ch. 11. See [References](references.md#textbooks).
-```
+````
 
 - [ ] **Step 3: Write `docs/glossary.md` and `docs/plotting.md`**
 
@@ -3415,7 +3415,7 @@ The names used for the variables of the result datasets, with their symbols and 
 ```
 
 `docs/plotting.md`:
-```markdown
+````markdown
 # Plotting
 
 The figures of `pkpdutils.plot` are matplotlib figures. Every function returns the `Figure` it drew and never shows it, so a script saves it (`fig.savefig("name.png")`) and a notebook displays it; pass `ax` to draw into an existing axes. Colors and markers come from a `PlotStyle`.
@@ -3457,7 +3457,7 @@ fig = plot_nca(tc, result, style=style)
 ```
 
 The reference of the module is in [API: plot](api/plot.md).
-```
+````
 
 Generate the image: `cd $(mktemp -d) && PYTHONPATH=/home/mkoenig/git/pkdb_analysis uv run --project /home/mkoenig/git/pkdb_analysis python -m examples.nca_single > /dev/null && cp nca_single.png /home/mkoenig/git/pkdb_analysis/docs/images/nca_single.png; cd -`.
 
@@ -3469,7 +3469,7 @@ Generate the image: `cd $(mktemp -d) && PYTHONPATH=/home/mkoenig/git/pkdb_analys
 - **[Plotting](plotting.md)** — timecourses and NCA diagnostics as matplotlib figures.
 ```
 and the Quickstart section before "How to cite":
-```markdown
+````markdown
 ## Quickstart
 
 ```python
@@ -3486,9 +3486,9 @@ print(result.to_dataframe().T)
 ```
 
 Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md).
-```
+````
 
-`docs/timecourses.md`: in the first paragraph, after "which is the input of every analysis of the package", add the sentence "The first analysis is the [non-compartmental analysis](nca.md)."
+`docs/timecourses.md`: in the first paragraph, after "which is the input of every analysis of the package", add the sentence "The first analysis is the `[non-compartmental analysis](nca.md)`."
 
 `CLAUDE.md`: in "Commands" add the example lines `python -m examples.nca_single`, `python -m examples.nca_batch`, `python -m examples.steady_state`; in "Architecture" add after the `timecourse.py` paragraph:
 ```markdown
