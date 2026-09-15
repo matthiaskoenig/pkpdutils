@@ -130,6 +130,24 @@ aligned = tcs.relative_to_dose()  # every first dose at time 0
 last = tcs.relative_to_dose(which="last")
 ```
 
+### Selecting, grouping and averaging a batch
+
+A study arrives as one batch whose groups are coordinates on the individual dimension (the treatment, the dose group, the sex), so the four methods below cut the batch into the pieces an analysis or a figure needs. `select` keeps a batch (`sel` returns a single `Timecourse` and needs a label for every sample dimension), `groupby` walks the groups of a coordinate in the order of their first appearance, `mean` reduces a sample dimension to the group curve with its spread, and `dose_normalized` divides the values by the dose so that the curves of a dose escalation can be overlaid.
+
+```python
+arm = tcs.select(treatment="test")  # a label, a list of labels or a slice
+heavy = tcs.select(weight=slice(80.0, 100.0))  # a coordinate along a sample dimension
+
+for dose, group in tcs.groupby("dose_group"):
+    print(dose, group.n_samples)
+
+group_curve = tcs.select(treatment="test").mean("individual")
+print(group_curve.sd, group_curve.n)  # mean +- SD of the group, n subjects
+normalized = tcs.dose_normalized()  # values per dose, unit "unit / dose_unit"
+```
+
+`mean(dim, spread="sd" | "se", min_n=1)` averages the samples which have a finite value at a time point, carries their standard deviation and standard error (the statistic `spread` names is the one computed from the curves, the other follows from \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\)) and the number of subjects `n`, and sets a point covered by fewer than `min_n` samples to `NaN`. The samples need a shared sampling grid; a ragged batch is placed on the union of its grids first, and `relative_to_dose` aligns samples which were dosed at different times. The group curve carries the dosing protocol of its samples when they share one and the protocol of the first sample with a warning when they do not; it is a `Timecourses` again, so `nca` propagates its spread to the parameters, see [Uncertainty](uncertainty.md).
+
 From a simulation: a dataset with a `_time` dimension and scan dimensions, e.g. the `XResult` of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim):
 
 ```python

@@ -8,7 +8,7 @@ The API reference is generated from the docstrings of the package.
 | --- | --- |
 | [units](units.md) | the unit registry of the package and unit helpers |
 | [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Dosing`, `Route` and `DosingRegimen`, the data model |
-| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample` |
+| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample`, `summary_table` the parameter table of a publication |
 | [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
 | [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
 | [console](console.md) | shared rich console |
@@ -38,7 +38,7 @@ Curve fitting, see [Curve fitting](../fitting.md) and [Pharmacodynamics](../pd.m
 | [fit](fit.md) | `fit`, `fit_timecourse`, `fit_timecourses`, `fit_table`, `FitOptions`, `FitResult`, `Model`: the engine, the result, the front ends and the options |
 | [fit.models](fit.models.md) | the model library: exponentials, the Emax family, linear, power and allometric models |
 | [fit.compare](fit.compare.md) | `compare_models` and `ModelComparison`: the ranking by AICc and the Akaike weights |
-| [fit.proportionality](fit.proportionality.md) | `proportionality_test`: the confidence interval criterion of dose proportionality |
+| [fit.proportionality](fit.proportionality.md) | `proportionality_test` and `proportionality_table`: the confidence interval criterion of dose proportionality |
 
 ## pkpdutils.stats
 
@@ -46,9 +46,9 @@ Statistics on parameters, see [Statistics](../statistics.md).
 
 | module | description |
 | --- | --- |
-| [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`: samples, tests and the geometric mean ratio |
+| [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`, `ratio_table`: samples, tests and the geometric mean ratio |
 | [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, paired, parallel and 2x2 crossover designs |
-| [stats.ddi](stats.ddi.md) | `ddi_classification`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
+| [stats.ddi](stats.ddi.md) | `ddi_classification`, `ddi_table`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
 | [stats.meta](stats.meta.md) | `effect_size`, `fixed_effect`, `random_effects`, `heterogeneity`, `meta_analysis`: the meta-analysis |
 
 ## pkpdutils.plot

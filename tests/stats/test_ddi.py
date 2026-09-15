@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
+import xarray as xr
 
+from pkpdutils.result import ParameterResult
 from pkpdutils.stats import ParameterSample
 from pkpdutils.stats.ddi import (
     DDIKind,
@@ -98,3 +100,67 @@ def test_ema_and_sensitivity() -> None:
         substrate_sensitivity(5.0, ema)  # ty: ignore[too-many-positional-arguments]
     with pytest.raises(ValueError, match="positive"):
         ddi_classification(0.0)
+
+
+class _Result(ParameterResult):
+    """A minimal parameter result for the table front end."""
+
+
+def _result(auc: np.ndarray, cmax: np.ndarray) -> _Result:
+    labels = [f"s{i}" for i in range(auc.size)]
+    return _Result(
+        xr.Dataset(
+            {
+                "auc_inf_obs": (
+                    ("individual",),
+                    auc,
+                    {"units": "hour * milligram / liter"},
+                ),
+                "cmax": (("individual",), cmax, {"units": "milligram / liter"}),
+                "flags": (
+                    ("individual",),
+                    np.zeros(auc.size, dtype=int),
+                    {"units": "dimensionless"},
+                ),
+            },
+            coords={"individual": labels},
+        )
+    )
+
+
+def test_ddi_table_of_two_results() -> None:
+    from pkpdutils.stats import ddi_table
+
+    auc = np.array([100.0, 105.0, 95.0, 110.0, 90.0])
+    cmax = np.array([10.0, 10.5, 9.5, 11.0, 9.0])
+    # a threefold increase of the exposure, a small one of the maximum
+    test, reference = _result(auc * 3.0, cmax * 1.1), _result(auc, cmax)
+    df = ddi_table(test, reference)
+    assert list(df.columns) == [
+        "parameter",
+        "unit",
+        "n_test",
+        "n_reference",
+        "ratio",
+        "ci_low",
+        "ci_high",
+        "kind",
+        "strength",
+        "uncertain",
+        "source",
+    ]
+    assert df["parameter"].tolist() == ["auc_inf_obs", "cmax"]
+    assert df.iloc[0]["ratio"] == "3.00"
+    assert df.iloc[0]["unit"] == "hour * milligram / liter"
+    assert df.iloc[0]["n_test"] == "5"
+    assert (df.iloc[0]["kind"], df.iloc[0]["strength"]) == ("inhibitor", "moderate")
+    assert df.iloc[0]["source"] == "FDA 2020"
+    assert df.iloc[1]["ratio"] == "1.10"
+    assert df.iloc[1]["kind"] == "none"
+    # the thresholds travel into the table
+    ema = ddi_table(test, reference, thresholds=DDIThresholds.ema())
+    assert ema.iloc[0]["source"] == "EMA 2012"
+    # the ratio of a single parameter, with more digits
+    single = ddi_table(test, reference, ["cmax"], digits=5)
+    assert single["parameter"].tolist() == ["cmax"]
+    assert single.iloc[0]["ratio"] == "1.1000"

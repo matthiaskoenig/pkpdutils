@@ -109,6 +109,19 @@ be = bioequivalence(test_result, reference_result, parameters=["auc_inf_obs", "c
 be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
 ```
 
+`ratio_table` formats the ratios of a study the way a paper prints them: one row per parameter with the point estimate and its interval in percent of the reference, the numbers rounded to `digits` significant digits as strings. It takes a mapping of `RatioResult` objects or the result of `bioequivalence`, which adds the within-subject coefficient of variation, the acceptance limits and the verdict.
+
+```python
+from pkpdutils.stats import ratio_table
+
+ratio_table(be)  # parameter, unit, n, gmr, ci_low, ci_high, cv_intra, bioequivalent
+ratio_table({"auc_inf_obs": r}, percent=False, digits=4)  # plain ratios
+```
+
+| parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| auc_inf_obs | hour * milligram / liter | 12 | 12 | 95.6 % | 88.6 % | 103 % | 90 % | 10.3 % | 80.0 % - 125 % | True |
+
 A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequence` along the individual dimension of both batches; they are given to `Timecourses.from_arrays` as `coords={"individual": ids, "period": ("individual", periods), "sequence": ("individual", sequences)}` and travel through the NCA to the result. Without them two results with the same individuals are paired, otherwise the groups are parallel; `design=Design.PARALLEL` overrides the detection.
 
 Drug-drug interactions:
@@ -124,6 +137,19 @@ ddi.kind, ddi.strength, ddi.uncertain
 ddi_classification(3.2, ci=(2.4, 4.3), thresholds=DDIThresholds.ema())
 substrate_sensitivity(6.1)
 ```
+
+`ddi_table` does the same over several parameters of two results: it takes every parameter from both, forms the ratio with and without the perpetrator and classifies it, so that the exposure and the maximum are read next to each other. The classes are defined for the \(\mathrm{AUC}\) and are applied to every parameter of the table.
+
+```python
+from pkpdutils.stats import ddi_table
+
+ddi_table(with_inhibitor, without_inhibitor, ["auc_inf_obs", "cmax"], dim="individual")
+```
+
+| parameter | unit | n_test | n_reference | ratio | ci_low | ci_high | kind | strength | uncertain | source |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| auc_inf_obs | hour * milligram / liter | 12 | 12 | 2.62 | 2.33 | 2.94 | inhibitor | moderate | False | FDA 2020 |
+| cmax | milligram / liter | 12 | 12 | 1.40 | 1.28 | 1.53 | inhibitor | weak | False | FDA 2020 |
 
 Meta-analysis:
 

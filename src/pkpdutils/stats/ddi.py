@@ -1,4 +1,4 @@
-"""Classification of drug-drug interactions by the change of the exposure.
+"""Classification of drug-drug interactions by the change of the exposure, and its publication table.
 
 The FDA guidance (FDA 2020) classifies a perpetrator by the ratio of the
 AUC of a sensitive substrate with and without it: a strong, moderate or
@@ -9,11 +9,15 @@ its AUC at least 5-fold and moderately sensitive at 2- to 5-fold. The EMA
 guideline (EMA 2012) uses the same thresholds.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from pkpdutils.stats.ratio import RatioResult
+import pandas as pd
+
+from pkpdutils.result import ParameterResult, format_number
+from pkpdutils.stats.ratio import RatioResult, ratio
 
 
 class DDIKind(StrEnum):
@@ -282,3 +286,74 @@ def substrate_sensitivity(
     if value >= thresholds.moderately_sensitive:
         return Sensitivity.MODERATELY_SENSITIVE
     return Sensitivity.NONE
+
+
+def ddi_table(
+    test: ParameterResult,
+    reference: ParameterResult,
+    parameters: Sequence[str] = ("auc_inf_obs", "cmax"),
+    *,
+    dim: str = "individual",
+    thresholds: DDIThresholds | None = None,
+    digits: int = 3,
+    ci_level: float = 0.90,
+    paired: bool | None = None,
+    **indexers: Any,
+) -> pd.DataFrame:
+    """The interaction table of a publication: one row per parameter, formatted.
+
+    Every parameter is taken from both results with
+    `ParameterResult.sample(name, dim, **indexers)`, its geometric mean ratio
+    with and without the perpetrator is computed with `pkpdutils.stats.ratio`
+    and classified with `ddi_classification`, which reads the bound of the
+    interval closer to 1 (FDA 2020; EMA 2012). The classes are defined for the
+    AUC; they are applied to every parameter of the table, so that the row of
+    the maximum is read next to the row of the exposure.
+
+    Args:
+        test: the result with the perpetrator.
+        reference: the result without it.
+        parameters: the parameters of the table.
+        dim: the sample dimension of the individuals.
+        thresholds: the thresholds, FDA 2020 by default.
+        digits: significant digits of the numbers.
+        ci_level: level of the intervals, 0.90 as in bioequivalence.
+        paired: pair the samples, `None` pairs when both carry the same
+            labels, as in `pkpdutils.stats.ratio`.
+        **indexers: coordinate label per remaining sample dimension.
+
+    Returns:
+        The table with the columns `parameter`, `unit`, `n_test`,
+        `n_reference`, `ratio`, `ci_low`, `ci_high`, `kind`, `strength`,
+        `uncertain` and `source`; every cell is a string.
+
+    Raises:
+        ValueError: as `ParameterResult.sample` and `pkpdutils.stats.ratio`.
+    """
+    if thresholds is None:
+        thresholds = DDIThresholds.fda()
+    records: list[dict[str, Any]] = []
+    for name in parameters:
+        result = ratio(
+            test.sample(name, dim, **indexers),
+            reference.sample(name, dim, **indexers),
+            ci_level=ci_level,
+            paired=paired,
+        )
+        classification = ddi_classification(result, thresholds=thresholds)
+        records.append(
+            {
+                "parameter": name,
+                "unit": result.unit,
+                "n_test": str(result.n_test),
+                "n_reference": str(result.n_reference),
+                "ratio": format_number(result.gmr, digits),
+                "ci_low": format_number(result.ci_low, digits),
+                "ci_high": format_number(result.ci_high, digits),
+                "kind": str(classification.kind),
+                "strength": str(classification.strength),
+                "uncertain": str(classification.uncertain),
+                "source": thresholds.source,
+            }
+        )
+    return pd.DataFrame.from_records(records)

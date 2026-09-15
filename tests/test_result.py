@@ -229,3 +229,165 @@ def test_nan_percentile_shapes() -> None:
 def test_nan_percentile_of_an_empty_axis_is_nan() -> None:
     assert np.isnan(nan_percentile(np.empty((3, 0)), [25.0, 75.0])).all()
     assert np.isnan(nan_percentile(np.empty((3, 0)), 50.0)).all()
+
+
+def test_summarize_adds_cv_min_and_max() -> None:
+    # a = [1, 2, 4] mg: mean 7/3, sd = sqrt(7/3), cv = sd / mean
+    s = make().summarize("s")
+    q = s.to_quantities()
+    mean, sd = 7.0 / 3.0, float(np.std([1.0, 2.0, 4.0], ddof=1))
+    assert q["a_cv"].magnitude == pytest.approx(sd / mean)
+    assert str(q["a_cv"].units) == "dimensionless"
+    assert q["a_min"].magnitude == pytest.approx(1.0)
+    assert q["a_max"].magnitude == pytest.approx(4.0)
+    assert str(q["a_min"].units) == "milligram"
+    # a discrete parameter has the order statistics but no coefficient of variation
+    assert "k_min" in s and "k_max" in s and "k_cv" not in s
+    assert s.parameters == ["a", "k"]
+
+
+def test_summarize_reduces_the_declared_point_variables() -> None:
+    class WithPoints(MyResult):
+        summarized_point_variables = frozenset({"per_interval"})
+
+    ds = (
+        make()
+        .ds.assign(
+            per_interval=(
+                ("s", "interval"),
+                np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+                {"units": "mg"},
+            )
+        )
+        .assign_coords(interval=[0, 1])
+    )
+    s = WithPoints(ds).summarize("s")
+    assert s.ds["per_interval"].dims == ("interval",)
+    np.testing.assert_allclose(s.ds["per_interval"].to_numpy(), [3.0, 4.0])
+    np.testing.assert_allclose(
+        s.ds["per_interval_sd"].to_numpy(), np.std([1.0, 3.0, 5.0], ddof=1)
+    )
+    np.testing.assert_allclose(s.ds["per_interval_n"].to_numpy(), [3.0, 3.0])
+    assert s.ds["interval"].to_numpy().tolist() == [0, 1]
+    # a point variable which is not declared is still dropped
+    assert "y_pred" not in s
+
+
+@pytest.mark.parametrize(
+    ("value", "digits", "expected"),
+    [
+        (12.8432, 3, "12.8"),
+        (1.71234, 3, "1.71"),
+        (123456.0, 3, "123000"),
+        (0.000123456, 3, "0.000123"),
+        (1.2345e-7, 3, "1.23e-07"),
+        (9.87654321e9, 4, "9.877e+09"),
+        (0.0, 3, "0"),
+        (-2.5, 2, "-2.5"),
+        (float("nan"), 3, ""),
+        (float("inf"), 3, "inf"),
+    ],
+)
+def test_format_number(value: float, digits: int, expected: str) -> None:
+    from pkpdutils.result import format_number
+
+    assert format_number(value, digits) == expected
+
+
+def test_format_number_rejects_zero_digits() -> None:
+    from pkpdutils.result import format_number
+
+    with pytest.raises(ValueError, match="digits"):
+        format_number(1.0, 0)
+
+
+def test_summary_table_cells() -> None:
+    from pkpdutils.result import summary_table
+
+    # a = [1, 2, 4] mg: mean 2.333, sd 1.528, cv 65.5 %, geomean 2, geoCV 78.5 %
+    df = summary_table(
+        make(),
+        "s",
+        parameters=["a", "k"],
+        stats=("n", "mean", "sd", "cv", "geomean", "geocv", "median", "range"),
+    )
+    assert list(df.columns) == [
+        "parameter",
+        "unit",
+        "n",
+        "mean",
+        "sd",
+        "cv",
+        "geomean",
+        "geocv",
+        "median",
+        "range",
+    ]
+    row = df.iloc[0]
+    assert row["parameter"] == "a" and row["unit"] == "mg"
+    assert row["n"] == "3"
+    assert row["mean"] == "2.33"
+    assert row["sd"] == "1.53"
+    assert row["cv"] == "65.5 %"
+    assert row["geomean"] == "2.00"
+    assert row["geocv"] == "78.5 %"
+    assert row["range"] == "1.00 - 4.00"
+    # a discrete parameter carries no sd, cv or geometric statistics
+    discrete = df.iloc[1]
+    assert discrete["parameter"] == "k"
+    assert discrete["sd"] == "" and discrete["cv"] == "" and discrete["geocv"] == ""
+    assert discrete["median"] == "3.00" and discrete["range"] == "3.00 - 4.00"
+
+
+def test_summary_table_groups_layouts_and_units() -> None:
+    from pkpdutils.result import summary_table
+
+    r = MyResult(make().ds.assign_coords(arm=("s", ["a", "b", "a"])))
+    grouped = summary_table(r, "s", by="arm", parameters=["a"], stats=("n", "mean"))
+    assert grouped["arm"].tolist() == ["a", "b"]
+    assert grouped["n"].tolist() == ["2", "1"]
+    # the groups keep the order of their first appearance, "a" before "b"
+    assert grouped.iloc[0]["mean"] == "2.50"
+
+    header = summary_table(r, "s", parameters=["a"], stats=("mean",), units="header")
+    assert header.iloc[0]["parameter"] == "a [mg]"
+    assert "unit" not in header.columns
+
+    columns = summary_table(
+        r, "s", parameters=["a", "k"], stats=("n", "mean"), layout="parameters_columns"
+    )
+    assert list(columns.columns) == ["statistic", "a", "k"]
+    assert columns["statistic"].tolist() == ["unit", "n", "mean"]
+    assert columns.iloc[0]["a"] == "mg"
+
+    long = summary_table(
+        r, "s", by="arm", parameters=["a"], stats=("n", "mean"), layout="long"
+    )
+    assert list(long.columns) == ["parameter", "unit", "arm", "statistic", "value"]
+    assert long["statistic"].tolist() == ["n", "mean", "n", "mean"]
+    assert long["arm"].tolist() == ["a", "a", "b", "b"]
+
+
+def test_summary_table_method_and_errors() -> None:
+    r = make()
+    assert (
+        r.summary_table("s", parameters=["a"], stats=("mean",)).iloc[0]["mean"]
+        == "2.33"
+    )
+    with pytest.raises(ValueError, match="not a sample dimension"):
+        r.summary_table("nope")
+    with pytest.raises(ValueError, match="unknown statistics"):
+        r.summary_table("s", stats=("mean", "bogus"))
+    with pytest.raises(ValueError, match="no variables of the result"):
+        r.summary_table("s", parameters=["nope"])
+    with pytest.raises(ValueError, match="'units'"):
+        r.summary_table("s", units="both")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="'layout'"):
+        r.summary_table("s", layout="wide")  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="coordinate along"):
+        r.summary_table("s", by="missing")
+
+
+def test_summary_table_rejects_a_point_variable() -> None:
+    with pytest.raises(ValueError, match="beyond the sample dimensions"):
+        make().summary_table("s", parameters=["y_pred"])

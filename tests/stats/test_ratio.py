@@ -126,3 +126,40 @@ def test_paired_needs_finite_pairs() -> None:
     unlabelled_r = ParameterSample(values=np.array([np.nan, np.nan]))
     with pytest.raises(ValueError, match="finite"):
         ratio(unlabelled_t, unlabelled_r, paired=True)
+
+
+def test_ratio_table_of_a_mapping() -> None:
+    from pkpdutils.stats import ratio_table
+
+    results = {
+        "auc_inf_obs": ratio(
+            ParameterSample(values=TEST, labels=LABELS, name="auc", unit="mg*hr/l"),
+            ParameterSample(values=REF, labels=LABELS, name="auc", unit="mg*hr/l"),
+        ),
+        "cmax": ratio(
+            ParameterSample(values=TEST, labels=LABELS, name="cmax", unit="mg/l"),
+            ParameterSample(values=REF, labels=LABELS, name="cmax", unit="mg/l"),
+        ),
+    }
+    df = ratio_table(results)
+    assert list(df.columns) == [
+        "parameter",
+        "unit",
+        "n_test",
+        "n_reference",
+        "gmr",
+        "ci_low",
+        "ci_high",
+        "ci_level",
+    ]
+    assert df["parameter"].tolist() == ["auc_inf_obs", "cmax"]
+    assert df.iloc[0]["unit"] == "mg*hr/l"
+    assert df.iloc[0]["n_test"] == "12" and df.iloc[0]["ci_level"] == "90 %"
+    # the cells are the formatted ratio in percent
+    result = results["auc_inf_obs"]
+    assert df.iloc[0]["gmr"] == f"{result.gmr * 100:.3g} %"
+    assert df.iloc[0]["ci_low"] == f"{result.ci_low * 100:.3g} %"
+    # without `percent` the plain ratio is reported
+    plain = ratio_table(results, percent=False)
+    assert plain.iloc[0]["gmr"] == f"{result.gmr:.3g}"
+    assert plain.iloc[0]["ci_high"] == f"{result.ci_high:.3g}"

@@ -1,11 +1,14 @@
-"""Geometric mean ratio of a parameter between a test and a reference sample."""
+"""Geometric mean ratio of a parameter between a test and a reference sample, and its publication table."""
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd
 
+from pkpdutils.result import format_number
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
@@ -16,6 +19,11 @@ from pkpdutils.stats.sample import (
     welch_df,
     welch_se,
 )
+
+if TYPE_CHECKING:
+    # only for the annotation of `ratio_table`: `bioequivalence` builds on the
+    # ratio, so importing its result at runtime would be a cycle
+    from pkpdutils.stats.bioequivalence import BEResult
 
 logger = logging.getLogger(__name__)
 
@@ -147,3 +155,64 @@ def ratio(
         name=test.name,
         unit=test.unit,
     )
+
+
+def ratio_table(
+    ratios: "Mapping[str, RatioResult] | BEResult",
+    *,
+    digits: int = 3,
+    percent: bool = True,
+) -> pd.DataFrame:
+    """The ratio table of a publication: one row per parameter, formatted.
+
+    The table a bioequivalence, food effect or special population study
+    reports: the geometric mean ratio of every parameter with its confidence
+    interval, as percentages of the reference (`percent`, the convention of
+    the regulatory guidances: 93.1 % rather than 0.931) or as plain ratios.
+    A `pkpdutils.stats.BEResult` adds the within-subject coefficient of
+    variation and the verdict of the acceptance limits.
+
+    Args:
+        ratios: parameter name to its `RatioResult`, or the result of
+            `pkpdutils.stats.bioequivalence`.
+        digits: significant digits of the numbers.
+        percent: report the ratio and its interval in percent.
+
+    Returns:
+        The table with the columns `parameter`, `unit`, `n_test`,
+        `n_reference`, `gmr`, `ci_low`, `ci_high`, `ci_level` and, for a
+        bioequivalence result, `cv_intra`, `limits` and `bioequivalent`; every
+        cell is a string.
+    """
+    entries = ratios if isinstance(ratios, Mapping) else ratios.parameters
+    scale = 100.0 if percent else 1.0
+    suffix = " %" if percent else ""
+
+    def value(number: float, factor: float = 1.0) -> str:
+        """The number on the reported scale, formatted with its suffix."""
+        cell = format_number(number * factor, digits)
+        return f"{cell}{suffix}" if cell else ""
+
+    records: list[dict[str, Any]] = []
+    for name, result in entries.items():
+        row: dict[str, Any] = {
+            "parameter": name,
+            "unit": result.unit,
+            "n_test": str(result.n_test),
+            "n_reference": str(result.n_reference),
+            "gmr": value(result.gmr, scale),
+            "ci_low": value(result.ci_low, scale),
+            "ci_high": value(result.ci_high, scale),
+            # the level is a property of the interval and not a measurement,
+            # it is written without trailing zeros ("90 %", not "90.0 %")
+            "ci_level": f"{result.ci_level * 100.0:g} %",
+        }
+        if not isinstance(result, RatioResult):
+            # a `BEParameter`, which adds the acceptance limits and the verdict
+            cv_intra = format_number(result.cv_intra * 100.0, digits)
+            row["cv_intra"] = f"{cv_intra} %" if cv_intra else ""
+            low, high = result.limits
+            row["limits"] = f"{value(low, scale)} - {value(high, scale)}"
+            row["bioequivalent"] = str(bool(result.bioequivalent))
+        records.append(row)
+    return pd.DataFrame.from_records(records)

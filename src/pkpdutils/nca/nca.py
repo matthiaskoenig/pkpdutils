@@ -57,6 +57,10 @@ from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
 
+#: half-lives the terminal phase must cover for `lambda_z_span` to be accepted;
+#: below it the row is flagged `NCAFlag.SPAN_LOW`
+SPAN_MINIMUM: float = 2.0
+
 #: unit expression per parameter, see `pkpdutils.nca.result.parameter_unit`
 PARAMETER_UNITS: dict[str, str] = {
     "cmax": "{unit}",
@@ -83,6 +87,8 @@ PARAMETER_UNITS: dict[str, str] = {
     "lambda_z_r2_adj": "dimensionless",
     "lambda_z_n_points": "dimensionless",
     "lambda_z_t_first": "{time}",
+    "lambda_z_t_last": "{time}",
+    "lambda_z_span": "dimensionless",
     "thalf": "{time}",
     "cl": "({dose}) / (({unit}) * ({time}))",
     "cl_f": "({dose}) / (({unit}) * ({time}))",
@@ -399,6 +405,9 @@ def compute_parameters(
         flags |= np.where(
             extrap > options.extrapolation_warning, NCAFlag.EXTRAPOLATION_HIGH, 0
         )
+        # the terminal phase should cover at least two half-lives
+        span = (fit.t_last - fit.t_first) / thalf
+        flags |= np.where(span < SPAN_MINIMUM, NCAFlag.SPAN_LOW, 0)
 
     # half maximum during absorption
     before_max = in_row & (idx < imax[:, None])
@@ -430,6 +439,8 @@ def compute_parameters(
         "lambda_z_r2_adj": fit.r2_adj,
         "lambda_z_n_points": fit.n_points,
         "lambda_z_t_first": fit.t_first,
+        "lambda_z_t_last": fit.t_last,
+        "lambda_z_span": span,
         "thalf": thalf,
     }
     if route is Route.IV_BOLUS:

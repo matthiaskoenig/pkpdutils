@@ -20,7 +20,11 @@ from pkpdutils.fit.options import (
     Weighting,
     decode_fit_flags,
 )
-from pkpdutils.fit.proportionality import ProportionalityResult, proportionality_test
+from pkpdutils.fit.proportionality import (
+    ProportionalityResult,
+    proportionality_table,
+    proportionality_test,
+)
 from pkpdutils.fit.result import FitResult
 
 __all__ = [
@@ -44,5 +48,6 @@ __all__ = [
     "fit_timecourse",
     "fit_timecourses",
     "parameter_unit_expression",
+    "proportionality_table",
     "proportionality_test",
 ]

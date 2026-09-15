@@ -8,7 +8,7 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Peak.** \(C_\mathrm{max}\) and \(t_\mathrm{max}\) are read from the observed points. After an extravascular dose they reflect the balance of absorption and elimination; after an intravenous bolus the concentration at time zero, \(C_0\), is not observed and is back-extrapolated from the first two points.
 
-**Terminal phase.** When absorption and distribution are over, the concentration declines mono-exponentially, \(C(t) = C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}\). The terminal rate constant \(\lambda_z\) is the slope of \(\ln C\) against \(t\) over the terminal points; the half-life is \(t_{1/2} = \ln 2 / \lambda_z\). Which points belong to the terminal phase is a judgement: the default `BEST_FIT` rule takes the window with the largest adjusted \(R^2\) among all windows of at least three points that end at \(t_\mathrm{last}\) and start after \(t_\mathrm{max}\), preferring more points when the adjusted \(R^2\) is equal within a tolerance, as Phoenix does. `LAST_N`, `ALL_AFTER_TMAX` (the rule of pkdb_analysis 0.3.1) and `MANUAL` are the alternatives. `TerminalPhase.exclude_cmax` (default `True`) restricts every window to start after \(t_\mathrm{max}\); with `exclude_cmax=False` the window start is unrestricted and every window of at least `min_points` points ending at \(t_\mathrm{last}\) is a candidate, including windows that begin before or at the maximum, which is how a curve that only rises reports `POSITIVE_SLOPE` instead of `TOO_FEW_POINTS`.
+**Terminal phase.** When absorption and distribution are over, the concentration declines mono-exponentially, \(C(t) = C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}\). The terminal rate constant \(\lambda_z\) is the slope of \(\ln C\) against \(t\) over the terminal points; the half-life is \(t_{1/2} = \ln 2 / \lambda_z\). Which points belong to the terminal phase is a judgement: the default `BEST_FIT` rule takes the window with the largest adjusted \(R^2\) among all windows of at least three points that end at \(t_\mathrm{last}\) and start after \(t_\mathrm{max}\), preferring more points when the adjusted \(R^2\) is equal within a tolerance, as Phoenix does. `LAST_N`, `ALL_AFTER_TMAX` (the rule of pkdb_analysis 0.3.1) and `MANUAL` are the alternatives. `TerminalPhase.exclude_cmax` (default `True`) restricts every window to start after \(t_\mathrm{max}\); with `exclude_cmax=False` the window start is unrestricted and every window of at least `min_points` points ending at \(t_\mathrm{last}\) is a candidate, including windows that begin before or at the maximum, which is how a curve that only rises reports `POSITIVE_SLOPE` instead of `TOO_FEW_POINTS`. How far the window reaches is the quality criterion every regulatory review asks for: the span \(\mathrm{span} = (t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\) (`lambda_z_span`, from `lambda_z_t_first` and `lambda_z_t_last`) counts the half-lives the regression covers, and a span below 2 flags the row `SPAN_LOW`: the half-life of such a curve is extrapolated from less than one doubling of the elimination and carries little information.
 
 **Clearance and volume.** With the dose \(D\), the clearance \(\mathrm{CL} = D / \mathrm{AUC}_{0\text{-}\infty}\) is the volume of plasma cleared of drug per time and the volume of distribution \(V_z = \mathrm{CL} / \lambda_z\) is the apparent volume the dose would occupy at the plasma concentration. After an extravascular dose the fraction absorbed \(F\) is unknown and both are reported relative to it as \(\mathrm{CL}/F\) (`cl_f`) and \(V_z/F\) (`vz_f`). The mean residence time \(\mathrm{MRT} = \mathrm{AUMC}_{0\text{-}\infty} / \mathrm{AUC}_{0\text{-}\infty}\) is the average time a molecule stays in the body (after an infusion of duration \(T\), minus \(T/2\)); the steady state volume \(V_\mathrm{ss} = \mathrm{CL} \cdot \mathrm{MRT}\) is reported for intravenous doses. A dose of 0, the encoding of a placebo arm, makes none of them a quantity: \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\), `auc_inf_dn` and `cmax_dn` are `NaN` there, which the analysis reports in a debug log and not with a flag, since a zero dose is a property of the data and not a finding of the analysis.
 
@@ -100,7 +100,8 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_stderr` is the standard error of the slope of the terminal regression) | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_t_first` and `lambda_z_t_last` are the first and the last point of the window; `lambda_z_stderr` is the standard error of the slope) | –, time, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
+| `lambda_z_span` | | half-lives the terminal phase covers, \((t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\); below 2 the row is flagged `SPAN_LOW` | – | \(\lambda_z\) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\), single dose analysis |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\), single dose analysis |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose, single dose analysis |
@@ -131,7 +132,7 @@ A protocol of more than one dose additionally reports the parameters of every si
 
 For effect timecourses the same interval carries `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg` and `interval_time_above` instead. The interval variables are point variables (an extra dimension) and are excluded from `to_dataframe`.
 
-Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points), `DELTA_WINDOW_CHANGE` (the delta method skipped points at which the terminal window moved, see [Uncertainty](uncertainty.md)), `INCOMPLETE_INTERVAL` (the last dosing interval is not covered by the data; its parameters and the steady state parameters are `NaN`), `EXTRAPOLATED_TROUGH` (the trough of at least one dosing interval of a bolus was regressed because the sample at the dose time carries the post-dose value).
+Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points), `DELTA_WINDOW_CHANGE` (the delta method skipped points at which the terminal window moved, see [Uncertainty](uncertainty.md)), `INCOMPLETE_INTERVAL` (the last dosing interval is not covered by the data; its parameters and the steady state parameters are `NaN`), `EXTRAPOLATED_TROUGH` (the trough of at least one dosing interval of a bolus was regressed because the sample at the dose time carries the post-dose value), `SPAN_LOW` (the terminal phase covers fewer than two half-lives, `lambda_z_span < 2`).
 
 ## API
 
@@ -172,6 +173,39 @@ result["thalf"]  # DataArray over (study, individual), attrs["units"]
 result.to_dataframe()  # one row per sample, flags decoded
 result.flag_table()  # one boolean column per flag
 ```
+
+### The parameter table of a publication
+
+`summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, and `layout` transposes the table or unfolds it into one row per parameter, group and statistic.
+
+```python
+from pkpdutils import summary_table
+
+result = nca(batch)  # batch: Timecourses over "individual", with a "dose_group"
+table = summary_table(
+    result,
+    "individual",
+    by="dose_group",
+    parameters=["auc_inf_obs", "cmax", "tmax", "thalf", "cl_f"],
+)
+print(table.to_string(index=False))
+
+# the "geometric mean [CV %]" convention of the pharmacokinetic literature
+geometric = result.summary_table(
+    "individual", parameters=["auc_inf_obs", "cmax"], stats=("n", "geomean", "geocv")
+)
+```
+
+| parameter | unit | dose_group | n | mean | sd | cv | geomean | geocv | median | min | max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| auc_inf_obs | hour * milligram / liter | 50 mg | 6 | 73.7 | 28.2 | 38.3 % | 69.5 | 38.7 % | 71.5 | 39.5 | 125 |
+| cmax | milligram / liter | 50 mg | 6 | 8.60 | 3.30 | 38.3 % | 8.12 | 38.7 % | 8.35 | 4.61 | 14.5 |
+| tmax | hour | 50 mg | 6 | 2.00 | | | | | 2.00 | 2.00 | 2.00 |
+| auc_inf_obs | hour * milligram / liter | 100 mg | 6 | 141 | 52.3 | 37.1 % | 131 | 47.2 % | 141 | 57.3 | 218 |
+| cmax | milligram / liter | 100 mg | 6 | 16.5 | 6.11 | 37.1 % | 15.3 | 47.2 % | 16.5 | 6.69 | 25.4 |
+| tmax | hour | 100 mg | 6 | 2.00 | | | | | 2.00 | 2.00 | 2.00 |
+
+The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`.
 
 Steady state, with the dosing interval:
 

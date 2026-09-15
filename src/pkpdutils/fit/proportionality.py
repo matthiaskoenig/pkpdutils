@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from pkpdutils.fit.result import FitResult
+from pkpdutils.result import format_number
 
 
 def _values(da: xr.DataArray) -> Any:
@@ -153,3 +155,64 @@ def proportionality_test(
         dose_range=(float(low), float(high)),
         criterion=(float(criterion[0]), float(criterion[1])),
     )
+
+
+def proportionality_table(
+    result: ProportionalityResult, *, digits: int = 3
+) -> pd.DataFrame:
+    """The dose proportionality table of a publication: one row per sample, formatted.
+
+    The verdict of the confidence interval criterion as a study reports it:
+    the exponent of the power model with its interval, the acceptance bounds
+    the criterion derives from the dose range, and the verdict (Smith et al.
+    2000). A result of one dose escalation is one row, a result over sample
+    dimensions one row per sample.
+
+    Args:
+        result: the verdict of `proportionality_test`.
+        digits: significant digits of the numbers.
+
+    Returns:
+        The table with the sample coordinates and the columns `slope`,
+        `ci_low`, `ci_high`, `bound_low`, `bound_high`, `dose_low`,
+        `dose_high` and `verdict` (`"proportional"`, `"inconclusive"` or
+        `"not proportional"`); every cell is a string.
+    """
+    ds = xr.Dataset(
+        {
+            "slope": result.slope,
+            "ci_low": result.ci_low,
+            "ci_high": result.ci_high,
+            "proportional": result.proportional,
+            "inconclusive": result.inconclusive,
+        }
+    )
+    dims = [str(d) for d in result.slope.dims]
+    if dims:
+        df = ds.to_dataframe().reset_index()
+    else:
+        df = pd.DataFrame([{name: float(ds[name].values) for name in ds.data_vars}])
+    columns = [column for column in df.columns if column not in ds.data_vars]
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        verdict = (
+            "proportional"
+            if bool(row["proportional"])
+            else "inconclusive"
+            if bool(row["inconclusive"])
+            else "not proportional"
+        )
+        records.append(
+            {
+                **{column: row[column] for column in columns},
+                "slope": format_number(float(row["slope"]), digits),
+                "ci_low": format_number(float(row["ci_low"]), digits),
+                "ci_high": format_number(float(row["ci_high"]), digits),
+                "bound_low": format_number(result.bounds[0], digits),
+                "bound_high": format_number(result.bounds[1], digits),
+                "dose_low": format_number(result.dose_range[0], digits),
+                "dose_high": format_number(result.dose_range[1], digits),
+                "verdict": verdict,
+            }
+        )
+    return pd.DataFrame.from_records(records)

@@ -1,9 +1,10 @@
 """Shared container of parameter results (`NCAResult`, `FitResult`): an `xarray.Dataset` over sample dimensions, units per variable, an integer `flags` variable, quantities, data frames and summaries."""
 
+import itertools
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from enum import IntFlag
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 import numpy as np
 import pandas as pd
@@ -173,7 +174,88 @@ UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
 )
 
 #: suffixes of the summary variables of a parameter (`ParameterResult.summarize`)
-SUMMARY_SUFFIXES: tuple[str, ...] = ("_median", "_q25", "_q75", "_n")
+SUMMARY_SUFFIXES: tuple[str, ...] = (
+    "_median",
+    "_q25",
+    "_q75",
+    "_min",
+    "_max",
+    "_n",
+)
+
+
+#: the summary variables every statistic of `summary_table` reads, as the
+#: suffixes of the parameter (`""` is the parameter itself, the mean)
+TABLE_STATISTICS: dict[str, tuple[str, ...]] = {
+    "n": ("_n",),
+    "mean": ("",),
+    "sd": ("_sd",),
+    "se": ("_se",),
+    "cv": ("_cv",),
+    "geomean": ("_geomean",),
+    "geocv": ("_geocv",),
+    "median": ("_median",),
+    "q25": ("_q25",),
+    "q75": ("_q75",),
+    "min": ("_min",),
+    "max": ("_max",),
+    "range": ("_min", "_max"),
+}
+
+#: statistics of `summary_table` which are fractions and are reported in percent
+PERCENT_STATISTICS: frozenset[str] = frozenset({"cv", "geocv"})
+
+#: the statistics `summary_table` reports by default
+DEFAULT_STATISTICS: tuple[str, ...] = (
+    "n",
+    "mean",
+    "sd",
+    "cv",
+    "geomean",
+    "geocv",
+    "median",
+    "min",
+    "max",
+)
+
+
+def format_number(value: float, digits: int = 3) -> str:
+    """A number rounded to significant digits, without an exponent where one is not needed.
+
+    The shared formatting of the publication tables
+    (`pkpdutils.result.summary_table`, `pkpdutils.stats.ratio_table`,
+    `pkpdutils.stats.ddi_table`, `pkpdutils.fit.proportionality_table`): the
+    value is rounded to `digits` significant digits and written in plain
+    notation while its exponent lies in `[-4, digits + 3)`, the range in which
+    the plain form is no longer than the scientific one, and in scientific
+    notation outside it.
+
+    Args:
+        value: the number; `NaN` and `None` give an empty cell.
+        digits: significant digits.
+
+    Returns:
+        The formatted number; `""` for a missing value.
+
+    Raises:
+        ValueError: if `digits` is not positive.
+    """
+    if digits < 1:
+        raise ValueError(f"'digits' must be positive, got {digits}")
+    if value is None:
+        return ""
+    number = float(value)
+    if np.isnan(number):
+        return ""
+    if np.isinf(number):
+        return "inf" if number > 0 else "-inf"
+    if number == 0.0:
+        return "0"
+    rounded = float(f"{number:.{digits}g}")
+    exponent = int(np.floor(np.log10(abs(rounded))))
+    if -4 <= exponent < digits + 3:
+        return f"{rounded:.{max(digits - 1 - exponent, 0)}f}"
+    return f"{rounded:.{digits - 1}e}"
 
 
 def base_name(name: str) -> str | None:
@@ -217,6 +299,11 @@ class ParameterResult:
     #: of it (the goodness of fit and the counts of a fit); they are no
     #: parameters and are not summarized over samples
     statistic_variables: ClassVar[frozenset[str]] = frozenset()
+    #: point variables (an extra dimension beyond the sample dimensions) which
+    #: `summarize` reduces over the sample dimension like a parameter, keeping
+    #: their extra dimension (the `interval_*` parameters of a multiple dose
+    #: analysis: the mean trough per dosing interval over the subjects)
+    summarized_point_variables: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a result dataset.
@@ -526,6 +613,52 @@ class ParameterResult:
                 df[str(flag.name)] = (values & flag.value) != 0
         return df.drop(columns=["flags"])
 
+    def summary_table(
+        self,
+        dim: str,
+        *,
+        by: str | Sequence[str] | None = None,
+        parameters: Sequence[str] | None = None,
+        stats: Sequence[str] = DEFAULT_STATISTICS,
+        digits: int = 3,
+        units: Literal["column", "header"] = "column",
+        layout: Literal[
+            "parameters_rows", "parameters_columns", "long"
+        ] = "parameters_rows",
+    ) -> pd.DataFrame:
+        """The publication parameter table of this result, see `pkpdutils.result.summary_table`.
+
+        Args:
+            dim: the sample dimension the statistics are taken over.
+            by: coordinate along `dim` to group the samples by, or several.
+            parameters: the parameters of the table, every parameter of the
+                result by default.
+            stats: the statistics of the table, see
+                `pkpdutils.result.TABLE_STATISTICS`.
+            digits: significant digits of the numbers.
+            units: whether the unit is a column of its own or part of the
+                parameter name.
+            layout: parameters as rows, as columns, or one row per parameter,
+                group and statistic.
+
+        Returns:
+            The table, every cell a formatted string.
+
+        Raises:
+            ValueError: as `pkpdutils.result.summary_table`.
+        """
+        # the module level function of the same name, the method delegates
+        return summary_table(
+            self,
+            dim,
+            by=by,
+            parameters=parameters,
+            stats=stats,
+            digits=digits,
+            units=units,
+            layout=layout,
+        )
+
     def _new(self, ds: xr.Dataset) -> Self:
         """Wrap a dataset in the concrete result type.
 
@@ -543,22 +676,30 @@ class ParameterResult:
         """Summarize the parameters of individual samples over one sample dimension.
 
         For every parameter `x` the summary carries the arithmetic mean `x`,
-        `x_sd`, `x_se`, the t-based confidence interval `x_ci_low`/`x_ci_high`
-        at `ci_level`, `x_median`, `x_q25`, `x_q75`, the count of finite values
-        `x_n` and, for log-normal parameters (`lognormal_parameters`),
+        `x_sd`, `x_se`, the coefficient of variation `x_cv` as a fraction, the
+        t-based confidence interval `x_ci_low`/`x_ci_high` at `ci_level`,
+        `x_median`, `x_q25`, `x_q75`, `x_min`, `x_max`, the count of finite
+        values `x_n` and, for log-normal parameters (`lognormal_parameters`),
         `x_geomean` and `x_geocv`; `flags` is the union of the flags of the
-        samples. The derived, the point and the statistic variables of the
-        input are dropped: a statistic (`statistic_variables`, the goodness
-        of fit and the counts of a fit) describes the analysis of one sample,
-        not a quantity of which a mean over samples would mean anything, and
-        is read from the unsummarized result.
+        samples. `pkpdutils.result.summary_table` formats these numbers into
+        the parameter table of a publication.
+
+        The derived and the statistic variables of the input are dropped: a
+        statistic (`statistic_variables`, the goodness of fit and the counts
+        of a fit) describes the analysis of one sample, not a quantity of
+        which a mean over samples would mean anything, and is read from the
+        unsummarized result. A point variable is dropped as well, unless it is
+        listed in `summarized_point_variables` (the `interval_*` parameters of
+        a multiple dose analysis), in which case it is reduced over `dim` like
+        a parameter and keeps its extra dimension.
 
         A discrete parameter (`discrete_parameters`: an observed time, a point
         count, a diagnostic of the terminal regression) carries no uncertainty:
-        a standard error or a confidence interval of a point count is not a
-        quantity, so only `x`, `x_median`, `x_q25`, `x_q75` and `x_n` are
-        reported for it, the same set the uncertainty of an analysis of group
-        curves reports (`pkpdutils.nca.uncertainty`).
+        a standard error, a coefficient of variation or a confidence interval
+        of a point count is not a quantity, so only `x`, `x_median`, `x_q25`,
+        `x_q75`, `x_min`, `x_max` and `x_n` are reported for it, the same set
+        the uncertainty of an analysis of group curves reports
+        (`pkpdutils.nca.uncertainty`).
 
         The two counts differ: `n` is the number of samples along `dim`,
         `x_n` the number of them at which `x` is finite, and every statistic of
@@ -581,7 +722,15 @@ class ParameterResult:
             raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
         alpha = 1.0 - ci_level
         data_vars: dict[str, Any] = {}
-        for name in self.parameters:
+        summarized = [
+            *self.parameters,
+            *(
+                name
+                for name in self.point_variables
+                if name in self.summarized_point_variables and dim in self.ds[name].dims
+            ),
+        ]
+        for name in summarized:
             da = self.ds[name].transpose(..., dim)
             values = da.to_numpy().astype(np.float64)
             dims = tuple(str(d) for d in da.dims if d != dim)
@@ -601,12 +750,18 @@ class ParameterResult:
                 low, high = mean - tq * se, mean + tq * se
                 median = np.nanmedian(filled, axis=-1)
                 q25, q75 = nan_percentile(filled, (25.0, 75.0))
+                minimum = np.nanmin(filled, axis=-1)
+                maximum = np.nanmax(filled, axis=-1)
+                cv = sd / np.abs(mean)
                 mean = np.where(count > 0, mean, np.nan)
                 median = np.where(count > 0, median, np.nan)
+                minimum = np.where(count > 0, minimum, np.nan)
+                maximum = np.where(count > 0, maximum, np.nan)
             data_vars[name] = (dims, mean, {"units": units})
             if name not in self.discrete_parameters:
                 data_vars[f"{name}_sd"] = (dims, sd, {"units": units})
                 data_vars[f"{name}_se"] = (dims, se, {"units": units})
+                data_vars[f"{name}_cv"] = (dims, cv, {"units": "dimensionless"})
                 data_vars[f"{name}_ci_low"] = (
                     dims,
                     np.where(count > 1, low, np.nan),
@@ -628,6 +783,8 @@ class ParameterResult:
                 np.where(count > 0, q75, np.nan),
                 {"units": units},
             )
+            data_vars[f"{name}_min"] = (dims, minimum, {"units": units})
+            data_vars[f"{name}_max"] = (dims, maximum, {"units": units})
             data_vars[f"{name}_n"] = (dims, count, {"units": "dimensionless"})
             if (
                 name in self.lognormal_parameters
@@ -666,6 +823,253 @@ class ParameterResult:
             np.bitwise_or.reduce(flags.to_numpy().astype(np.int64), axis=-1),
             {"units": "dimensionless"},
         )
-        coords = {d: self.ds[d] for d in remaining if d in self.ds.coords}
+        # the dimension coordinates of the remaining sample dimensions and of
+        # the extra dimensions of the summarized point variables (`interval`)
+        extra = {
+            str(d)
+            for name in summarized
+            for d in self.ds[name].dims
+            if str(d) != dim and str(d) not in remaining
+        }
+        coords = {
+            d: self.ds[d] for d in (*remaining, *sorted(extra)) if d in self.ds.coords
+        }
         ds = xr.Dataset(data_vars=data_vars, coords=coords, attrs=dict(self.ds.attrs))
         return self._new(ds)
+
+
+def _table_groups(
+    result: ParameterResult, dim: str, by: Sequence[str]
+) -> list[tuple[dict[str, Any], ParameterResult]]:
+    """The summaries of a result, one per group of the grouping coordinates.
+
+    Args:
+        result: the result of the individual samples.
+        dim: the sample dimension the statistics are taken over.
+        by: coordinates along `dim`, empty for one group of everything.
+
+    Returns:
+        The group labels (coordinate name to value, empty without `by`) and the
+        summary of the group over `dim`, in the order the groups first appear
+        along `dim`.
+
+    Raises:
+        ValueError: if a coordinate of `by` is not a coordinate along `dim`.
+    """
+    if not by:
+        return [({}, result.summarize(dim))]
+    for name in by:
+        if name not in result.ds.coords or tuple(result.ds[name].dims) != (dim,):
+            raise ValueError(f"'{name}' is not a coordinate along '{dim}'")
+    columns = [result.ds[name].to_numpy() for name in by]
+    keys = list(zip(*columns, strict=True))
+    groups: list[tuple[dict[str, Any], ParameterResult]] = []
+    for key in dict.fromkeys(keys):
+        positions = [i for i, other in enumerate(keys) if other == key]
+        subset = result._new(result.ds.isel({dim: positions}))
+        groups.append(
+            (dict(zip(by, key, strict=True)), subset.summarize(dim)),
+        )
+    return groups
+
+
+def _statistic_cell(
+    summary: ParameterResult,
+    name: str,
+    stat: str,
+    index: Mapping[str, int],
+    digits: int,
+) -> str:
+    """One cell of a summary table: a statistic of a parameter, formatted.
+
+    Args:
+        summary: the summary of one group.
+        name: name of the parameter.
+        stat: name of the statistic (`TABLE_STATISTICS`).
+        index: integer position per remaining sample dimension.
+        digits: significant digits of the numbers.
+
+    Returns:
+        The formatted cell, `""` where the statistic is missing (a discrete
+        parameter has no `sd`, a parameter which is not log-normal no
+        `geomean`) or not a number.
+    """
+    values: list[float] = []
+    for suffix in TABLE_STATISTICS[stat]:
+        variable = f"{name}{suffix}"
+        if variable not in summary.ds:
+            return ""
+        da = summary.ds[variable]
+        values.append(float(da.isel(index).values if index else da.values))
+    if stat == "n":
+        return "" if np.isnan(values[0]) else str(int(values[0]))
+    if stat in PERCENT_STATISTICS:
+        cell = format_number(values[0] * 100.0, digits)
+        return f"{cell} %" if cell else ""
+    if stat == "range":
+        low, high = format_number(values[0], digits), format_number(values[1], digits)
+        return f"{low} - {high}" if low and high else ""
+    return format_number(values[0], digits)
+
+
+def summary_table(
+    result: ParameterResult,
+    dim: str,
+    *,
+    by: str | Sequence[str] | None = None,
+    parameters: Sequence[str] | None = None,
+    stats: Sequence[str] = DEFAULT_STATISTICS,
+    digits: int = 3,
+    units: Literal["column", "header"] = "column",
+    layout: Literal[
+        "parameters_rows", "parameters_columns", "long"
+    ] = "parameters_rows",
+) -> pd.DataFrame:
+    """The parameter table of a publication: one row per parameter, formatted.
+
+    The statistics are those of `ParameterResult.summarize(dim)`, read from the
+    summary and formatted with `digits` significant digits as strings, so that
+    the frame goes into a manuscript (`to_csv`, `to_markdown`, `to_latex`)
+    without further rounding. `cv` and `geocv` are fractions in the summary and
+    are written as percentages (`"12.3 %"`); `range` is the two order
+    statistics in one cell (`"10.2 - 14.8"`); a statistic a parameter does not
+    carry (the `sd` of a discrete parameter, the `geomean` of a parameter which
+    is not log-normal) is an empty cell. The flags are not part of the table,
+    `ParameterResult.flag_table` reports them.
+
+    The convention of the pharmacokinetic literature, "geometric mean [CV %]",
+    is `stats=("n", "geomean", "geocv")`; the arithmetic convention
+    "mean (SD)" is `stats=("n", "mean", "sd")`.
+
+    Args:
+        result: the result of the individual samples (not a summary).
+        dim: the sample dimension the statistics are taken over, e.g.
+            `"individual"`.
+        by: coordinate along `dim` to group the samples by (the dose group,
+            the treatment), or several of them; one group of everything by
+            default.
+        parameters: the parameters of the table, in this order; every
+            parameter of the result by default.
+        stats: the statistics, in this order, see `TABLE_STATISTICS`.
+        digits: significant digits of the numbers.
+        units: `"column"` gives the unit a column of its own (a row in the
+            `"parameters_columns"` layout), `"header"` appends it to the
+            parameter name (`"cmax [milligram / liter]"`).
+        layout: `"parameters_rows"` (one row per parameter and group, one
+            column per statistic), `"parameters_columns"` (the transpose: one
+            column per parameter, one row per statistic and group) or
+            `"long"` (one row per parameter, group and statistic).
+
+    Returns:
+        The table, every cell a string.
+
+    Raises:
+        ValueError: if `dim` is not a sample dimension, a parameter is not a
+            variable of the result, a statistic is unknown, or `units` or
+            `layout` is not one of the values above.
+    """
+    if dim not in result.sample_dims:
+        raise ValueError(f"'{dim}' is not a sample dimension {result.sample_dims}")
+    unknown = [stat for stat in stats if stat not in TABLE_STATISTICS]
+    if unknown:
+        raise ValueError(
+            f"unknown statistics {unknown}, known are {sorted(TABLE_STATISTICS)}"
+        )
+    if units not in ("column", "header"):
+        raise ValueError(f"'units' must be 'column' or 'header', got '{units}'")
+    if layout not in ("parameters_rows", "parameters_columns", "long"):
+        raise ValueError(
+            "'layout' must be 'parameters_rows', 'parameters_columns' or 'long', "
+            f"got '{layout}'"
+        )
+    names = list(result.parameters if parameters is None else parameters)
+    missing = [name for name in names if name not in result.ds.data_vars]
+    if missing:
+        raise ValueError(f"{missing} are no variables of the result")
+    sample_dims = set(result.sample_dims)
+    extra = [
+        name for name in names if not set(map(str, result.ds[name].dims)) <= sample_dims
+    ]
+    if extra:
+        raise ValueError(
+            f"{extra} carry a dimension beyond the sample dimensions and have no "
+            "row in the table; the per-interval parameters are reported by "
+            "'NCAResult.intervals()' of the summary"
+        )
+    group_columns = [by] if isinstance(by, str) else list(by or [])
+    groups = _table_groups(result, dim, group_columns)
+
+    records: list[dict[str, Any]] = []
+    for labels, summary in groups:
+        rest = summary.sample_dims
+        sizes = [range(int(summary.ds.sizes[d])) for d in rest]
+        for position in itertools.product(*sizes):
+            index = dict(zip(rest, position, strict=True))
+            sample = {
+                d: (summary.ds[d].to_numpy()[i] if d in summary.ds.coords else int(i))
+                for d, i in index.items()
+            }
+            for name in names:
+                unit = result.units(name)
+                row: dict[str, Any] = {
+                    "parameter": f"{name} [{unit}]" if units == "header" else name
+                }
+                if units == "column":
+                    row["unit"] = unit
+                row.update(labels)
+                row.update(sample)
+                for stat in stats:
+                    row[stat] = _statistic_cell(summary, name, stat, index, digits)
+                records.append(row)
+
+    df = pd.DataFrame.from_records(records)
+    index_columns = [column for column in df.columns if column not in set(stats)]
+    if layout == "parameters_rows":
+        return df
+    if layout == "long":
+        # `melt` groups the frame by statistic; `_row` restores the order of
+        # the records, so that the statistics of a parameter stay together
+        long = df.assign(_row=np.arange(len(df))).melt(
+            id_vars=[*index_columns, "_row"],
+            value_vars=list(stats),
+            var_name="statistic",
+            value_name="value",
+        )
+        long = long.sort_values("_row", kind="stable").drop(columns="_row")
+        return long.reset_index(drop=True)
+    return _parameters_as_columns(df, index_columns, list(stats), units)
+
+
+def _parameters_as_columns(
+    df: pd.DataFrame, index_columns: Sequence[str], stats: Sequence[str], units: str
+) -> pd.DataFrame:
+    """Transpose a `"parameters_rows"` table to one column per parameter.
+
+    Args:
+        df: the table with one row per parameter, group and sample.
+        index_columns: the columns of `df` which are not statistics.
+        stats: the statistics, in the order of the rows of the result.
+        units: `"column"` writes the units into a row of their own.
+
+    Returns:
+        One block per group and sample, with `"statistic"` and the group
+        columns as the leading columns and one column per parameter.
+    """
+    keys = [column for column in index_columns if column not in ("parameter", "unit")]
+    blocks = df.groupby(keys, sort=False) if keys else [((), df)]
+    frames: list[pd.DataFrame] = []
+    for key, block in blocks:
+        values = key if isinstance(key, tuple) else (key,)
+        table = block.set_index("parameter")[list(stats)].T
+        if units == "column":
+            unit_row = block.set_index("parameter")["unit"].to_frame().T
+            unit_row.index = pd.Index(["unit"])
+            table = pd.concat([unit_row, table])
+        table.index.name = "statistic"
+        table = table.reset_index()
+        for column, value in reversed(list(zip(keys, values, strict=True))):
+            table.insert(0, column, value)
+        frames.append(table)
+    out = pd.concat(frames, ignore_index=True)
+    out.columns.name = None
+    return out

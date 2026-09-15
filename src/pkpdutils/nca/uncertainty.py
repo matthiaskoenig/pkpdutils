@@ -98,6 +98,8 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "temax",
         "lambda_z_n_points",
         "lambda_z_t_first",
+        "lambda_z_t_last",
+        "lambda_z_span",
         "lambda_z_intercept",
         "lambda_z_r2",
         "lambda_z_r2_adj",

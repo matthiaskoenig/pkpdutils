@@ -16,7 +16,8 @@ The names used for the variables of the result datasets, with their symbols and 
 | `cmax_half`, `tmax_half` | | half maximum during absorption | value, time | [NCA](nca.md) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | [NCA](nca.md) |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_stderr`: standard error of the slope of the terminal regression) | | [NCA](nca.md) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_t_first`, `lambda_z_t_last`: first and last point of the terminal window; `lambda_z_stderr`: standard error of the slope of the terminal regression) | | [NCA](nca.md) |
+| `lambda_z_span` | | half-lives the terminal phase covers, \((t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\); below 2 the sample is flagged `SPAN_LOW` | – | [NCA](nca.md) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed | l/h | [NCA](nca.md) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
@@ -34,12 +35,13 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auec_last`, `auec_baseline` | \(\mathrm{AUEC}\) | area under the effect curve, raw and baseline corrected | value·time | [NCA](nca.md) |
 | `emax_baseline`, `time_above` | | baseline corrected maximum, time above a threshold | value, time | [NCA](nca.md) |
 | `auec_tau`, `emin_ss`, `emax_ss`, `eavg`, `time_above_tau` | | steady state effect parameters of the last dosing interval, and `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg`, `interval_time_above` per interval | value·time, value, value, value, time | [Pharmacodynamics](pd.md) |
-| `flags` | | `NCAFlag` bits, including `INCOMPLETE_INTERVAL` and `EXTRAPOLATED_TROUGH` of a multiple dose analysis | – | [NCA](nca.md) |
+| `flags` | | `NCAFlag` bits, including `SPAN_LOW` of the terminal phase and `INCOMPLETE_INTERVAL`, `EXTRAPOLATED_TROUGH` of a multiple dose analysis | – | [NCA](nca.md) |
 | `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation over subjects of a parameter `x` (log-normal parameters) | unit of `x`, - | [Uncertainty](uncertainty.md) |
-| `x_median`, `x_q25`, `x_q75`, `x_n` | | median, quartiles and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
+| `x_median`, `x_q25`, `x_q75`, `x_min`, `x_max`, `x_n` | | median, quartiles, smallest and largest value and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
+| `x_cv` | \(\mathrm{CV}\) | coefficient of variation of a parameter `x` over the samples, \(\mathrm{sd}/\lvert \bar x \rvert\), a fraction (summary only) | 1 | [Uncertainty](uncertainty.md) |
 | `n` | | number of subjects (group data) or of samples along the reduced dimension (summary) | – | [Uncertainty](uncertainty.md) |
 | `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |
 | `p_se` | | standard error of a fitted parameter `p`, from the Jacobian or the residual bootstrap | unit of `p` | [Curve fitting](fitting.md) |

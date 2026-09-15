@@ -177,12 +177,14 @@ A parameter against a dose or a covariate is fitted along one dimension of any d
 
 ```python
 from pkpdutils import compare_models, fit_table, proportionality_test
+from pkpdutils.fit import proportionality_table
 from pkpdutils.fit.models import Allometric, BiExp, MonoExp, Power
 
 power = fit_table(Power(), nca_result.ds, "dose", "auc_inf_obs", dim="dose")
 test = proportionality_test(power, dose_range=(25, 400))
 test.slope, test.bounds, bool(test.proportional), bool(test.inconclusive)
 test.to_dict()  # the verdict as plain python values
+proportionality_table(test)  # the formatted table of the verdict
 
 allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="individual")
 
@@ -190,6 +192,12 @@ comparison = compare_models([MonoExp(), BiExp()], t, c, x_unit="hr", y_unit="mg/
 comparison.table  # one row per sample and model, with delta_aicc and akaike_weight
 comparison.best  # name of the best model per sample
 ```
+
+`proportionality_table` is the table a dose escalation reports: the exponent with its interval, the acceptance bounds the criterion derives from the dose range and the verdict, one row per sample and every number formatted with `digits` significant digits.
+
+| slope | ci_low | ci_high | bound_low | bound_high | dose_low | dose_high | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.06 | 1.04 | 1.08 | 0.893 | 1.11 | 25.0 | 200 | proportional |
 
 The units of `fit_table` come from `attrs["units"]` of the `x` and `y` variables and fall back to `dimensionless`, so a coordinate without units (the `dose` of an `NCAResult`) is best given one before the fit. A sample dimension must not share its name with a variable of the result (a dimension `k` with a model that has a rate constant `k` raises a `ValueError`), and the candidate models of `compare_models` need distinct names, which `Allometric(exponent=0.75)` gets as `allometric_0.75`.
 

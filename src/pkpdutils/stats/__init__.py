@@ -24,6 +24,7 @@ from pkpdutils.stats.ddi import (
     DDIThresholds,
     Sensitivity,
     ddi_classification,
+    ddi_table,
     substrate_sensitivity,
 )
 from pkpdutils.stats.meta import (
@@ -41,7 +42,7 @@ from pkpdutils.stats.meta import (
     meta_analysis_by,
     random_effects,
 )
-from pkpdutils.stats.ratio import RatioResult, ratio
+from pkpdutils.stats.ratio import RatioResult, ratio, ratio_table
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
@@ -99,6 +100,7 @@ __all__ = [
     "cohen_d",
     "compare",
     "ddi_classification",
+    "ddi_table",
     "effect_size",
     "effects_from_arrays",
     "exp_t_interval",
@@ -118,6 +120,7 @@ __all__ = [
     "pooled_sd",
     "random_effects",
     "ratio",
+    "ratio_table",
     "substrate_sensitivity",
     "summarize",
     "tost",

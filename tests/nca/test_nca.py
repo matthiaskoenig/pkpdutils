@@ -576,3 +576,51 @@ def test_chunk_bounds_cuts_as_array_split(n_rows: int, n_chunks: int) -> None:
     assert bounds[-1][1] == n_rows
     for (start, stop), part in zip(bounds, expected, strict=True):
         np.testing.assert_array_equal(rows[start:stop], part)
+
+
+def test_lambda_z_span_on_an_analytic_curve() -> None:
+    # C(t) = 10 exp(-0.5 t) sampled to 12 hr: the window runs from 0.5 hr to
+    # 12 hr and the half-life is ln(2)/0.5, so the span is (12 - 0.5) / thalf
+    result = nca_single(iv_timecourse())
+    q = result.to_quantities()
+    assert q["lambda_z_t_first"].magnitude == pytest.approx(0.5)
+    assert q["lambda_z_t_last"].magnitude == pytest.approx(12.0)
+    assert str(q["lambda_z_t_last"].units) == "hour"
+    assert q["lambda_z_span"].magnitude == pytest.approx(11.5 / (np.log(2) / K))
+    assert str(q["lambda_z_span"].units) == "dimensionless"
+    assert "SPAN_LOW" not in result.flags()
+
+
+def test_span_low_flag_on_a_short_terminal_phase() -> None:
+    # four points over one half-life: the span is 1 and below the limit of 2
+    thalf = np.log(2) / K
+    t = np.array([0.0, thalf / 3, 2 * thalf / 3, thalf])
+    tc = Timecourse(
+        time=t,
+        value=C0 * np.exp(-K * t),
+        time_unit="hr",
+        unit="mg/l",
+        dose=IV_DOSE,
+        substance="x",
+    )
+    result = nca_single(
+        tc, options=NCAOptions(terminal=TerminalPhase(exclude_cmax=False))
+    )
+    assert result.to_quantities()["lambda_z_span"].magnitude == pytest.approx(1.0)
+    assert "SPAN_LOW" in result.flags()
+
+
+def test_span_is_nan_without_a_terminal_phase() -> None:
+    tc = Timecourse(
+        time=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        time_unit="hr",
+        unit="mg/l",
+        dose=IV_DOSE,
+        substance="x",
+    )
+    result = nca_single(tc)
+    q = result.to_quantities()
+    assert np.isnan(q["lambda_z_span"].magnitude)
+    assert np.isnan(q["lambda_z_t_last"].magnitude)
+    assert "SPAN_LOW" not in result.flags()

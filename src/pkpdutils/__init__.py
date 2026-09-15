@@ -13,9 +13,10 @@ exchange formats of the field (event records, PKNCA tables, CDISC ADNCA) and
 script that draws nothing does not pay for).
 
 The namespace carries what an analysis needs: the data model, the front ends
-of the analyses, the options with the enumerations which configure them and
-the model library of the fit, so that a script imports from `pkpdutils` and
-`pkpdutils.plot` only.
+of the analyses, the options with the enumerations which configure them, the
+model library of the fit and `summary_table`, the parameter table of a
+publication, so that a script imports from `pkpdutils` and `pkpdutils.plot`
+only.
 """
 
 import importlib
@@ -69,6 +70,7 @@ from pkpdutils.nca import (
     nca_single,
     partial_auc,
 )
+from pkpdutils.result import summary_table
 from pkpdutils.stats import (
     ParameterSample,
     bioequivalence,
@@ -93,7 +95,6 @@ if TYPE_CHECKING:
 
 __version__ = "1.0.1.dev0"
 
-# `summary_table` is exported by Task C2
 __all__ = [
     "Q_",
     "AUCMethod",
@@ -151,6 +152,7 @@ __all__ = [
     "plot",
     "proportionality_test",
     "ratio",
+    "summary_table",
     "ureg",
 ]
 

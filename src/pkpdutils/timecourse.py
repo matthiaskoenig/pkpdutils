@@ -34,6 +34,7 @@ tc = Timecourse(
 """
 
 import logging
+import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -1458,6 +1459,29 @@ def _sort_protocol_rows(
     return flat[0].reshape(shape), flat[1].reshape(shape), flat[2].reshape(shape)
 
 
+def _label_mask(labels: np.ndarray, value: Any) -> np.ndarray:
+    """Which entries of a coordinate a label, a list of labels or a slice selects.
+
+    Args:
+        labels: the values of the coordinate.
+        value: a label, a list or array of labels, or a `slice` of labels whose
+            bounds are both included, as in `xarray.Dataset.sel`.
+
+    Returns:
+        The boolean mask of the selected entries.
+    """
+    if isinstance(value, slice):
+        mask = np.ones(labels.shape, dtype=bool)
+        if value.start is not None:
+            mask &= labels >= value.start
+        if value.stop is not None:
+            mask &= labels <= value.stop
+        return mask
+    if isinstance(value, list | tuple | np.ndarray):
+        return np.isin(labels, np.asarray(value))
+    return labels == value
+
+
 def _dose_variables(
     amounts: np.ndarray,
     times: np.ndarray,
@@ -2809,6 +2833,315 @@ class Timecourses:
         for name, (dims, values, attrs) in regridded.items():
             ds[name] = xr.DataArray(values, dims=dims, attrs=attrs)
         return ds
+
+    def _coordinate_dim(self, name: str) -> str:
+        """The sample dimension a coordinate of the batch lives on.
+
+        Args:
+            name: name of a sample dimension or of a coordinate along one.
+
+        Returns:
+            The sample dimension.
+
+        Raises:
+            ValueError: if `name` is neither a sample dimension nor a
+                coordinate along exactly one of them.
+        """
+        if name in self.sample_dims:
+            return name
+        if name not in self.ds.coords:
+            raise ValueError(
+                f"'{name}' is neither a sample dimension {self.sample_dims} nor a "
+                "coordinate of the batch"
+            )
+        dims = tuple(str(d) for d in self.ds[name].dims)
+        if len(dims) != 1 or dims[0] not in self.sample_dims:
+            raise ValueError(
+                f"coordinate '{name}' has the dimensions {dims}, a selection needs "
+                f"a coordinate along one sample dimension {self.sample_dims}"
+            )
+        return dims[0]
+
+    def select(self, **indexers: Any) -> "Timecourses":
+        """A sub-batch by label, list or slice on the sample dimensions and their coordinates.
+
+        The counterpart of `sel`, which returns a single `Timecourse` and needs
+        a label for every sample dimension: `select` keeps the dimensions and
+        returns a batch, so that the arm of a study, a dose group or the
+        subjects of a period can be analysed on their own. A single label
+        therefore does not drop its dimension, it keeps it with one sample.
+
+        The name of an indexer is a sample dimension or a coordinate along one
+        (`treatment`, `sex`, the dose group of the individuals, as the readers
+        of `pkpdutils.io` build them); its value is a label, a list of labels
+        or a `slice` of labels, whose bounds are both included, as in
+        `xarray.Dataset.sel`. A sample dimension without labels is selected by
+        integer position.
+
+        Args:
+            **indexers: label, list of labels or slice per sample dimension or
+                coordinate along one.
+
+        Returns:
+            The sub-batch.
+
+        Raises:
+            ValueError: if a name is neither a sample dimension nor a
+                coordinate along one, or if no sample of the batch matches.
+        """
+        ds = self.ds
+        for name, value in indexers.items():
+            dim = self._coordinate_dim(name)
+            if name == dim:
+                selector = (
+                    value if isinstance(value, slice | list | np.ndarray) else [value]
+                )
+                # a sample dimension without labels selects by integer position
+                ds = (
+                    ds.sel({dim: selector})
+                    if name in ds.coords
+                    else ds.isel({dim: selector})
+                )
+            else:
+                labels = ds[name].to_numpy()
+                mask = _label_mask(labels, value)
+                ds = ds.isel({dim: np.flatnonzero(mask)})
+            if ds.sizes[dim] == 0:
+                raise ValueError(f"no sample of the batch has {name} = {value!r}")
+        return Timecourses(ds)
+
+    def groupby(self, coord: str) -> Iterator[tuple[Any, "Timecourses"]]:
+        """Iterate over the groups of a coordinate as sub-batches.
+
+        The groups come in the order of their first appearance along the
+        dimension of the coordinate, so that a study keeps the order of its
+        table; every group is a `Timecourses` with the same layout as the
+        batch.
+
+        Args:
+            coord: a sample dimension or a coordinate along one, e.g. the dose
+                group or the treatment of the individuals.
+
+        Yields:
+            The value of the coordinate and the sub-batch of the samples
+            carrying it.
+
+        Raises:
+            ValueError: if `coord` is neither a sample dimension nor a
+                coordinate along one.
+        """
+        dim = self._coordinate_dim(coord)
+        if coord not in self.ds.coords:
+            raise ValueError(f"dimension '{coord}' of the batch has no labels")
+        labels = self.ds[coord].to_numpy()
+        for value in pd.unique(labels):
+            positions = np.flatnonzero(labels == value)
+            yield value, Timecourses(self.ds.isel({dim: positions}))
+
+    def mean(
+        self,
+        dim: str,
+        *,
+        spread: Literal["sd", "se"] = "sd",
+        min_n: int = 1,
+    ) -> "Timecourses":
+        r"""The mean curve over one sample dimension, with its spread and count.
+
+        The group curve a publication reports: at every time point the
+        arithmetic mean \(\bar c_j\) of the samples with a finite value there,
+        their standard deviation \(s_j\) (\(n_j - 1\) degrees of freedom) and
+        the standard error \(s_j / \sqrt{n_j}\); a point covered by fewer than
+        `min_n` samples is `NaN`. `n` is the largest number of samples a time
+        point of the curve is covered by, the number of subjects of the group.
+
+        The group curve carries `sd` and `se`. The statistic `spread` names is
+        the one computed from the curves and the other follows from it through
+        the relation \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\) of the stored `n`,
+        which a `Timecourse` keeps as well: with `"sd"` the standard deviation
+        is the scatter of the curves, with `"se"` the standard error is the
+        scatter divided by the root of the count of its own time point. The
+        two agree wherever every sample covers the point and differ only at a
+        point some samples are missing from.
+
+        The samples need a shared sampling grid; a ragged batch is placed on
+        the union of the grids of its samples first, with `NaN` where a sample
+        has no point at the time of another. An existing `sd`, `se` or `n` of
+        the samples is not propagated: the spread of the group curve is the
+        scatter of the curves which were reduced.
+
+        The dosing protocol of the group is the protocol of its samples when
+        they share one, and the protocol of the first sample with a warning
+        when they do not; `relative_to_dose` aligns the samples beforehand
+        when they were dosed at different times.
+
+        Args:
+            dim: the sample dimension to reduce.
+            spread: the statistic which is computed from the curves, the other
+                one is derived from it through `n`.
+            min_n: fewest samples a time point must be covered by.
+
+        Returns:
+            The batch of group curves over the remaining sample dimensions.
+
+        Raises:
+            ValueError: if `dim` is not a sample dimension or `min_n` is not
+                positive.
+        """
+        if dim not in self.sample_dims:
+            raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
+        if min_n < 1:
+            raise ValueError(f"'min_n' must be positive, got {min_n}")
+        if spread not in ("sd", "se"):
+            raise ValueError(f"'spread' must be 'sd' or 'se', got '{spread}'")
+        batch = self
+        if TIMES_VAR in self.ds:
+            batch = Timecourses(
+                self._shifted_times(np.zeros(self.sample_shape), uniform=False)
+            )
+        rest = tuple(d for d in batch.sample_dims if d != dim)
+        values = batch.ds["value"].transpose(dim, *rest, TIME_DIM).to_numpy()
+        finite = np.isfinite(values)
+        count = finite.sum(axis=0).astype(np.float64)
+        enough = count >= min_n
+        with (
+            np.errstate(invalid="ignore", divide="ignore"),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mean = np.where(enough, np.nanmean(values, axis=0), np.nan)
+            scatter = np.where(
+                enough & (count > 1), np.nanstd(values, axis=0, ddof=1), np.nan
+            )
+            n = np.max(np.where(enough, count, 0.0), axis=-1)
+            root_n = np.sqrt(n)[..., None]
+            if spread == "sd":
+                sd = scatter
+                se = sd / root_n
+            else:
+                se = scatter / np.sqrt(count)
+                sd = se * root_n
+
+        unit = batch.unit
+        data_vars: dict[str, Any] = {
+            "value": ((*rest, TIME_DIM), mean, {"units": unit}),
+            "sd": ((*rest, TIME_DIM), sd, {"units": unit}),
+            "se": ((*rest, TIME_DIM), se, {"units": unit}),
+            "n": (rest, n, {"units": "dimensionless"}),
+        }
+        ds = xr.Dataset(
+            data_vars=data_vars,
+            coords={
+                TIME_DIM: batch.ds[TIME_DIM],
+                **{
+                    str(name): coord
+                    for name, coord in batch.ds.coords.items()
+                    if str(name) not in (TIME_DIM, dim)
+                    and dim not in tuple(str(d) for d in coord.dims)
+                    and DOSE_DIM not in tuple(str(d) for d in coord.dims)
+                },
+            },
+            attrs=dict(batch.ds.attrs),
+        )
+        dose = batch._group_dosing(dim)
+        if dose is not None:
+            ds = ds.assign(dose)
+            ds = ds.assign_coords({DOSE_DIM: batch.ds[DOSE_DIM]})
+        return Timecourses(ds)
+
+    def dose_normalized(
+        self, reference: float | Quantity | None = None
+    ) -> "Timecourses":
+        r"""The values divided by the dose, for the overlay of several dose levels.
+
+        Dose normalization removes the dose from the curves of a dose
+        escalation: with linear kinetics the normalized curves
+        \(c(t) / D\) of every dose level fall on top of each other, and a
+        deviation from that overlay is the figure of a dose dependency.
+        Every sample is divided by the amount of its first dose, or by
+        `reference` when one is given, and `sd` and `se` are divided with it;
+        the unit of the values becomes `unit / dose_unit`, simplified by pint
+        (`"nanogram / milliliter"` per `"milligram"` gives
+        `"nanogram / milligram / milliliter"`). The doses themselves are kept,
+        so that a figure still draws them, and a sample without a dose amount
+        becomes `NaN`.
+
+        Args:
+            reference: the amount every sample is divided by, as a number in
+                the dose unit of the batch or as a pint quantity converted to
+                it; `None` divides every sample by its own first dose.
+
+        Returns:
+            The normalized batch.
+
+        Raises:
+            ValueError: without doses, if `reference` is not positive or
+                carries a unit which is not a dose unit of the batch.
+        """
+        amounts = self.first_dose_amount
+        dose_unit = self.dose_unit
+        if amounts is None or dose_unit is None:
+            raise ValueError("The batch carries no doses to normalize with")
+        n_doses = self.n_doses
+        if n_doses is not None and int(np.nanmax(n_doses)) > 1:
+            logger.warning(
+                "the protocol of a sample has more than one dose; the values are "
+                "normalized with the first dose of every sample"
+            )
+        if reference is None:
+            divisor = np.asarray(amounts, dtype=np.float64)
+        else:
+            if isinstance(reference, Quantity):
+                reference = float(reference.to(dose_unit).magnitude)
+            if not float(reference) > 0:
+                raise ValueError(f"'reference' must be positive, got {reference}")
+            divisor = np.full(self.sample_shape, float(reference))
+        unit = str((Q_(1.0, self.unit) / Q_(1.0, dose_unit)).units)
+        ds = self.ds.copy()
+        factor = xr.DataArray(divisor, dims=self.sample_dims)
+        for name in ("value", "sd", "se"):
+            if name in ds:
+                attrs = dict(ds[name].attrs)
+                attrs["units"] = unit
+                ds[name] = ds[name] / factor
+                ds[name].attrs.update(attrs)
+        ds.attrs["unit"] = unit
+        return Timecourses(ds)
+
+    def _group_dosing(self, dim: str) -> dict[str, xr.DataArray] | None:
+        """The dose variables of a group curve reduced over one sample dimension.
+
+        Args:
+            dim: the reduced sample dimension.
+
+        Returns:
+            `dose_amount`, `dose_time` and `dose_duration` of the group,
+            `None` for a batch without doses; the protocol of the first
+            sample, with a warning, when the samples of a group do not share
+            one protocol.
+        """
+        if not self.has_dose:
+            return None
+        names = ("dose_amount", "dose_time", "dose_duration")
+        first = {name: self.ds[name].isel({dim: 0}, drop=True) for name in names}
+        shared = all(
+            bool(
+                np.all(
+                    np.isclose(
+                        rows := self.ds[name].transpose(dim, ...).to_numpy(),
+                        rows[:1],
+                        equal_nan=True,
+                    )
+                )
+            )
+            for name in names
+        )
+        if not shared:
+            logger.warning(
+                "the samples of the group differ in their dosing protocol; the "
+                "mean curve carries the protocol of the first sample along '%s'",
+                dim,
+            )
+        return first
 
     def dosing_of(self, **indexers: Any) -> Dosing | None:
         """The dosing protocol of one sample, selected by coordinate label.
