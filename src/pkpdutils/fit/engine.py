@@ -1071,8 +1071,13 @@ def build_result(
         np.array([r.flags for r in rows], dtype=np.int64).reshape(sample_shape),
         {"units": "dimensionless"},
     )
+    # a sample dimension can share its name with a parameter or a derived
+    # quantity of the model (e.g. a scan dimension "k" fitted with a model
+    # that also has a rate constant "k"); the fitted variable then takes
+    # the name, so the coordinate of that dimension is dropped rather than
+    # conflicting with it.
     all_coords: dict[str, Any] = {
-        **coords,
+        **{name: value for name, value in coords.items() if name not in data_vars},
         "parameter": list(names),
         "parameter_": list(names),
     }

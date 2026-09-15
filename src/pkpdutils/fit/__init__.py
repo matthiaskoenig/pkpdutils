@@ -5,11 +5,13 @@
 `docs/fitting.md`; `FitOptions` selects the scale, the weighting and the
 multi-start and bootstrap settings, `FitResult` holds the parameters.
 `compare_models` fits several models to the same data and ranks them by the
-corrected Akaike information criterion.
+corrected Akaike information criterion. `proportionality_test` applies the
+confidence interval criterion of dose proportionality to a `Power` fit.
 """
 
 from pkpdutils.fit.compare import ModelComparison, compare_models
 from pkpdutils.fit.engine import RowFit, build_result, fit, fit_row, fit_rows
+from pkpdutils.fit.frontends import fit_table, fit_timecourses
 from pkpdutils.fit.model import Model, ModelParameter, parameter_unit_expression
 from pkpdutils.fit.options import (
     FitFlag,
@@ -18,6 +20,7 @@ from pkpdutils.fit.options import (
     Weighting,
     decode_fit_flags,
 )
+from pkpdutils.fit.proportionality import proportionality_test
 from pkpdutils.fit.result import FitResult
 
 __all__ = [
@@ -36,5 +39,8 @@ __all__ = [
     "fit",
     "fit_row",
     "fit_rows",
+    "fit_table",
+    "fit_timecourses",
     "parameter_unit_expression",
+    "proportionality_test",
 ]
