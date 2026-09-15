@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 
 from pkpdutils.nca.intervals import INTERVAL_DIM
 from pkpdutils.nca.options import decode_flags
@@ -240,7 +241,8 @@ def plot_intervals(
     Without `indexers`, one line per sample of the result, labelled with the
     sample's coordinate values; with `indexers` selecting one sample, a single
     line. Non-finite values (an incomplete interval) are masked so the line
-    breaks there instead of raising a matplotlib warning.
+    breaks there instead of raising a matplotlib warning. The x axis carries
+    the integer interval numbers only, never a fractional tick.
 
     Args:
         result: the result of a multiple dose analysis
@@ -306,6 +308,7 @@ def plot_intervals(
             )
         if n > 1:
             ax.legend(fontsize="small")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xlabel(INTERVAL_DIM)
     ax.set_ylabel(f"{name} [{result.units(name)}]")
     return fig

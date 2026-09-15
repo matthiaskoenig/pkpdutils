@@ -172,6 +172,11 @@ def test_plot_intervals_one_line_per_sample() -> None:
     assert len(ax.get_lines()) == 2
     assert ax.get_ylabel().startswith("interval_auc [")
     assert ax.get_xlabel() == "interval"
+    fig.canvas.draw()
+    tick_labels = [
+        label.get_text() for label in ax.xaxis.get_ticklabels() if label.get_text()
+    ]
+    assert tick_labels and all("." not in label for label in tick_labels), tick_labels
     matplotlib.pyplot.close(fig)
 
 
