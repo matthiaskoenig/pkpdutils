@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+import xarray as xr
 from matplotlib.axes import Axes
 
 import pkpdutils
@@ -215,3 +216,64 @@ def test_the_batch_and_the_curve_convert_into_each_other() -> None:
     batch = tc.to_batch(dim="subject", label="x")
     assert isinstance(batch, Timecourses)
     assert batch.sel(subject="x") == tc.model_copy(update={"label": "x"})
+
+
+def test_every_figure_draws_into_the_axes_it_is_given() -> None:
+    """`ax` draws one panel, `axes` the panels of a multi-panel figure."""
+    import matplotlib.pyplot as plt
+
+    from pkpdutils import Power, fit_table, proportionality_test
+    from pkpdutils.plot import (
+        plot_bland_altman,
+        plot_dose_proportionality,
+        plot_fit,
+        plot_goodness_of_fit,
+        plot_intervals,
+        plot_nca,
+        plot_nca_grid,
+        plot_timecourse,
+    )
+
+    tc = curve()
+    batch = tc.to_batch()
+    result = nca(batch)
+    doses = np.array([25.0, 50.0, 100.0, 200.0])
+    table = xr.Dataset(
+        {"auc": (("dose",), 2.0 * doses**1.05)},
+        coords={"dose": doses},
+    )
+    power = fit_table(Power(), table, "dose", "auc", dim="dose")
+    fig, grid = plt.subplots(nrows=2, ncols=2)
+    assert plot_timecourse(tc, ax=grid[0][0]) is fig
+    assert plot_goodness_of_fit(power, ax=grid[0][1]) is fig
+    assert plot_bland_altman(power, ax=grid[1][0]) is fig
+    assert (
+        plot_dose_proportionality(
+            power,
+            test=proportionality_test(power, dose_range=(25.0, 200.0)),
+            ax=grid[1][1],
+        )
+        is fig
+    )
+    assert grid[0][0].get_xlabel().startswith("time")
+    panels, panel_grid = plt.subplots(nrows=1, ncols=2)
+    assert plot_nca(tc, result, axes=panel_grid, individual="s1") is panels
+    assert plot_nca_grid(batch, result, ncols=1, axes=[panel_grid[0]]) is panels
+    assert plot_fit(power, axes=panel_grid) is panels
+    plt.close("all")
+    # `plot_intervals` draws into an axes as well
+    single, ax = plt.subplots()
+    protocol = pkpdutils.Dosing.regimen(
+        Dose(amount=100, unit="mg", route=Route.IV_BOLUS), interval=6.0, n_doses=3
+    )
+    times = np.array([0.5, 1.0, 3.0, 6.5, 7.0, 9.0, 12.5, 13.0, 15.0, 17.0])
+    multi = Timecourse(
+        time=times,
+        value=10.0 * np.exp(-0.25 * (times % 6.0)),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    intervals = nca_single(multi)
+    assert plot_intervals(intervals, "interval_auc", ax=ax) is single
+    plt.close("all")
