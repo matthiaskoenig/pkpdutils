@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pkpdutils import Dosing, Route, Timecourses
+from pkpdutils import Dosing, Route, Timecourses, nca
 from pkpdutils.io import read_adnca, read_events, read_pknca, write_events
 
 DATA = Path(__file__).parent / "data" / "formats"
@@ -90,6 +90,52 @@ def test_read_events_repeated_doses_need_an_interval() -> None:
     with pytest.raises(ValueError, match="subject '3'") as excinfo:
         read_events(df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL)
     assert "'ADDL'/'SS' need a positive 'II'" in str(excinfo.value)
+
+
+def test_read_events_without_evid_reads_a_dose_row_as_a_dose_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # a bolus written without an `EVID` column: the dose row carries `DV = 0`,
+    # which is not an observation of the subject (NM-TRAN). Read as one, it
+    # would add the point (0, 0) and destroy `c0` and `auc_last`
+    df = pd.DataFrame(
+        {
+            "ID": np.array([1, 1, 1, 1]),
+            "TIME": np.array([0.0, 1.0, 4.0, 8.0]),
+            "DV": np.array([0.0, 4.0, 2.0, 1.0]),
+            "AMT": np.array([100.0, 0.0, 0.0, 0.0]),
+        }
+    )
+    with caplog.at_level("WARNING", logger="pkpdutils.io"):
+        batch = read_events(
+            df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.IV_BOLUS
+        )
+    tc = batch.sel(individual=1)
+    assert tc.time.tolist() == [1.0, 4.0, 8.0]
+    assert tc.value.tolist() == [4.0, 2.0, 1.0]
+    assert batch.dosing_of(individual=1) == Dosing(
+        amounts=np.array([100.0]),
+        times=np.array([0.0]),
+        unit="mg",
+        route=Route.IV_BOLUS,
+    )
+    assert (
+        "1 dose rows carry a DV value which is ignored (no EVID column)" in caplog.text
+    )
+
+
+def test_read_events_rejects_evid_4() -> None:
+    df = events()
+    df.loc[df["ID"] == 2, "EVID"] = df.loc[df["ID"] == 2, "EVID"].replace(1, 4)
+    with pytest.raises(ValueError, match=r"EVID 4 \(reset and dose\) at subject 2"):
+        read_events(df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL)
+
+
+def test_read_events_rejects_an_unknown_ss_value() -> None:
+    df = events()
+    df.loc[df["ID"] == 3, "SS"] = df.loc[df["ID"] == 3, "SS"].replace(1, 2)
+    with pytest.raises(ValueError, match=r"Unknown 'SS' value 2 at subject 3"):
+        read_events(df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL)
 
 
 def test_read_events_warns_about_a_varying_column(
@@ -223,6 +269,18 @@ def test_read_pknca_subject_without_doses() -> None:
     assert batch.dosing_of(individual=1) is None
     assert batch.dosing_of(individual=2) is not None
     assert batch.sel(individual=1).dosing is None
+    # the subject without doses is analysed: the dose-independent parameters
+    # are computed on its times as they are, only the dose-dependent ones are
+    # `NaN`, and the sample is not flagged as having no data
+    result = nca(batch)
+    cmax = result["cmax"].to_numpy()
+    assert np.isfinite(cmax).all() and cmax[0] == pytest.approx(4.2)
+    assert result["n_doses"].to_numpy().tolist() == [0.0, 2.0]
+    cl_ss_f = result["cl_ss_f"].to_numpy()
+    assert np.isnan(cl_ss_f[0]) and np.isfinite(cl_ss_f[1])
+    assert not result.flag_table()["NO_DATA"].any()
+    # the batch is analysed over the dosing intervals: no single dose quantities
+    assert np.isnan(result["cl_f"].to_numpy()).all()
 
 
 def test_read_pknca_infusion_duration() -> None:
@@ -256,10 +314,17 @@ def test_read_adnca_analyte_route_and_units() -> None:
         read_adnca(df.assign(ROUTE="SUBLINGUAL"))
 
 
+def test_read_adnca_cannot_read_an_infusion_protocol() -> None:
+    # the dataset carries no duration: an infusion protocol is not readable
+    df = pd.read_csv(DATA / "adnca.csv")
+    with pytest.raises(ValueError, match="duration"):
+        read_adnca(df, route=Route.IV_INFUSION)
+
+
 def test_read_adnca() -> None:
     df = pd.read_csv(DATA / "adnca.csv")
     batch = read_adnca(df)
-    assert batch.unit in ("ng/mL", "nanogram / milliliter")
+    assert batch.unit == "ng/mL"  # the unit as the 'AVALU' column spells it
     assert batch.route is Route.ORAL and batch.substance == "XAN"
     assert batch.dosing_of(individual="S2") == Dosing(
         amounts=np.array([100.0, 100.0]),

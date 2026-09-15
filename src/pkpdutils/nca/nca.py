@@ -101,6 +101,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "accumulation_ratio": "dimensionless",
     "accumulation_ratio_obs": "dimensionless",
     "cl_ss": "({dose}) / (({unit}) * ({time}))",
+    "cl_ss_f": "({dose}) / (({unit}) * ({time}))",
     "auec_tau": "({unit}) * ({time})",
     "emin_ss": "{unit}",
     "emax_ss": "{unit}",
@@ -238,8 +239,11 @@ def compute_parameters(
     Args:
         t: times `(N, n)`, `NaN` for missing points
         c: values `(N, n)`, `NaN` for missing values
-        dose_amount: dose per row `(N,)`, `None` without doses
-        dose_time: time of the dose per row, `None` for 0
+        dose_amount: dose per row `(N,)`, `None` without doses (`NaN` for a row
+            without a dose in a batch which has them)
+        dose_time: time of the dose per row, `None` for 0; a row without a dose
+            carries `NaN` and its times are kept as they are, so that the
+            dose-independent parameters of the row are still computed
         dose_duration: infusion duration per row (`NaN` without infusion), `None` for none
         route: route of the batch, `None` without doses
         options: the options
@@ -250,7 +254,10 @@ def compute_parameters(
     t = np.asarray(t, dtype=np.float64)
     c = np.asarray(c, dtype=np.float64)
     if dose_time is not None:
-        t = t - dose_time[:, None]
+        # a row without a dose is not shifted: its times are already the times
+        # of the curve and only the dose-dependent parameters stay `NaN`
+        shift = np.where(np.isfinite(dose_time), dose_time, 0.0)
+        t = t - shift[:, None]
     if options.kind is Kind.EFFECT:
         return _effect_parameters(t, c, options)
 
@@ -417,8 +424,10 @@ def reference_dose(
 
     Returns:
         The amount, the time and the duration of the reference dose, each
-        `(N,)` (`NaN` for a row without a dose) or `None` where the input is
-        `None`.
+        `(N,)` or `None` where the input is `None`. A row without a dose - a
+        subject of an exchange format whose dose records are missing - gets
+        `NaN`: `compute_parameters` then leaves its times unshifted and reports
+        its dose-independent parameters, the dose-dependent ones being `NaN`.
     """
     arrays = [
         None if a is None else np.asarray(a, dtype=np.float64)

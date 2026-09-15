@@ -2,14 +2,12 @@
 
 Builds a BID batch, writes it as event records with `to_events`, reads the
 table back with `from_events` and runs the multiple dosing NCA on it; then
-reads a small ADNCA fixture with `from_adnca` and prints the recovered dosing
+reads a small ADNCA extract with `from_adnca` and prints the recovered dosing
 protocols.
 
 Run from the root of the repository with `python -m examples.formats`.
 Writes `events.csv` and `formats.png` into the working directory.
 """
-
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,9 +17,25 @@ from pkpdutils.console import console
 from pkpdutils.nca import AUCMethod
 from pkpdutils.plot import plot_intervals
 
-#: fixture of the design spec, `tests/data/formats/adnca.csv` relative to the
-#: repository root (this file lives in `examples/`, one level below it)
-ADNCA_PATH = Path(__file__).parents[1] / "tests" / "data" / "formats" / "adnca.csv"
+#: a small CDISC ADaM ADNCA (ADPC) extract: one row per concentration record,
+#: the time since the first dose (`AFRLT`) and since the reference dose
+#: (`ARRLT`), the pre-dose record of the second interval duplicated into the
+#: first one (`DTYPE == "COPY"`)
+ADNCA = pd.DataFrame(
+    {
+        "USUBJID": ["S1", "S1", "S1", "S2", "S2", "S2", "S2", "S2"],
+        "PARAMCD": ["XAN"] * 8,
+        "AVAL": [0.05, 4.2, 1.0, 4.0, 1.1, 1.1, 5.5, 2.0],
+        "AVALU": ["ng/mL"] * 8,
+        "AFRLT": [0.5, 1.0, 12.0, 1.0, 12.0, 12.0, 13.0, 24.0],
+        "ARRLT": [0.5, 1.0, 12.0, 1.0, 12.0, 0.0, 1.0, 12.0],
+        "DOSEA": [100.0] * 8,
+        "DOSEU": ["mg"] * 8,
+        "ROUTE": ["ORAL"] * 8,
+        "DTYPE": [None, None, None, None, None, "COPY", None, None],
+        "ALLOQ": [0.1] * 8,
+    }
+)
 
 individuals = ["s1", "s2", "s3", "s4"]
 dose = Dose(amount=100, unit="mg", time=0, route=Route.ORAL)
@@ -110,6 +124,6 @@ if __name__ == "__main__":
     console.print("written: events.csv, formats.png")
 
     console.rule("CDISC ADaM ADNCA: recovered dosing protocols")
-    adnca_batch = Timecourses.from_adnca(pd.read_csv(ADNCA_PATH), analyte="XAN")
+    adnca_batch = Timecourses.from_adnca(ADNCA, analyte="XAN")
     for label in adnca_batch.ds["individual"].to_numpy():
         console.print(str(label), adnca_batch.dosing_of(individual=str(label)))

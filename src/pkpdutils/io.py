@@ -7,7 +7,7 @@ batch with one sample dimension, the times as given (a reader never shifts the
 time axis), one route and the dosing protocol of every subject:
 
 - **event records** (`read_events`, `write_events`): the one row per event
-  format of NONMEM and Monolix, a row being a dose (`EVID 1`/`4`) or an
+  format of NONMEM and Monolix, a row being a dose (`EVID 1`) or an
   observation (`EVID 0`). Repeated doses are given explicitly, as `ADDL`
   additional doses at the interdose interval `II`, or as a steady state dose
   (`SS 1`); see Bauer (2019) and the Monolix data format documentation.
@@ -373,15 +373,20 @@ def read_events(
 ) -> Timecourses:
     """Read a batch from event records, the NONMEM and Monolix format.
 
-    A row of the table is one event of one subject: a dose when `EVID` is 1 or
-    4 (without an `EVID` column when `AMT > 0`), an observation when `EVID` is
-    0 (or there is no `EVID` column), `MDV` is 0 (or there is no `MDV` column)
-    and `DV` is not missing. Rows with `EVID` 2 (other type event) or 3 (reset)
-    are dropped and counted in a warning (Bauer 2019). The two rules are read
-    independently, so without an `EVID` column a row with `AMT > 0` and a
-    value in `DV` is both a dose and an observation: a table which records a
-    dose and a sample in one row needs no `EVID` column, a table which does not
-    needs one.
+    A row of the table is one event of one subject: a dose when `EVID` is 1, an
+    observation when `EVID` is 0, `MDV` is 0 (or there is no `MDV` column) and
+    `DV` is not missing. Rows with `EVID` 2 (other type event) or 3 (reset) are
+    dropped and counted in a warning; `EVID` 4 (reset and dose) raises, since a
+    reset starts a new period which the reader would silently merge into the
+    protocol of the subject (Bauer 2019). A row with `EVID` 1 and a value in
+    `DV` is a dose and an observation, which is how a table records a dose and
+    a sample at the same time.
+
+    Without an `EVID` column a row with `AMT > 0` is a dose and nothing else,
+    the NM-TRAN semantics of a table without event identifiers; every other row
+    with a value in `DV` is an observation. A `DV` on such a dose row is
+    ignored and counted in a warning: a table which records a dose and a sample
+    in one row needs an `EVID` column.
 
     The duration of an infusion is `TINF` (Monolix) when it is positive, else
     `AMT / RATE` for a positive `RATE`; modelled rates (`RATE -1`, `RATE -2`)
@@ -431,10 +436,11 @@ def read_events(
 
     Raises:
         ValueError: if a required column (`id`, `time`, `dv`) is missing, if a
-            rate is negative (a modelled rate), if a dose record asks for
-            repeated doses without a positive `II`, if a requested covariate is
-            not a column or not constant within a subject, or if the doses of
-            the subjects do not share one unit.
+            row carries `EVID` 4, if a row carries an `SS` value other than 0
+            or 1, if a rate is negative (a modelled rate), if a dose record
+            asks for repeated doses without a positive `II`, if a requested
+            covariate is not a column or not constant within a subject, or if
+            the doses of the subjects do not share one unit.
     """
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
@@ -458,7 +464,15 @@ def read_events(
         )
 
     if c_evid is not None:
-        other = _numeric(df, c_evid).isin([2.0, 3.0])
+        evid_column = _numeric(df, c_evid)
+        reset_dose = evid_column == 4.0
+        if bool(reset_dose.any()):
+            subject = df[c_id][reset_dose.idxmax()]
+            raise ValueError(
+                f"EVID 4 (reset and dose) at subject {subject}: split the "
+                "periods into separate tables"
+            )
+        other = evid_column.isin([2.0, 3.0])
         if bool(other.any()):
             logger.warning(
                 "Dropped %d rows with EVID 2 or 3 (other type event, reset)",
@@ -468,16 +482,24 @@ def read_events(
 
     times = _numeric(df, c_time)
     amounts = _numeric(df, c_amt, default=0.0)
+    values = _numeric(df, c_dv)
     if c_evid is not None:
         evid_values = _numeric(df, c_evid, default=0.0)
-        is_dose = evid_values.isin([1.0, 4.0])
+        is_dose = evid_values == 1.0
         is_observation = evid_values.fillna(0.0) == 0.0
     else:
+        # without an `EVID` column a row with an amount is a dose and nothing
+        # else (NM-TRAN): a `DV` on it is not an observation of the subject
         is_dose = amounts > 0
-        is_observation = pd.Series(True, index=df.index)
+        is_observation = ~is_dose
+        ignored = int((is_dose & values.notna()).sum())
+        if ignored:
+            logger.warning(
+                "%d dose rows carry a DV value which is ignored (no EVID column)",
+                ignored,
+            )
     if c_mdv is not None:
         is_observation &= _numeric(df, c_mdv, default=0.0).fillna(0.0) == 0.0
-    values = _numeric(df, c_dv)
     is_observation &= values.notna()
 
     durations = pd.Series(np.nan, index=df.index, dtype=np.float64)
@@ -492,6 +514,16 @@ def read_events(
     addl_values = _numeric(df, c_addl, default=0.0)
     ii_values = _numeric(df, c_ii, default=np.nan)
     ss_values = _numeric(df, c_ss, default=0.0)
+    # `SS` 2 (the dose is added to the steady state of the other doses) and the
+    # remaining NONMEM codes describe a history this reader does not represent
+    unknown_ss = ss_values.notna() & ~ss_values.isin([0.0, 1.0])
+    if bool(unknown_ss.any()):
+        row = unknown_ss.idxmax()
+        raise ValueError(
+            f"Unknown 'SS' value {ss_values[row]:g} at subject {df[c_id][row]}: "
+            "only 0 (no steady state dose) and 1 (a dosing history of "
+            "'ss_doses' doses) are read"
+        )
 
     subjects = _subjects(df, c_id)
     labels = list(subjects)
@@ -902,6 +934,11 @@ def read_adnca(
     a record (`DTYPE == "COPY"`, the pre-dose record duplicated into the
     previous interval) are dropped.
 
+    The dataset carries no infusion duration, so an infusion protocol cannot be
+    read: a route of `Route.IV_INFUSION` raises (`Dosing` requires a positive
+    duration for every dose). Such a study is read from the event records or
+    from the PKNCA tables, which carry the duration or the rate.
+
     Args:
         df: the ADNCA dataset
         time_unit: unit of the time columns
@@ -932,8 +969,9 @@ def read_adnca(
     Raises:
         ValueError: if a required column is missing, if `analyte` is `None` and
             the dataset holds several analytes, if a unit or a route cannot be
-            read, or if the records of one dose time of a subject disagree on
-            the dose amount.
+            read, if the route is `Route.IV_INFUSION` (the dataset holds no
+            duration), or if the records of one dose time of a subject disagree
+            on the dose amount.
     """
     df = df.reset_index(drop=True)
     lookup = _lookup(df)

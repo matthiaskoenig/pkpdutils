@@ -16,7 +16,9 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Steady state.** The steady state parameters describe the last complete interval, under the assumption that repeated dosing has reached a state where every interval looks the same: with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation, the swing, the clearance at steady state \(\mathrm{CL}_\mathrm{ss}\), and the accumulation ratio, predicted from the terminal phase or observed as the ratio of the exposure of the last and the first interval of the protocol (`accumulation_ratio_obs`, `NaN` for a single dose protocol or when the first interval is incomplete).
 
-**The reference dose.** With more than one dose the point parameters (\(C_\mathrm{max}\), \(t_\mathrm{max}\), \(C_\mathrm{last}\), \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), the extrapolated areas, the terminal phase, \(\mathrm{CL}\), \(V_z\), \(\mathrm{MRT}\)) are computed from the last dose on: the values before it are dropped and the times are relative to it, the same analysis a single dose curve given with its last dose only would get. With one dose this is the whole curve, as today.
+**The reference dose.** With more than one dose the point parameters (\(C_\mathrm{max}\), \(t_\mathrm{max}\), \(C_\mathrm{last}\), \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), the extrapolated areas, the terminal phase, \(\mathrm{MRT}\)) are computed from the last dose on: the values before it are dropped and the times are relative to it, the same analysis a single dose curve given with its last dose only would get. With one dose this is the whole curve, as today.
+
+**No single dose quantities.** That slice is not a single dose curve: it carries the exposure of every earlier dose as well, so dividing the dose by its area would report a clearance that is too low and a volume that is too small. A multiple dose analysis therefore reports \(\mathrm{CL}\), \(\mathrm{CL}/F\), \(V_z\), \(V_z/F\), \(V_\mathrm{ss}\), `auc_inf_dn` and `cmax_dn` as `NaN`; the clearance of such an analysis is \(\mathrm{CL}_\mathrm{ss} = D_K / \mathrm{AUC}_{0\text{-}\tau}\) (`cl_ss`, `cl_ss_f` after an extravascular dose) over the dosing interval. \(\mathrm{AUC}_{0\text{-}\infty}\), \(\mathrm{AUMC}_{0\text{-}\infty}\) and \(\mathrm{MRT}\) are reported and describe the exposure and the decline after the last dose, extrapolated with its terminal phase, not the single dose exposure of the substance. A single dose curve analysed with `tau` is a multiple dose analysis as well, so the same holds for it.
 
 **Routes.** A batch has one route. `IV_BOLUS` reports \(C_0\), \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\); `IV_INFUSION` corrects the \(\mathrm{MRT}\) by half the duration; `ORAL` (any extravascular route) reports \(\mathrm{CL}/F\), \(V_z/F\) and the half maximum during absorption (`cmax_half`, `tmax_half`).
 
@@ -99,15 +101,15 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
 | `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_stderr` is the standard error of the slope of the terminal regression) | –, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
-| `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\) |
-| `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\) |
-| `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose |
-| `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose |
+| `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\), single dose analysis |
+| `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\), single dose analysis |
+| `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose, single dose analysis |
+| `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose, single dose analysis |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over the last complete dosing interval | value·time | protocol (≥ 2 doses) or `tau` |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, value at the end, average over the last interval | value | protocol (≥ 2 doses) or `tau` |
 | `fluctuation`, `swing`, `accumulation_ratio` | | see Math | – | protocol (≥ 2 doses) or `tau` |
 | `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first interval | – | protocol of ≥ 2 doses, first interval complete |
-| `cl_ss` | \(\mathrm{CL}_\mathrm{ss}\) | \(D_K / \mathrm{AUC}_{0\text{-}\tau}\) | → l/h | protocol (≥ 2 doses) or `tau`, dose |
+| `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | \(D_K / \mathrm{AUC}_{0\text{-}\tau}\) (`_f`: extravascular) | → l/h | protocol (≥ 2 doses) or `tau`, dose |
 | `n_doses`, `tau` | \(K\), \(\tau\) | number of doses of the protocol and the length of the last interval | –, time | protocol (≥ 2 doses) or `tau` |
 | `flags` | | `NCAFlag` bits, see below | – | |
 
@@ -123,7 +125,7 @@ A protocol of more than one dose additionally reports the parameters of every si
 | `interval_cmax`, `interval_tmax` | \(C_\mathrm{max,k}\), \(t_\mathrm{max,k}\) | maximum of the interval and its time relative to the interval start | value, time |
 | `interval_cmin` | \(C_\mathrm{min,k}\) | minimum of the interval | value |
 | `interval_ctrough` | \(C_\mathrm{trough,k}\) | value at the end of the interval | value |
-| `interval_c_pre` | \(C_\mathrm{pre,k}\) | value at the start of the interval | value |
+| `interval_c_start` | \(C_\mathrm{start,k}\) | value at the start of the interval, interpolated or observed (after a bolus the post-dose value; the pre-dose value of interval \(k\) is `interval_ctrough` of interval \(k-1\)) | value |
 | `interval_cavg`, `interval_fluctuation`, `interval_swing` | | average, fluctuation and swing of the interval | value, –, – |
 | `interval_n_points` | | number of samples the interval uses (a boundary sample counts for both neighbours) | – |
 
@@ -192,7 +194,9 @@ from pkpdutils import Dosing, NCAOptions, nca_single
 from pkpdutils.nca import AUCMethod
 
 protocol = Dosing.regimen(dose, interval=12, n_doses=4)
-tc_protocol = Timecourse(time=..., value=..., dosing=protocol, time_unit="hr", unit="mg/l")
+tc_protocol = Timecourse(
+    time=..., value=..., dosing=protocol, time_unit="hr", unit="mg/l"
+)
 result = nca_single(tc_protocol, NCAOptions(auc_method=AUCMethod.LOG))
 result.intervals()  # one row per dosing interval: interval_auc, interval_cmax, ...
 result.to_quantities()["auc_tau"]  # the last, complete interval

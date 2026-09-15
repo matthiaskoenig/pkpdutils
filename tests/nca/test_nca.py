@@ -361,6 +361,38 @@ def test_nca_keeps_sample_coordinates() -> None:
     assert sample.labels is not None and sample.labels.tolist() == ["a", "b"]
 
 
+def test_nca_analyses_a_sample_without_a_dose() -> None:
+    # a batch of an exchange format may hold a subject whose dose records are
+    # missing: its dose-independent parameters are computed on the times as
+    # they are, only the dose-dependent ones stay NaN
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([C0 * np.exp(-K * time), 2 * C0 * np.exp(-K * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["dosed", "undosed"]},
+        dose={
+            "amount": np.array([[100.0], [np.nan]]),
+            "time": np.array([[0.0], [np.nan]]),
+            "unit": "mg",
+        },
+        route=Route.IV_BOLUS,
+    )
+    result = nca(batch)
+    cmax = result["cmax"].to_numpy()
+    assert cmax == pytest.approx([C0 * np.exp(-K * 0.5), 2 * C0 * np.exp(-K * 0.5)])
+    np.testing.assert_allclose(
+        result["lambda_z"].to_numpy(), [K, K], rtol=1e-6, atol=1e-9
+    )
+    cl = result["cl"].to_numpy()
+    assert np.isfinite(cl[0]) and np.isnan(cl[1])
+    assert np.isfinite(result["c0"].to_numpy()).all()  # C0 needs no dose
+    assert not result.flag_table()["NO_DATA"].any()
+
+
 def test_nca_rejects_coordinate_named_like_a_variable() -> None:
     time = np.array([0.5, 1, 2, 4, 8, 12, 24])
     values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])

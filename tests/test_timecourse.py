@@ -44,6 +44,23 @@ def test_dose_infusion_requires_duration() -> None:
     assert dose.duration == 0.5
 
 
+def test_dose_infusion_rejects_a_nan_duration() -> None:
+    # `NaN <= 0` is False: an unknown duration must not pass as an infusion
+    with pytest.raises(ValueError, match="duration"):
+        Dose(amount=1, unit="mg", route=Route.IV_INFUSION, duration=float("nan"))
+
+
+def test_dosing_infusion_rejects_a_nan_duration() -> None:
+    with pytest.raises(ValueError, match="duration"):
+        Dosing(
+            amounts=[1, 1],
+            times=[0, 12],
+            durations=[0.5, np.nan],
+            unit="mg",
+            route=Route.IV_INFUSION,
+        )
+
+
 def test_dose_duration_only_for_infusion() -> None:
     with pytest.raises(ValueError, match="duration"):
         Dose(amount=1, unit="mg", route=Route.ORAL, duration=0.5)

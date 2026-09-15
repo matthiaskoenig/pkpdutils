@@ -10,8 +10,9 @@ Gabrielsson & Weiner (2016, ch. 2.8) and Rowland & Tozer (2011, ch. 11):
 - `AUC(0-tau)` of the interval, with the values at its bounds interpolated so
   that samples outside it add no area,
 - `Cmax`, `Tmax` (relative to the start of the interval), `Cmin`,
-- `Ctrough`, the value at the end of the interval, and `Cpre`, the value at its
-  start,
+- `Ctrough`, the value at the end of the interval, and `Cstart`, the value at
+  its start (after an intravenous bolus the post-dose value; the pre-dose value
+  of interval `k` is the `Ctrough` of interval `k-1`),
 - `Cavg = AUC(0-tau) / tau`, `fluctuation = (Cmax - Cmin) / Cavg` and
   `swing = (Cmax - Cmin) / Cmin`,
 
@@ -80,7 +81,7 @@ INTERVAL_UNITS: dict[str, str] = {
     "interval_tmax": "{time}",
     "interval_cmin": "{unit}",
     "interval_ctrough": "{unit}",
-    "interval_c_pre": "{unit}",
+    "interval_c_start": "{unit}",
     "interval_cavg": "{unit}",
     "interval_fluctuation": "dimensionless",
     "interval_swing": "dimensionless",
@@ -99,7 +100,7 @@ CONCENTRATION_VARIABLES: tuple[str, ...] = (
     "interval_tmax",
     "interval_cmin",
     "interval_ctrough",
-    "interval_c_pre",
+    "interval_c_start",
     "interval_cavg",
     "interval_fluctuation",
     "interval_swing",
@@ -372,7 +373,7 @@ def _interval_column(
             out["interval_tmax"] = time_max
             out["interval_cmin"] = value_min
             out["interval_ctrough"] = np.where(complete, c_end, nan)
-            out["interval_c_pre"] = np.where(exists, c_start, nan)
+            out["interval_c_start"] = np.where(exists, c_start, nan)
             out["interval_cavg"] = average
             out["interval_fluctuation"] = (value_max - value_min) / average
             out["interval_swing"] = (value_max - value_min) / value_min

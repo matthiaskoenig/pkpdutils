@@ -72,6 +72,7 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "cl",
         "cl_f",
         "cl_ss",
+        "cl_ss_f",
         "vz",
         "vz_f",
         "vss",

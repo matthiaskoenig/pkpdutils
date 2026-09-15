@@ -77,7 +77,8 @@ class Dose(BaseModel):
         route: route of administration
         time: time of the dose in the time unit of the timecourse
         duration: duration of the infusion in the time unit of the timecourse;
-            required for `Route.IV_INFUSION`, not allowed otherwise
+            required for `Route.IV_INFUSION` (finite and positive), not allowed
+            otherwise
     """
 
     model_config = ConfigDict(frozen=True)
@@ -93,8 +94,12 @@ class Dose(BaseModel):
         """Check the dose unit and the duration against the route."""
         check_dose_unit(self.unit)
         if self.route is Route.IV_INFUSION:
-            if self.duration is None or self.duration <= 0:
-                raise ValueError("An infusion needs a positive 'duration'")
+            if (
+                self.duration is None
+                or not np.isfinite(self.duration)
+                or self.duration <= 0
+            ):
+                raise ValueError("An infusion needs a finite, positive 'duration'")
         elif self.duration is not None:
             raise ValueError("'duration' is only allowed for Route.IV_INFUSION")
         return self
@@ -198,8 +203,8 @@ class Dosing(BaseModel):
             strictly increasing after validation
         durations: duration of every infusion in the time unit of the
             timecourse, `None` when no dose is an infusion; required with
-            every value positive for `Route.IV_INFUSION`, not allowed
-            otherwise
+            every value finite and positive for `Route.IV_INFUSION`, not
+            allowed otherwise
         unit: unit of the amounts, see `pkpdutils.units.check_dose_unit`
         route: route of administration, shared by every dose of the protocol
     """
@@ -289,9 +294,14 @@ class Dosing(BaseModel):
             raise ValueError("Duplicate dose times")
 
         if self.route is Route.IV_INFUSION:
-            if durations is None or (durations <= 0).any():
+            # `NaN` is not caught by the comparison and would reach the
+            # analyses as "no duration" on an infusion
+            if (
+                durations is None
+                or not (np.isfinite(durations) & (durations > 0)).all()
+            ):
                 raise ValueError(
-                    "An infusion needs a positive 'duration' for every dose"
+                    "An infusion needs a finite, positive 'duration' for every dose"
                 )
         elif durations is not None:
             raise ValueError("'durations' is only allowed for Route.IV_INFUSION")

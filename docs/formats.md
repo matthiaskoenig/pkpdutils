@@ -4,7 +4,7 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 
 ## Concepts
 
-**Event records.** NONMEM and Monolix exchange data as one row per event of one subject: a row is a dose or an observation, never both implicitly, and the columns describe what happened at that time - `AMT`/`DV` the amount or the value, `EVID`/`MDV` which kind of row it is. Repeated dosing does not need one row per dose: `ADDL`/`II` expand one dose record into several at a fixed interval, and `SS` marks a dose as already at steady state, standing for a dosing history rather than a single administration. `pkpdutils` reads the two rules for observation and dose independently, so a table which records a dose and a sample at the same time in one row needs no `EVID` column at all.
+**Event records.** NONMEM and Monolix exchange data as one row per event of one subject: a row is a dose or an observation, and the columns describe what happened at that time - `AMT`/`DV` the amount or the value, `EVID`/`MDV` which kind of row it is. Repeated dosing does not need one row per dose: `ADDL`/`II` expand one dose record into several at a fixed interval, and `SS` marks a dose as already at steady state, standing for a dosing history rather than a single administration. With an `EVID` column the two rules are read independently, so a row may be a dose (`EVID 1`) and carry an observed value; without one a row with `AMT > 0` is a dose and nothing else, as NM-TRAN reads such a table, and a `DV` on it is ignored with a warning. A table which records a dose and a sample in one row therefore needs an `EVID` column.
 
 **The two table layout.** PKNCA keeps the concentrations and the doses in separate tables, joined by the subject (and, for a multi-analyte or multi-period study, further grouping columns). This is closer to how data usually arrives from a bioanalytical lab and a dosing log than the single event table, and `pkpdutils.io.read_pknca` reads both without merging them first.
 
@@ -22,13 +22,13 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 | `TIME` | time of the row | in `time_unit` |
 | `DV` (Monolix `OBSERVATION`) | observed value | in `unit`; a dose row leaves it empty |
 | `AMT` (Monolix `AMOUNT`) | dose amount | in `dose_unit`; `0` or empty for an observation |
-| `EVID` | event kind | `1`/`4` dose, `0` observation, `2`/`3` dropped (logged); without this column `AMT > 0` is a dose and every row with a value in `DV` is an observation |
+| `EVID` | event kind | `1` dose, `0` observation, `2`/`3` dropped (logged), `4` (reset and dose) raises: the reader would merge the periods it separates into one protocol; without this column `AMT > 0` is a dose only and a value in `DV` on such a row is ignored (logged) |
 | `MDV` | missing dependent value | `1` excludes the row from the observations even with a value in `DV` |
 | `RATE` | infusion rate | duration `= AMT / RATE` for `RATE > 0`; `RATE -1`/`-2` (a modelled rate) is not data and raises |
 | `TINF` (Monolix `INFUSION DURATION`) | infusion duration | wins over `RATE` when positive |
 | `ADDL` (Monolix `ADDITIONAL DOSES`) | additional doses | expands into `ADDL` further doses at `II` |
 | `II` (Monolix `INTERDOSE INTERVAL`) | interdose interval | required with a positive `ADDL` or `SS == 1` |
-| `SS` (Monolix `STEADY STATE`) | steady state dose | stands for `ss_doses` (default 5) preceding doses at `II`; sets `attrs["steady_state_marker"]` on the batch |
+| `SS` (Monolix `STEADY STATE`) | steady state dose | `1` stands for `ss_doses` (default 5) preceding doses at `II` and sets `attrs["steady_state_marker"]` on the batch; `0` is a plain dose, any other value raises |
 | `CMT`/`ADM` | compartment | not interpreted, not a route |
 
 ```python
@@ -78,10 +78,13 @@ batch = Timecourses.from_pknca(
 | `ARRLT` | time since the reference dose | `AFRLT - ARRLT` gives the dose times of a subject, one per distinct value |
 | `DOSEA`, `DOSEU` | dose amount, its unit | the amount of the dose at the recovered time; disagreeing amounts at the same dose time raise |
 | `ROUTE` | route | `ORAL`/`PO`, `IV`/`INTRAVENOUS`/`IV BOLUS`, `IV INFUSION`; the caller's `route=` wins |
+| | infusion duration | not in the dataset: an infusion protocol cannot be read and `Route.IV_INFUSION` raises, such a study is read from the event records or the PKNCA tables |
 | `DTYPE` | derivation type | `COPY` rows (the predose record duplicated into the previous interval) are dropped |
 | `ALLOQ` | lower limit of quantification | kept as the coordinate `lloq` along the sample dimension |
 
 ```python
+import pandas as pd
+
 from pkpdutils import Timecourses
 
 batch = Timecourses.from_adnca(pd.read_csv("adnca.csv"), analyte="XAN")
@@ -89,7 +92,7 @@ batch = Timecourses.from_adnca(pd.read_csv("adnca.csv"), analyte="XAN")
 
 ## What is not read
 
-Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments or several routes is filtered by the caller before reading, since a batch has one route. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`/duration column) or as a positive rate. The PP/ADPP parameter output domains, bioequivalence period and sequence (given as coordinates by the caller), and reading SAS/XPT files directly (the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`) are out of scope of the readers.
+Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments or several routes is filtered by the caller before reading, since a batch has one route. A record which resets the subject and doses (`EVID 4`) and a steady state code other than `SS 0`/`SS 1` describe a dosing history the protocol of a subject cannot hold, and raise rather than being read as an ordinary dose; the caller splits the periods into separate tables. Infusion protocols are read from the event records (`TINF`/`RATE`) and from the PKNCA dose table (`duration_col`), not from an ADNCA dataset, which carries no duration. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`/duration column) or as a positive rate. The PP/ADPP parameter output domains, bioequivalence period and sequence (given as coordinates by the caller), and reading SAS/XPT files directly (the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`) are out of scope of the readers.
 
 ## References
 

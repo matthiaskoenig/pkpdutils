@@ -68,6 +68,11 @@ def test_interval_parameters_match_the_closed_form() -> None:
     assert ctrough[0] == pytest.approx(C0 * np.exp(-K * TAU))
     assert np.all(np.diff(ctrough) > 0)  # accumulation
     assert result["interval_cavg"].to_numpy()[2] == pytest.approx(auc[2] / TAU)
+    # the value at the start of an interval is the post-dose value after a
+    # bolus; the pre-dose value of interval k is the trough of interval k - 1
+    c_start = result["interval_c_start"].to_numpy()
+    assert c_start[0] == pytest.approx(C0, rel=1e-6)
+    assert np.all(c_start[1:] > ctrough[:-1])
     df = result.intervals()
     assert list(df["interval"]) == [1, 2, 3, 4, 5] and "interval_auc" in df.columns
 
@@ -109,6 +114,50 @@ def test_steady_state_is_the_last_interval_and_point_parameters_follow_the_last_
     # the samples at the dose times are post-dose values of a bolus, so the
     # troughs of the intervals are extrapolated
     assert NCAFlag.EXTRAPOLATED_TROUGH.name in result.flags()
+
+
+def test_multiple_dose_analysis_reports_no_single_dose_quantities() -> None:
+    result = nca_single(TC, NCAOptions(auc_method=AUCMethod.LOG))
+    q = result.to_quantities()
+    # the slice after the last dose carries the exposure of the earlier doses,
+    # so `CL = D / AUC(0-inf)` of that slice would be biased low (1.82 l/h here)
+    for name in ("cl", "vz", "vss", "auc_inf_dn", "cmax_dn"):
+        assert np.isnan(float(q[name].magnitude)), name
+    # the clearance of a multiple dose analysis is the dose over the exposure
+    # of the dosing interval: 100 mg / 50 mg h/l = 2 l/h
+    assert float(q["cl_ss"].magnitude) == pytest.approx(2.0, abs=1e-3)
+    assert str(q["cl_ss"].units) == "liter / hour"
+    assert "cl_ss_f" not in result
+    # the extrapolated areas stay: they describe the decline after the last dose
+    assert np.isfinite(float(q["auc_inf_obs"].magnitude))
+    assert np.isfinite(float(q["mrt"].magnitude))
+
+
+def test_an_extravascular_multiple_dose_analysis_reports_cl_ss_f() -> None:
+    t = np.arange(0, 36.5, 0.5)
+    c = np.zeros_like(t)
+    for k in range(3):
+        shifted = t - k * 12.0
+        c += np.where(
+            shifted > 0, 10 * (np.exp(-0.2 * shifted) - np.exp(-shifted)), 0.0
+        )
+    tc = Timecourse(
+        time=t,
+        value=c,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing.regimen(
+            Dose(amount=100, unit="mg", route=Route.ORAL), interval=12, n_doses=3
+        ),
+    )
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    assert "cl_ss" not in result and "cl_ss_f" in result
+    q = result.to_quantities()
+    assert float(q["cl_ss_f"].magnitude) == pytest.approx(
+        100.0 / float(result["interval_auc"].to_numpy()[-1]), rel=1e-9
+    )
+    assert str(q["cl_ss_f"].units) == "liter / hour"
+    assert np.isnan(float(q["cl_f"].magnitude)) and np.isnan(float(q["vz_f"].magnitude))
 
 
 def test_bolus_trough_is_regressed_only_when_the_sample_is_post_dose() -> None:

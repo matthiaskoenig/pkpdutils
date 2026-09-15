@@ -12,7 +12,9 @@ same; the exposure over one interval, `AUC(0-tau)`, equals the single dose
 - `Cavg = AUC(0-tau) / tau`,
 - `fluctuation = (Cmax,ss - Cmin,ss) / Cavg`,
   `swing = (Cmax,ss - Cmin,ss) / Cmin,ss`,
-- `CLss = Dose / AUC(0-tau)`,
+- `CLss = Dose / AUC(0-tau)` (`cl_ss`, `cl_ss_f` for an extravascular route),
+  the clearance of a multiple dose analysis: the single dose `CL`, `Vz`, `Vss`,
+  `auc_inf_dn` and `cmax_dn` are `NaN` there (`SINGLE_DOSE_PARAMETERS`),
 - the accumulation ratio `R = 1 / (1 - exp(-lambda_z tau))` predicted from the
   terminal phase, and `accumulation_ratio_obs`, the observed ratio of the
   exposure of the last and of the first dosing interval of the protocol.
@@ -23,7 +25,9 @@ of the last two doses; the parameters of every interval come from
 `pkpdutils.nca.intervals`. The point parameters of the same rows are computed
 from the last dose on: the values before it are dropped and the times are
 relative to it, so that `cmax`, `tmax`, the terminal phase and the
-extrapolated areas describe the last dosing interval and its decline.
+extrapolated areas describe the last dosing interval and its decline; the
+parameters which would read that slice as a single dose curve are dropped, see
+`compute_steady_state`.
 
 `superposition` predicts the multiple dose curve of a dosing protocol from a
 single dose curve by adding the shifted, dose-scaled single dose curves
@@ -39,6 +43,19 @@ from pkpdutils.nca.nca import compute_parameters, nca_single, reference_dose
 from pkpdutils.nca.options import Kind, NCAFlag, NCAOptions
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.timecourse import Dosing, DosingRegimen, Route, Timecourse
+
+#: single dose parameters which a multiple dose analysis does not report: they
+#: divide the dose by the exposure of the slice after the last dose, which also
+#: carries the exposure of the earlier doses (`compute_steady_state`)
+SINGLE_DOSE_PARAMETERS: tuple[str, ...] = (
+    "cl",
+    "cl_f",
+    "vz",
+    "vz_f",
+    "vss",
+    "auc_inf_dn",
+    "cmax_dn",
+)
 
 
 def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
@@ -91,6 +108,16 @@ def compute_steady_state(
     interval is not covered by the data carries
     `NCAFlag.INCOMPLETE_INTERVAL` and `NaN` steady state parameters.
 
+    A multiple dose analysis reports no single dose quantities: the slice after
+    the last dose carries the exposure of every earlier dose as well, so the
+    parameters which divide the dose by it (`SINGLE_DOSE_PARAMETERS`: `cl`,
+    `cl_f`, `vz`, `vz_f`, `vss`, `auc_inf_dn`, `cmax_dn`) are `NaN`. The
+    clearance is `cl_ss` (`cl_ss_f` for an extravascular route), the dose over
+    the exposure of the dosing interval. `auc_inf_obs`, `auc_inf_pred`,
+    `aumc_inf` and `mrt` are reported and are the areas of that slice
+    extrapolated with its terminal phase, i.e. the exposure after the last
+    dose, not the single dose exposure of the substance.
+
     Args:
         t: times `(N, n)`
         c: values `(N, n)`
@@ -132,6 +159,16 @@ def compute_steady_state(
         options=options,
     )
     flags = out.pop("flags")
+
+    # the dose-dependent parameters of a single dose analysis do not describe a
+    # multiple dose curve: the slice after the last dose carries the exposure of
+    # every earlier dose as well, so `CL = D / AUC(0-inf)` of that slice is
+    # biased low. The clearance of the analysis is `cl_ss` over the dosing
+    # interval; the extrapolated areas stay and describe the decline after the
+    # last dose
+    for name in SINGLE_DOSE_PARAMETERS:
+        if name in out:
+            out[name] = np.full(n_rows, np.nan)
 
     # a batch without a protocol but with `tau` is one interval from time 0
     times = (
@@ -203,9 +240,12 @@ def compute_steady_state(
         with np.errstate(divide="ignore", invalid="ignore"):
             out["accumulation_ratio"] = 1.0 / (1.0 - np.exp(-out["lambda_z"] * tau))
         out["accumulation_ratio_obs"] = accumulation_obs
-        if amount is not None:
+        if amount is not None and route is not None:
+            # as `compute_parameters` does: without the fraction absorbed the
+            # clearance of an extravascular dose is `CL/F`
+            suffix = "" if route.is_iv else "_f"
             with np.errstate(divide="ignore", invalid="ignore"):
-                out["cl_ss"] = amount / area
+                out[f"cl_ss{suffix}"] = amount / area
     else:
         out["auec_tau"] = area
         out["emin_ss"] = last_interval("interval_emin")
@@ -286,7 +326,8 @@ def superposition(
             observed time by default
 
     Returns:
-        The predicted curve carrying the protocol.
+        The predicted curve carrying the protocol, without a label: the label
+        of the single dose curve describes that curve, not the prediction.
 
     Raises:
         ValueError: without `n_doses` of a regimen, without a dose of the
@@ -344,6 +385,5 @@ def superposition(
         unit=single.unit,
         dosing=protocol,
         substance=single.substance,
-        label=single.label,
         tissue=single.tissue,
     )

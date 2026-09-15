@@ -26,9 +26,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `fluctuation`, `swing` | | peak–trough fluctuation and swing over the interval | – | [NCA](nca.md) |
 | `accumulation_ratio` | \(R_\mathrm{pred}\) | accumulation at steady state, predicted from \(\lambda_z\) | – | [NCA](nca.md) |
 | `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first dosing interval of a protocol | – | [NCA](nca.md) |
-| `cl_ss` | \(\mathrm{CL}_\mathrm{ss}\) | clearance at steady state | l/h | [NCA](nca.md) |
+| `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | clearance at steady state (`_f`: extravascular) | l/h | [NCA](nca.md) |
 | `n_doses`, `tau` | \(K\), \(\tau\) | number of doses of the protocol, length of the last dosing interval | –, time | [NCA](nca.md) |
-| `interval_auc`, `interval_cmax`, `interval_tmax`, `interval_cmin`, `interval_ctrough`, `interval_c_pre`, `interval_cavg`, `interval_fluctuation`, `interval_swing`, `interval_n_points` | | parameters of every single dosing interval, over the extra dimension `interval` | value·time, value, time, value, value, value, value, –, –, – | [NCA](nca.md) |
+| `interval_auc`, `interval_cmax`, `interval_tmax`, `interval_cmin`, `interval_ctrough`, `interval_c_start`, `interval_cavg`, `interval_fluctuation`, `interval_swing`, `interval_n_points` | | parameters of every single dosing interval, over the extra dimension `interval` | value·time, value, time, value, value, value, value, –, –, – | [NCA](nca.md) |
 | `interval_start`, `interval_end`, `interval_dose` | | bounds and dose amount of a dosing interval (columns of `NCAResult.intervals()`) | time, time, dose | [NCA](nca.md) |
 | `e0`, `emax_obs`, `temax` | | baseline, maximum effect and its time | value, value, time | [NCA](nca.md) |
 | `auec_last`, `auec_baseline` | \(\mathrm{AUEC}\) | area under the effect curve, raw and baseline corrected | value·time | [NCA](nca.md) |
