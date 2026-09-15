@@ -38,7 +38,8 @@ from pkpdutils.nca.options import (
 )
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
-from pkpdutils.nca.uncertainty import base_name, bootstrap, delta
+from pkpdutils.nca.uncertainty import bootstrap, delta
+from pkpdutils.result import base_name
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)

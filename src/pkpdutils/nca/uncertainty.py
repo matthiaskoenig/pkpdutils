@@ -47,6 +47,7 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
 )
+from pkpdutils.result import base_name
 from pkpdutils.timecourse import Timecourses
 
 logger = logging.getLogger(__name__)
@@ -126,37 +127,6 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
         "time_above",
     }
 )
-
-#: suffixes of the uncertainty variables of a parameter
-UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
-    "_sd",
-    "_se",
-    "_ci_low",
-    "_ci_high",
-    "_pi_low",
-    "_pi_high",
-    "_geomean",
-    "_geocv",
-)
-
-#: suffixes of the summary variables of a parameter (`NCAResult.summarize`)
-SUMMARY_SUFFIXES: tuple[str, ...] = ("_median", "_q25", "_q75", "_n")
-
-
-def base_name(name: str) -> str | None:
-    """The parameter a derived variable belongs to, `None` for a parameter itself.
-
-    Args:
-        name: name of a result variable, e.g. `"auc_last_se"`.
-
-    Returns:
-        The name of the parameter the variable is derived from, `None` for a
-        parameter.
-    """
-    for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES):
-        if name.endswith(suffix) and len(name) > len(suffix):
-            return name[: -len(suffix)]
-    return None
 
 
 def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:

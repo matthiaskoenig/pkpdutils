@@ -8,6 +8,7 @@ The API reference is generated from the docstrings of the package.
 | --- | --- |
 | [units](units.md) | the unit registry of the package and unit helpers |
 | [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Route` and `DosingRegimen`, the data model |
+| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult` |
 | [console](console.md) | shared rich console |
 | [log](log.md) | logging of the package |
 
@@ -25,10 +26,21 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.steady_state](nca.steady_state.md) | steady state parameters, accumulation ratio, superposition |
 | [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
 
+## pkpdutils.fit
+
+Curve fitting, see [Curve fitting](../fitting.md) and [Pharmacodynamics](../pd.md).
+
+| module | description |
+| --- | --- |
+| [fit](fit.md) | `fit`, `fit_timecourse`, `fit_timecourses`, `fit_table`, `FitOptions`, `FitResult`, `Model`: the engine, the result, the front ends and the options |
+| [fit.models](fit.models.md) | the model library: exponentials, the Emax family, linear, power and allometric models |
+| [fit.compare](fit.compare.md) | `compare_models` and `ModelComparison`: the ranking by AICc and the Akaike weights |
+| [fit.proportionality](fit.proportionality.md) | `proportionality_test`: the confidence interval criterion of dose proportionality |
+
 ## pkpdutils.plot
 
 Figures, see [Plotting](../plotting.md).
 
 | module | description |
 | --- | --- |
-| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid` |
+| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality` |

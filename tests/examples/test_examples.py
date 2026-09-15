@@ -23,6 +23,10 @@ SCRIPTS: list[str] = [
     "examples.steady_state",
     "examples.nca_from_sbmlsim",
     "examples.group_uncertainty",
+    "examples.fitting_exponential",
+    "examples.emax",
+    "examples.dose_proportionality",
+    "examples.covariate",
 ]
 
 

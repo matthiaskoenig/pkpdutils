@@ -18,3 +18,21 @@ def test_nca_exports() -> None:
     assert callable(nca) and callable(nca_single)
     assert NCAOptions().terminal == TerminalPhase()
     assert NCAResult is not None
+
+
+def test_fit_exports() -> None:
+    from pkpdutils import (
+        FitOptions,
+        FitResult,
+        compare_models,
+        fit,
+        fit_table,
+        fit_timecourse,
+        fit_timecourses,
+        proportionality_test,
+    )
+
+    assert callable(fit) and callable(fit_timecourses) and callable(fit_table)
+    assert callable(fit_timecourse)
+    assert callable(compare_models) and callable(proportionality_test)
+    assert FitOptions().n_starts == 1 and FitResult is not None

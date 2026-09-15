@@ -80,11 +80,23 @@
 > *Controlled Clinical Trials.* 1986;7(3):177-188.
 > [doi:10.1016/0197-2456(86)90046-2](https://doi.org/10.1016/0197-2456(86)90046-2)
 
-**Bootstrap.**
+**Bootstrap.** The parametric bootstrap and the delta method of the uncertainty of the NCA parameters (ch. 5 and 6) and the residual bootstrap of a fit (ch. 9).
 
 > Efron B, Tibshirani RJ.
 > **An Introduction to the Bootstrap.**
 > Chapman & Hall/CRC; 1993.
+
+**Nonlinear regression.** The covariance of the parameters from the Jacobian, the t based confidence intervals and the delta method for derived parameters.
+
+> Seber GAF, Wild CJ.
+> **Nonlinear Regression.**
+> Wiley; 1989.
+
+**Model selection by AICc and Akaike weights.** The ranking of the candidate models of a fit and the correction for the small sample size.
+
+> Burnham KP, Anderson DR.
+> **Model Selection and Multimodel Inference: A Practical Information-Theoretic Approach.**
+> 2nd edition. Springer; 2002.
 
 ## Software
 

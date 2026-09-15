@@ -20,3 +20,7 @@ An example writes what it creates into the current working directory. No example
 | `examples/steady_state.py` | superposition of a single dose curve and the steady state parameters of a dosing interval |
 | `examples/nca_from_sbmlsim.py` | NCA of a simulation scan dataset (`Timecourses.from_dataset`), with or without sbmlsim installed |
 | `examples/group_uncertainty.py` | bootstrap and delta method for a group mean curve, summary over individuals, partial AUC |
+| `examples/fitting_exponential.py` | Bateman fit of an oral timecourse with weighting and bootstrap, AICc comparison of exponential models, goodness of fit |
+| `examples/emax.py` | sigmoid Emax fit of a concentration-effect relationship, comparison with Emax and linear |
+| `examples/dose_proportionality.py` | power model of `auc_inf_obs` against the dose from an NCA batch and the Smith criterion |
+| `examples/covariate.py` | allometric scaling of a clearance against body weight with a free and a fixed exponent |

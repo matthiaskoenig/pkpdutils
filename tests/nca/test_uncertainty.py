@@ -15,11 +15,11 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.uncertainty import (
     DISCRETE_PARAMETERS,
     LOGNORMAL_PARAMETERS,
-    base_name,
     reduce_replicates,
     resample_values,
     resolve_spread,
 )
+from pkpdutils.result import base_name
 
 K, C0 = 0.3, 10.0
 T = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
@@ -62,6 +62,8 @@ def test_base_name() -> None:
     assert base_name("auc_last_se") == "auc_last"
     assert base_name("auc_inf_obs_ci_high") == "auc_inf_obs"
     assert base_name("cl_f_geocv") == "cl_f"
+    assert base_name("auc_geocv") == "auc"
+    assert base_name("k_cv") == "k"
     assert base_name("auc_last") is None
     assert base_name("flags") is None
 

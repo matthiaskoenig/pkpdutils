@@ -15,7 +15,9 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 - **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 - **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
 - **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
-- **[Plotting](plotting.md)** - timecourses and NCA diagnostics as matplotlib figures.
+- **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.
+- **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.
+- **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures.
 
 The methods behind the package are cited in [References](references.md).
 
@@ -44,7 +46,7 @@ Continue with [Installation](installation.md), [Timecourses](timecourses.md) and
 
 If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi.org/10.5281/zenodo.3997539):
 
-> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.3997539
+> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.3997539
 
 ## License
 
