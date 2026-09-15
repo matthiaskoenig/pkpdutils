@@ -1,10 +1,20 @@
+import warnings
+
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
 import xarray as xr
 from matplotlib.figure import Figure
 
-from pkpdutils.fit import FitOptions, Weighting, fit, fit_table, proportionality_test
+from pkpdutils import Dose, Route, Timecourses
+from pkpdutils.fit import (
+    FitOptions,
+    Weighting,
+    fit,
+    fit_table,
+    fit_timecourses,
+    proportionality_test,
+)
 from pkpdutils.fit.models import MonoExp, Power
 from pkpdutils.plot import (
     plot_bland_altman,
@@ -67,6 +77,55 @@ def test_plot_goodness_of_fit() -> None:
     assert ax.get_xscale() == "log"
     assert any("identity" in str(line.get_label()) for line in ax.get_lines())
     assert len(ax.collections) >= 3 or len(ax.get_lines()) >= 4
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_fit_log_x_masks_a_zero_time_point() -> None:
+    # B14: a timecourse sampled at t=0 (kept by `fit_timecourses`) used to
+    # crash `np.geomspace` with "Geometric sequence cannot include zero"
+    t = np.array([0.0, 0.5, 1, 2, 4, 8, 12, 24])
+    y = 5 * np.exp(-0.2 * t)
+    result = fit(
+        MonoExp(),
+        t,
+        y,
+        options=FitOptions(n_starts=3, seed=0),
+        x_unit="hr",
+        y_unit="mg/l",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fig = plot_fit(result, log_x=True)
+        fig.canvas.draw()
+    ax = fig.axes[0]
+    assert ax.get_xscale() == "log"
+    labels = [line.get_label() for line in ax.get_lines()]
+    assert "fit" in labels
+    fit_line = next(line for line in ax.get_lines() if line.get_label() == "fit")
+    assert np.all(np.asarray(fit_line.get_xdata()) > 0)
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_goodness_of_fit_no_legend_warning_without_labels() -> None:
+    # B27: an all-NaN batch fit has no labelled artist (no identity line, no
+    # per-sample label above 8 samples), an unconditional ax.legend() used to
+    # raise "UserWarning: No artists with labels found to put in legend."
+    t = np.array([0.25, 0.5, 1, 2, 4, 8, 12, 24])
+    batch = Timecourses.from_arrays(
+        t,
+        np.full((10, t.size), np.nan),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": [f"s{i}" for i in range(10)]},
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    )
+    result = fit_timecourses(MonoExp(), batch, options=FitOptions(n_starts=3, seed=0))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fig = plot_goodness_of_fit(result)
+        fig.canvas.draw()
+    assert fig.axes[0].get_legend() is None
     matplotlib.pyplot.close(fig)
 
 

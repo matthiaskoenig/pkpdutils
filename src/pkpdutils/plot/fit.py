@@ -9,29 +9,13 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import NullLocator
 
 from pkpdutils.fit.result import FitResult
+from pkpdutils.plot._common import (
+    log_scale,
+    plain_log_ticks,
+    sample_colors,
+    sample_labels,
+)
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-
-
-def _sample(result: FitResult, indexers: dict[str, Any]) -> xr.Dataset:
-    """The dataset of one sample of a result.
-
-    Args:
-        result: the fit.
-        indexers: coordinate label per sample dimension, empty for a result
-            without sample dimensions.
-
-    Returns:
-        The dataset reduced to one sample.
-
-    Raises:
-        ValueError: if a sample dimension has no indexer.
-    """
-    missing = set(result.sample_dims) - set(indexers)
-    if missing:
-        raise ValueError(
-            f"A label for every sample dimension is needed, missing {sorted(missing)}"
-        )
-    return result.ds.sel(indexers)
 
 
 def _parameter_text(result: FitResult, sample: xr.Dataset) -> str:
@@ -69,15 +53,17 @@ def plot_fit(
 
     The upper panel draws the data points (`x_data`, `y_data`, with error
     bars from `sd_data` when the fit had `sd`), the fitted curve on a fine
-    grid between the smallest and the largest finite `x` (log-spaced when
-    `log_x`), and a title with the model name, the parameters
-    (`name = value +- se`) and the flags of the sample. The lower panel draws
-    the weighted residuals against `x` with a zero line.
+    grid between the smallest and the largest finite, plotted `x` (log-spaced
+    when `log_x`; the curve is skipped when fewer than two points remain),
+    and a title with the model name, the parameters (`name = value +- se`)
+    and the flags of the sample. The lower panel draws the weighted
+    residuals against `x` with a zero line.
 
     Args:
         result: the fit.
-        log_x: logarithmic x axis (and a log-spaced curve grid).
-        log_y: logarithmic y axis.
+        log_x: logarithmic x axis (and a log-spaced curve grid); a point
+            with `x <= 0` is left out of the plot and the curve grid.
+        log_y: logarithmic y axis; a point with `y <= 0` is left out of the plot.
         n_grid: number of points of the curve grid.
         title: title, the model name by default; the parameters and the
             flags are appended.
@@ -87,11 +73,13 @@ def plot_fit(
     Returns:
         The figure with the fit panel and the residual panel.
     """
-    sample = _sample(result, indexers)
+    sample = result._sample(indexers)
     x = sample["x_data"].to_numpy()
     y = sample["y_data"].to_numpy()
     ok = np.isfinite(x) & np.isfinite(y)
-    ok_plot = ok & (x > 0 if log_x else True) & (y > 0 if log_y else True)
+    x_ok = (x > 0) if log_x else np.ones_like(x, dtype=bool)
+    y_ok = (y > 0) if log_y else np.ones_like(y, dtype=bool)
+    ok_plot = ok & x_ok & y_ok
     fig, (ax, ax_res) = plt.subplots(
         nrows=2, ncols=1, figsize=(7, 6.5), height_ratios=[3, 1], sharex=True
     )
@@ -122,8 +110,8 @@ def plot_fit(
     p = np.array(
         [float(sample[name].to_numpy()) for name in result.model.parameter_names]
     )
-    if ok.any() and np.all(np.isfinite(p)):
-        lo, hi = float(x[ok].min()), float(x[ok].max())
+    if ok_plot.sum() >= 2 and np.all(np.isfinite(p)):
+        lo, hi = float(x[ok_plot].min()), float(x[ok_plot].max())
         if lo < hi:
             grid = (
                 np.geomspace(lo, hi, n_grid) if log_x else np.linspace(lo, hi, n_grid)
@@ -145,12 +133,13 @@ def plot_fit(
     # the x axis is shared with the residual panel below, which carries the label
     ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
     if log_x:
-        ax.set_xscale("log")
+        log_scale(ax, "x")
     if log_y:
-        ax.set_yscale("log")
-    ax.legend(fontsize="small")
+        log_scale(ax, "y")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize="small")
     res = sample["residuals"].to_numpy()
-    ok_res = ok & np.isfinite(res) & (x > 0 if log_x else True)
+    ok_res = ok & np.isfinite(res) & x_ok
     ax_res.axhline(0.0, color="gray", linewidth=1)
     ax_res.plot(
         x[ok_res],
@@ -163,27 +152,6 @@ def plot_fit(
     ax_res.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
     ax_res.set_ylabel("weighted residual")
     return fig
-
-
-def _sample_labels(result: FitResult) -> list[str]:
-    """One label per sample, in C order of the sample dimensions.
-
-    Args:
-        result: the fit.
-
-    Returns:
-        One label per sample; the model name for a 0-D result.
-    """
-    if not result.sample_dims:
-        return [result.model.name]
-    labels = []
-    for index in np.ndindex(*[result.ds.sizes[d] for d in result.sample_dims]):
-        parts = [
-            str(result.ds[d].to_numpy()[i]) if d in result.ds.coords else str(i)
-            for d, i in zip(result.sample_dims, index, strict=True)
-        ]
-        labels.append("|".join(parts))
-    return labels
 
 
 def plot_goodness_of_fit(
@@ -206,15 +174,15 @@ def plot_goodness_of_fit(
     y = result["y_data"].to_numpy().reshape(-1, n_point)
     pred = result["y_pred"].to_numpy().reshape(-1, n_point)
     r2 = result["r2"].to_numpy().reshape(-1)
-    labels = _sample_labels(result)
-    cmap = plt.get_cmap(style.cmap)
+    labels = sample_labels(result.ds, result.sample_dims) or [result.model.name]
     n = y.shape[0]
+    colors = sample_colors(n, style.cmap)
     for i in range(n):
         ok = np.isfinite(y[i]) & np.isfinite(pred[i])
         if log:
             ok &= (y[i] > 0) & (pred[i] > 0)
         label = f"{labels[i]} (R² = {r2[i]:.3f})" if n <= 8 else None
-        color = cmap(i / max(n - 1, 1)) if n > 1 else style.data_color
+        color = colors[i] if n > 1 else style.data_color
         ax.scatter(
             y[i][ok], pred[i][ok], color=color, s=style.markersize**2 * 1.5, label=label
         )
@@ -228,9 +196,10 @@ def plot_goodness_of_fit(
     ax.set_xlabel(f"observed [{unit}]")
     ax.set_ylabel(f"predicted [{unit}]")
     if log:
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-    ax.legend(fontsize="small")
+        log_scale(ax, "x")
+        log_scale(ax, "y")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize="small")
     return fig
 
 
@@ -254,7 +223,7 @@ def plot_dose_proportionality(
     Returns:
         The figure.
     """
-    sample = _sample(result, indexers)
+    sample = result._sample(indexers)
     x = sample["x_data"].to_numpy()
     y = sample["y_data"].to_numpy()
     ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
@@ -313,6 +282,7 @@ def plot_dose_proportionality(
     ax.set_title(heading)
     ax.set_xscale("log")
     ax.set_yscale("log")
+    plain_log_ticks(ax.yaxis)
     if ok.any():
         # a dose escalation has few, known doses: label those instead of the
         # decade ticks of the log scale, whose labels overlap over a range of
@@ -322,7 +292,8 @@ def plot_dose_proportionality(
         ax.xaxis.set_minor_locator(NullLocator())
     ax.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
     ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
-    ax.legend(fontsize="small")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize="small")
     return fig
 
 
@@ -380,7 +351,7 @@ def plot_bland_altman(
     ax.axhline(0.0, color="gray", linewidth=1.0)
     unit = result.ds.attrs["y_unit"]
     if log:
-        ax.set_xscale("log")
+        log_scale(ax, "x")
         ax.set_xlabel(f"mean of observed and predicted [{unit}]")
         ax.set_ylabel("log ratio predicted / observed")
     else:

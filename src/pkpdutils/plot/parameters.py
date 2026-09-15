@@ -7,8 +7,8 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from pkpdutils.plot._common import figure_of, plain_log_ticks
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, summarize
 
@@ -70,7 +70,7 @@ def plot_parameters(
         groups = {
             str(key): sample.select(keys == key) for key in dict.fromkeys(keys.tolist())
         }
-    fig, ax = _figure_of(ax)
+    fig, ax = figure_of(ax)
     rng = np.random.default_rng(0)
     positions = np.arange(1, len(groups) + 1)
     values = [g.finite_values for g in groups.values()]
@@ -120,5 +120,5 @@ def plot_parameters(
         ax.set_xlabel(by)
     if log:
         ax.set_yscale("log")
-        _plain_log_ticks(ax.yaxis)
+        plain_log_ticks(ax.yaxis)
     return fig

@@ -883,7 +883,11 @@ def fit_rows(
 
     Row seeds are drawn from `options.seed` before the rows are distributed,
     one child seed per row, so the result does not depend on `options.n_workers`
-    or the order the rows finish in.
+    or the order the rows finish in. A pooled call (`options.n_workers > 1`
+    with more than one row) must run under an `if __name__ == "__main__":`
+    guard, since python's `spawn` and `forkserver` process start methods
+    (the default on macOS and Windows, and on Linux from python 3.14)
+    re-import the module without re-running it.
 
     Args:
         model: the model
