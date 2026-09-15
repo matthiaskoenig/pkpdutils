@@ -150,6 +150,18 @@ def test_crossover_validation() -> None:
     )
     with pytest.raises(ValueError, match="sequence"):
         tost(test, one_sequence)
+    same_period_test = ParameterSample(
+        values=TEST_VALUES,
+        labels=SUBJECTS,
+        coords={"period": np.full(N, 2), "sequence": SEQUENCE},
+    )
+    same_period_reference = ParameterSample(
+        values=REF_VALUES,
+        labels=SUBJECTS,
+        coords={"period": np.full(N, 1), "sequence": SEQUENCE},
+    )
+    with pytest.raises(ValueError, match="period 2 in one sequence"):
+        tost(same_period_test, same_period_reference)
     with pytest.raises(ValueError, match="crossover"):
         tost(
             ParameterSample(values=TEST_VALUES),

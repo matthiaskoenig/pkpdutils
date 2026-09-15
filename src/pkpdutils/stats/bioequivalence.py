@@ -195,8 +195,10 @@ def _crossover(
 
     Raises:
         ValueError: if a subject has no two different periods, the periods
-            are not 1 and 2, a sequence mixes the order, or there are not
-            exactly two sequences with at least two subjects each.
+            are not 1 and 2, the `sequence` coordinate does not agree
+            between the test and the reference sample, a sequence mixes the
+            order, there are not exactly two sequences with at least two
+            subjects each, or both sequences have the test in the same period.
     """
     x, y = _pair(test, reference)
     assert test.values is not None and reference.values is not None
@@ -243,6 +245,10 @@ def _crossover(
             raise ValueError(f"sequence '{seq}' needs at least two subjects")
         groups.append((d[mask], u[mask]))
         test_second.append(bool(in_second[0] == 2))
+    if test_second[0] == test_second[1]:
+        raise ValueError(
+            "A 2x2 crossover needs the test in period 2 in one sequence and in period 1 in the other"
+        )
     (d_a, u_a), (d_b, u_b) = groups if test_second[0] else groups[::-1]
     n_a, n_b = d_a.size, d_b.size
     df = float(n_a + n_b - 2)
