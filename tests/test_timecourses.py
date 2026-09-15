@@ -609,3 +609,69 @@ def test_single_dose_batch_layout_is_one_column() -> None:
     assert batch.n_dose == 1 and batch.dose_time is not None
     assert batch.dose_time.shape == (2, 1)
     assert batch.dosing_of(individual=0) == Dosing.single(Dose(amount=1, unit="mg"))
+
+
+def test_from_arrays_mapping_sorts_rows_by_time() -> None:
+    batch = Timecourses.from_arrays(
+        np.array([1.0, 2.0]),
+        np.ones((1, 2)),
+        time_unit="hr",
+        unit="mg/l",
+        dose={
+            "amount": np.array([[100.0, 50.0]]),
+            "time": np.array([[12.0, 0.0]]),
+            "unit": "mg",
+        },
+        route=Route.ORAL,
+    )
+    assert batch.first_dose_amount is not None
+    assert batch.first_dose_amount.tolist() == [50.0]
+    assert batch.last_dose_amount is not None
+    assert batch.last_dose_amount.tolist() == [100.0]
+    assert batch.dose_time is not None and batch.dose_time[0].tolist() == [0.0, 12.0]
+    assert batch.dosing_of(individual=0) == Dosing(
+        amounts=[50, 100], times=[0, 12], unit="mg", route=Route.ORAL
+    )
+
+
+def test_from_arrays_mapping_rejects_interleaved_nan_and_duplicates() -> None:
+    time = np.array([1.0, 2.0])
+    values = np.ones((1, 2))
+    with pytest.raises(ValueError, match="NaN"):
+        Timecourses.from_arrays(
+            time,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            dose={
+                "amount": np.array([[np.nan, 10.0]]),
+                "time": np.array([[0.0, np.nan]]),
+                "unit": "mg",
+            },
+            route=Route.ORAL,
+        )
+    with pytest.raises(ValueError, match="Duplicate"):
+        Timecourses.from_arrays(
+            time,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            dose={
+                "amount": np.array([[10.0, 10.0]]),
+                "time": np.array([[0.0, 0.0]]),
+                "unit": "mg",
+            },
+            route=Route.ORAL,
+        )
+
+
+def test_dose_index_is_a_reserved_sample_dimension() -> None:
+    with pytest.raises(ValueError, match="dose_index"):
+        Timecourses.from_arrays(
+            T,
+            V,
+            time_unit="hr",
+            unit="mg/l",
+            dims=("dose_index",),
+            dose=Dose(amount=100, unit="mg"),
+        )

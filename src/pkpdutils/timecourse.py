@@ -960,6 +960,12 @@ def _batch_dose_arrays(
     `sample_shape`, one dose per sample, or of shape `(*sample_shape, n_dose)`,
     one protocol per sample padded with `NaN`.
 
+    The returned arrays hold the invariant of the dose variables of a batch:
+    the doses of a sample are the leading columns of its row, sorted by time,
+    and the trailing columns are `NaN` padding. The rows of a mapping are
+    sorted here (`_sort_protocol_rows`), so a caller may give them in any
+    order.
+
     Args:
         dose: the dose, the protocol or the mapping.
         route: route of the doses; required for a mapping, checked against the
@@ -972,7 +978,9 @@ def _batch_dose_arrays(
     Raises:
         ValueError: if `route` is missing or contradicts the route of the
             protocol, if the dose times are missing for a mapping of
-            protocols, or if the shapes do not fit `sample_shape`.
+            protocols, if the shapes do not fit `sample_shape`, if a dose of a
+            mapping has an amount without a time or a time without an amount,
+            or if a row has duplicate dose times.
     """
     if isinstance(dose, Dose):
         dose = Dosing.single(dose)
@@ -1027,7 +1035,87 @@ def _batch_dose_arrays(
     duration = np.broadcast_to(
         np.asarray(dose.get("duration", np.nan), dtype=np.float64), shape
     ).copy()
+    amount, time, duration = _sort_protocol_rows(amount, time, duration)
     return amount, time, duration, dose_unit, route
+
+
+def _sample_position(row: int, sample_shape: tuple[int, ...]) -> Any:
+    """The sample index of a flattened protocol row, for an error message.
+
+    Args:
+        row: index of the row in the flattened `(n_rows, n_dose)` arrays.
+        sample_shape: shape of the sample dimensions of the batch.
+
+    Returns:
+        The index along the sample dimensions, `row` itself for a batch
+        without sample dimensions or with a single one.
+    """
+    if len(sample_shape) < 2:
+        return row
+    return tuple(int(i) for i in np.unravel_index(row, sample_shape))
+
+
+def _sort_protocol_rows(
+    amounts: np.ndarray, times: np.ndarray, durations: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort every protocol row by dose time and move the `NaN` padding to the back.
+
+    Establishes the invariant every reader of the dose variables relies on
+    (`Timecourses.n_doses`, `first_dose_time`, `pkpdutils.nca.nca.reference_dose`):
+    the doses of a sample are the leading columns of its row, sorted by time,
+    and the trailing columns are `NaN`.
+
+    Args:
+        amounts: the dose amounts of shape `(*sample_shape, n_dose)`.
+        times: the dose times with the shape of `amounts`.
+        durations: the infusion durations with the shape of `amounts`.
+
+    Returns:
+        The three arrays with every row sorted by time.
+
+    Raises:
+        ValueError: if an entry has an amount without a time or a time without
+            an amount (a half padded dose), or if a row has duplicate dose
+            times.
+    """
+    shape = amounts.shape
+    sample_shape = shape[:-1]
+    n_dose = shape[-1]
+    # copies, so that the dataset never aliases an array of the caller
+    flat = [
+        np.array(a, dtype=np.float64).reshape(-1, n_dose)
+        for a in (amounts, times, durations)
+    ]
+    finite_amount = np.isfinite(flat[0])
+    finite_time = np.isfinite(flat[1])
+    half = finite_amount != finite_time
+    if half.any():
+        row, column = (int(i) for i in np.argwhere(half)[0])
+        raise ValueError(
+            "A dose needs an amount and a time, or both NaN for the padding; "
+            f"sample {_sample_position(row, sample_shape)} has "
+            f"amount {flat[0][row, column]} at time {flat[1][row, column]}"
+        )
+
+    order = np.argsort(np.where(finite_time, flat[1], np.inf), axis=1, kind="stable")
+    unsorted = (order != np.arange(n_dose)).any(axis=1)
+    if unsorted.any():
+        logger.warning(
+            "The dose times of %d of %d dosing protocols were not sorted",
+            int(unsorted.sum()),
+            order.shape[0],
+        )
+        flat = [np.take_along_axis(a, order, axis=1) for a in flat]
+
+    sorted_times = flat[1]
+    duplicate = np.diff(sorted_times, axis=1) == 0
+    if duplicate.any():
+        row = int(np.argwhere(duplicate)[0][0])
+        raise ValueError(
+            f"Duplicate dose times for sample {_sample_position(row, sample_shape)}: "
+            f"{sorted_times[row]}"
+        )
+    return flat[0].reshape(shape), flat[1].reshape(shape), flat[2].reshape(shape)
 
 
 def _dose_variables(
@@ -1372,13 +1460,21 @@ class Timecourses:
             route: route of the doses when `dose` is a mapping
             substance: name of the substance or effect
 
+        The dose variables of the batch hold the invariant the analyses rely
+        on: the doses of a sample are the leading columns of its row, sorted by
+        time, and the trailing columns are `NaN` padding. The constructor
+        enforces it, the rows of a mapping may be given in any order; a dose
+        with an amount but no time (or the other way round) and duplicate dose
+        times within a sample are errors.
+
         Returns:
             The batch.
 
         Raises:
             ValueError: if the shapes do not fit, if `route` is missing for a
-                mapping or contradicts the route of a `Dose` or `Dosing`, or if
-                a sample dimension is named `dose_index`.
+                mapping or contradicts the route of a `Dose` or `Dosing`, if a
+                mapping breaks the invariant above, or if a sample dimension is
+                named `dose_index`.
         """
         values_arr = np.asarray(values, dtype=np.float64)
         dims = tuple(dims)
@@ -1768,7 +1864,8 @@ class Timecourses:
             time: name of the variable with the time values, the coordinate of
                 `time_dim` by default
             dose: the doses, as in `from_arrays`: one `Dose` or one `Dosing`
-                protocol for all samples, or a mapping of arrays
+                protocol for all samples, or a mapping of arrays whose rows are
+                sorted by dose time with the `NaN` padding trailing
             route: route of the doses when `dose` is a mapping
             substance: name of the substance, `value` by default
 
@@ -1776,8 +1873,9 @@ class Timecourses:
             The batch with the scan dimensions as sample dimensions.
 
         Raises:
-            ValueError: if `value` has no dimension `time_dim`, or the time
-                values are not one dimensional.
+            ValueError: if `value` has no dimension `time_dim`, if the time
+                values are not one dimensional, or if `dose` does not fit the
+                batch (`from_arrays`).
         """
         da = ds[value]
         if time_dim not in da.dims:
