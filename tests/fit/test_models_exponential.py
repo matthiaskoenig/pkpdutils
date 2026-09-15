@@ -2,7 +2,11 @@ import numpy as np
 import pytest
 
 from pkpdutils.fit.models import Bateman, BiExp, MonoExp, TriExp
-from pkpdutils.fit.models_exponential import log_linear_regression, terminal_guess
+from pkpdutils.fit.models_exponential import (
+    _strip,
+    log_linear_regression,
+    terminal_guess,
+)
 
 T = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12, 24])
 
@@ -112,3 +116,30 @@ def test_bateman_ka_equals_ke_limit() -> None:
 def test_terminal_guess() -> None:
     a, k = terminal_guess(T, 5.0 * np.exp(-0.3 * T))
     assert k == pytest.approx(0.3) and a == pytest.approx(5.0)
+
+
+def _assert_strictly_decreasing_rates(guess: np.ndarray) -> None:
+    rates = guess.reshape(-1, 2)[:, 1]
+    assert np.all(np.diff(rates) < 0)
+
+
+def test_strip_always_returns_all_phases() -> None:
+    # a pure mono-exponential leaves too few positive residuals after the
+    # first strip to find every remaining phase from real data; `_strip`
+    # must still return `2 * phases` finite, strictly ordered values instead
+    # of truncating the phase count.
+    mono = 10.0 * np.exp(-10.0 * T)
+    guess = TriExp().initial_guess(T, mono)
+    assert guess.shape == (6,)
+    assert np.all(np.isfinite(guess))
+    _assert_strictly_decreasing_rates(guess)
+
+    guess = BiExp().initial_guess(T, mono)
+    assert guess.shape == (4,)
+    assert np.all(np.isfinite(guess))
+    _assert_strictly_decreasing_rates(guess)
+
+    guess = _strip(T, mono, phases=4)
+    assert guess.shape == (8,)
+    assert np.all(np.isfinite(guess))
+    _assert_strictly_decreasing_rates(guess)

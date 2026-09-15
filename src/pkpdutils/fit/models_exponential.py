@@ -95,16 +95,26 @@ def _strip(x: np.ndarray, y: np.ndarray, phases: int) -> np.ndarray:
     x, y = x[ok], y[ok]
     coefficients: list[tuple[float, float]] = []
     residual = y.copy()
+    exhausted = False
     for _ in range(phases - 1):
+        if exhausted:
+            coefficients.append((math.nan, math.nan))
+            continue
         a, k = terminal_guess(x, residual)
         coefficients.append((a, k))
         residual = residual - a * np.exp(-k * x)
         keep = residual > 0
         if keep.sum() < 2:
-            break
+            # too few points left for another phase: fill the rest from the
+            # slowest phase below, never truncate the phase count
+            exhausted = True
+            continue
         # the remaining phase lives in the early points
         x, residual = x[keep], residual[keep]
-    a, k = terminal_guess(x, residual) if residual.size >= 2 else (math.nan, math.nan)
+    if exhausted or residual.size < 2:
+        a, k = math.nan, math.nan
+    else:
+        a, k = terminal_guess(x, residual)
     coefficients.append((a, k))
     # fill failed phases from the slowest one
     slow_a, slow_k = coefficients[0]
@@ -149,7 +159,7 @@ class MonoExp(Model):
         ModelParameter("a", "[y]", description="value at x = 0"),
         ModelParameter("k", "1/[x]", description="rate constant"),
     )
-    derived_units = {"thalf": "[x]", "auc": "[y]*[x]"}  # noqa: RUF012
+    derived_units: ClassVar[dict[str, str]] = {"thalf": "[x]", "auc": "[y]*[x]"}
 
     def predict(self, x: np.ndarray, p: np.ndarray) -> np.ndarray:
         """The curve."""
@@ -211,7 +221,7 @@ class BiExp(_SumOfExponentials):
         ModelParameter("a2", "[y]", description="coefficient of the slow phase"),
         ModelParameter("k2", "1/[x]", description="rate constant of the slow phase"),
     )
-    derived_units = {  # noqa: RUF012
+    derived_units: ClassVar[dict[str, str]] = {
         "lambda_z": "1/[x]",
         "thalf_1": "[x]",
         "thalf_2": "[x]",
@@ -232,7 +242,7 @@ class TriExp(_SumOfExponentials):
         ModelParameter("a3", "[y]", description="coefficient of the slowest phase"),
         ModelParameter("k3", "1/[x]", description="rate constant of the slowest phase"),
     )
-    derived_units = {  # noqa: RUF012
+    derived_units: ClassVar[dict[str, str]] = {
         "lambda_z": "1/[x]",
         "thalf_1": "[x]",
         "thalf_2": "[x]",
