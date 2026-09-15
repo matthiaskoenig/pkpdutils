@@ -9,8 +9,42 @@ import pandas as pd
 import xarray as xr
 from scipy.stats import t as student_t
 
-from pkpdutils.nca.uncertainty import base_name
 from pkpdutils.units import Q_, Quantity
+
+#: suffixes of the uncertainty variables of a parameter (`_cv` is the
+#: coefficient of variation of a fitted parameter, `pkpdutils.fit`)
+UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
+    "_sd",
+    "_se",
+    "_ci_low",
+    "_ci_high",
+    "_pi_low",
+    "_pi_high",
+    "_geomean",
+    # `_geocv` before `_cv`: `base_name` returns on the first match, so the
+    # shorter suffix would turn `auc_geocv` into `auc_geo`
+    "_geocv",
+    "_cv",
+)
+
+#: suffixes of the summary variables of a parameter (`ParameterResult.summarize`)
+SUMMARY_SUFFIXES: tuple[str, ...] = ("_median", "_q25", "_q75", "_n")
+
+
+def base_name(name: str) -> str | None:
+    """The parameter a derived variable belongs to, `None` for a parameter itself.
+
+    Args:
+        name: name of a result variable, e.g. `"auc_last_se"`.
+
+    Returns:
+        The name of the parameter the variable is derived from, `None` for a
+        parameter.
+    """
+    for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES):
+        if name.endswith(suffix) and len(name) > len(suffix):
+            return name[: -len(suffix)]
+    return None
 
 
 class ParameterResult:
