@@ -46,9 +46,9 @@ def test_plot_fit_single_and_batch() -> None:
     assert isinstance(fig, Figure) and len(fig.axes) == 2
     assert fig.axes[0].get_yscale() == "log"
     assert "monoexp" in fig.axes[0].get_title() and "k" in fig.axes[0].get_title()
-    assert (
-        fig.axes[0].get_xlabel() == "x [hr]" and fig.axes[0].get_ylabel() == "y [mg/l]"
-    )
+    # the shared x axis is labelled once, on the residual panel
+    assert fig.axes[0].get_xlabel() == "" and fig.axes[1].get_xlabel() == "x [hr]"
+    assert fig.axes[0].get_ylabel() == "y [mg/l]"
     labels = [line.get_label() for line in fig.axes[0].get_lines()]
     assert "fit" in labels
     fig2 = plot_fit(monoexp_result(3), individual="s1", title="s1")

@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 from matplotlib.figure import Figure
+from matplotlib.ticker import NullLocator
 
 from pkpdutils.fit.result import FitResult
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
@@ -141,7 +142,7 @@ def plot_fit(
     if flags:
         text = f"{text} [{', '.join(flags)}]"
     ax.set_title(text, fontsize="small")
-    ax.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
+    # the x axis is shared with the residual panel below, which carries the label
     ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
     if log_x:
         ax.set_xscale("log")
@@ -312,6 +313,13 @@ def plot_dose_proportionality(
     ax.set_title(heading)
     ax.set_xscale("log")
     ax.set_yscale("log")
+    if ok.any():
+        # a dose escalation has few, known doses: label those instead of the
+        # decade ticks of the log scale, whose labels overlap over a range of
+        # one or two decades
+        doses = np.unique(x[ok])
+        ax.set_xticks(doses, labels=[f"{dose:g}" for dose in doses])
+        ax.xaxis.set_minor_locator(NullLocator())
     ax.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
     ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
     ax.legend(fontsize="small")
