@@ -178,6 +178,8 @@ def test_batch_rows_dims_and_nan_padding() -> None:
         and "y_pred" not in df.columns
         and list(df.columns)[-1] == "flags"
     )
+    # one row per sample, not one per (sample, point, parameter pair)
+    assert len(df) == 3
     single = fit(MonoExp(), T, ys[1], x_unit="hr", y_unit="mg/l")
     assert single.to_quantities()["k"].magnitude == pytest.approx(result["k"].values[1])
     assert result.predict(T, individual="b").shape == T.shape

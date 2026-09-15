@@ -231,9 +231,13 @@ class ParameterResult:
     def to_dataframe(self) -> pd.DataFrame:
         """One row per sample: the sample coordinates, every scalar variable and the decoded flags.
 
-        `xarray.Dataset.to_dataframe` refuses a 0-dimensional dataset (no
-        sample dimensions), so that case is built as a single-row frame
-        directly.
+        The point variables (the data and the predictions of a fit, the
+        correlation matrix) are left out: they carry a dimension beyond the
+        sample dimensions, and `xarray.Dataset.to_dataframe` of the whole
+        dataset would repeat every sample once per point and per parameter
+        pair. `xarray.Dataset.to_dataframe` also refuses a 0-dimensional
+        dataset (no sample dimensions), so that case is built as a single-row
+        frame directly.
 
         Returns:
             The dataframe.
@@ -244,7 +248,7 @@ class ParameterResult:
             }
             row["flags"] = "|".join(self.decode_flags(int(self.ds["flags"].values)))
             return pd.DataFrame([row])
-        df = self.ds.to_dataframe().reset_index()
+        df = self.ds[[*self._variables, "flags"]].to_dataframe().reset_index()
         df["flags"] = ["|".join(self.decode_flags(int(v))) for v in df["flags"]]
         columns = [*self.sample_dims, *self._variables, "flags"]
         return df[columns]
