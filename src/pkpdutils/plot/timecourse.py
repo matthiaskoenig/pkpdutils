@@ -122,6 +122,10 @@ def plot_timecourse(
 ) -> Figure:
     """Plot one timecourse or every timecourse of a batch.
 
+    A single curve whose protocol has more than one dose also gets one thin
+    dotted vertical line per dose time (`style.dose_color`); a batch draws no
+    dose lines, since its curves may carry different protocols.
+
     Args:
         timecourses: the curve or the batch
         ax: axes to draw on, a new figure by default
@@ -156,6 +160,15 @@ def plot_timecourse(
             style.data_color if len(curves) == 1 else cmap(i / max(len(curves) - 1, 1))
         )
         _draw_curve(ax, tc, color=color, label=label, errorbars=errorbars, style=style)
+    if (
+        isinstance(timecourses, Timecourse)
+        and timecourses.dosing is not None
+        and timecourses.dosing.n_doses >= 2
+    ):
+        for dose_time in timecourses.dosing.times:
+            ax.axvline(
+                float(dose_time), color=style.dose_color, linestyle=":", linewidth=1
+            )
     ax.set_xlabel(f"time [{first.time_unit}]")
     ax.set_ylabel(f"{first.substance} [{first.unit}]")
     if log:

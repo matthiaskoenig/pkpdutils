@@ -21,6 +21,7 @@ class PlotStyle:
         limit_color: color of acceptance limits and interaction thresholds
         pooled_color: color of pooled effects
         summary_color: color of means and intervals drawn over individual points
+        dose_color: color of the dose time markers of a dosing protocol
     """
 
     data_color: str = "black"
@@ -36,6 +37,7 @@ class PlotStyle:
     limit_color: str = "tab:red"
     pooled_color: str = "tab:orange"
     summary_color: str = "tab:blue"
+    dose_color: str = "gray"
 
 
 #: the default style
