@@ -246,3 +246,75 @@ def test_protocol_analysis_uses_the_last_dose_at_steady_state() -> None:
     assert plain["tmax"].magnitude == pytest.approx(0.5)
     assert plain["tau"].magnitude == pytest.approx(TAU)
     assert plain["auc_tau"].magnitude == pytest.approx(q["auc_tau"].magnitude, rel=1e-9)
+
+
+def test_mixed_single_and_multiple_dose_batch() -> None:
+    # B3: a batch mixing protocols reported no clearance at all; every row is
+    # analysed by its own protocol now
+    t_last = 4 * TAU + np.array([0.5, 1, 2, 4, 6, 8, 10, 12])
+    multi = Timecourse(
+        time=t_last,
+        value=AMPLITUDE * np.exp(-K * (t_last - 4 * TAU)),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing(
+            amounts=[100.0] * 5,
+            times=[0.0, TAU, 2 * TAU, 3 * TAU, 4 * TAU],
+            unit="mg",
+            route=Route.IV_BOLUS,
+        ),
+        substance="x",
+        label="multi",
+    )
+    single = single_dose().model_copy(update={"label": "single"})
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    df = (
+        nca(Timecourses.from_timecourses([single, multi]), options)
+        .to_dataframe()
+        .set_index("individual")
+    )
+    # the single dose row keeps its single dose clearance, the multiple dose row
+    # reports the clearance of its dosing interval; both are Dose / (C0 / k)
+    assert df.loc["single", "cl"] == pytest.approx(100.0 / (C0 / K), rel=1e-4)
+    assert df.loc["multi", "cl_ss"] == pytest.approx(100.0 / (C0 / K), rel=1e-4)
+    assert np.isnan(df.loc["single", "cl_ss"])
+    assert np.isnan(df.loc["multi", "cl"])
+    assert np.isfinite(df.loc["single", "auc_inf_dn"])
+    assert np.isnan(df.loc["multi", "auc_inf_dn"])
+    # the steady state variables of the single dose row are NaN, its own are not
+    assert np.isnan(df.loc["single", "auc_tau"])
+    assert df.loc["multi", "auc_tau"] == pytest.approx(C0 / K, rel=1e-4)
+    assert df.loc["multi", "n_doses"] == 5
+    assert df.loc["single", "n_doses"] == 1
+    assert np.isfinite(df.loc["single", "auc_inf_obs"])
+
+
+def test_mixed_batch_rows_match_the_analyses_of_the_protocols_alone() -> None:
+    t_last = 4 * TAU + np.array([0.5, 1, 2, 4, 6, 8, 10, 12])
+    multi = Timecourse(
+        time=t_last,
+        value=AMPLITUDE * np.exp(-K * (t_last - 4 * TAU)),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing(
+            amounts=[100.0] * 5,
+            times=[0.0, TAU, 2 * TAU, 3 * TAU, 4 * TAU],
+            unit="mg",
+            route=Route.IV_BOLUS,
+        ),
+        substance="x",
+        label="multi",
+    )
+    single = single_dose().model_copy(update={"label": "single"})
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    mixed = nca(Timecourses.from_timecourses([single, multi]), options)
+    alone_single = nca_single(single, options)
+    alone_multi = nca_single(multi, options)
+    for name in alone_single.parameters:
+        assert float(mixed[name].sel(individual="single")) == pytest.approx(
+            float(alone_single[name]), nan_ok=True
+        )
+    for name in alone_multi.parameters:
+        assert float(mixed[name].sel(individual="multi")) == pytest.approx(
+            float(alone_multi[name]), nan_ok=True
+        )

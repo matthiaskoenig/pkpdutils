@@ -170,3 +170,30 @@ def test_batch_rows_are_independent() -> None:
     tp, cp, n_valid = pack_valid(t, c)
     fit = terminal_fit(tp, cp, n_valid, np.zeros(3, dtype=int), TerminalPhase())
     np.testing.assert_allclose(fit.slope, -ks)
+
+
+def test_last_n_honours_exclude_cmax() -> None:
+    # B18: `LAST_N` regressed the whole absorption phase when `n_points` reached
+    # beyond the maximum
+    t = np.array([[0.5, 1, 2, 4, 8, 12, 24.0]])
+    c = np.array([[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.05]])
+    tp, cp, n_valid = pack_valid(t, c)
+    tmax_idx = np.array([1])
+    excluded = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        tmax_idx,
+        TerminalPhase(method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=True),
+    )
+    assert excluded.n_points[0] == 5
+    assert excluded.t_first[0] == pytest.approx(2.0)
+    included = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        tmax_idx,
+        TerminalPhase(method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=False),
+    )
+    assert included.n_points[0] == 7
+    assert included.t_first[0] == pytest.approx(0.5)

@@ -495,3 +495,76 @@ def test_bootstrap_lognormal_end_to_end_and_ci_level() -> None:
     )
     wide_width = wide["auc_last_ci_high"].magnitude - wide["auc_last_ci_low"].magnitude
     assert narrow_width < wide_width
+
+
+def b2_group_curve() -> Timecourses:
+    """The reproduction of bug B2: one group curve with `sd` and `n = 12`."""
+    t = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0])
+    c = np.array([1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.05])
+    curve = Timecourse(
+        time=t,
+        value=c,
+        sd=0.3 * c,
+        n=12,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg"),
+    )
+    return Timecourses.from_timecourses([curve], dim="group")
+
+
+def test_delta_geocv_is_the_between_subject_cv() -> None:
+    # B2: `x_geocv` of the delta method was the relative uncertainty of the mean
+    # curve, a factor sqrt(n) smaller than the geometric CV of the bootstrap
+    batch = b2_group_curve()
+    boot = (
+        nca(
+            batch,
+            NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=4000, seed=3),
+        )
+        .to_dataframe()
+        .iloc[0]
+    )
+    row = (
+        nca(batch, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+        .to_dataframe()
+        .iloc[0]
+    )
+    for name in ("auc_inf_obs", "cmax"):
+        assert row[f"{name}_geocv"] == pytest.approx(boot[f"{name}_geocv"], rel=0.1)
+        # sigma_log² = ln(1 + (sd/x)²) gives geocv = sd/x exactly
+        assert row[f"{name}_geocv"] == pytest.approx(row[f"{name}_sd"] / row[name])
+
+
+def test_delta_geocv_is_nan_without_the_number_of_subjects() -> None:
+    t = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0])
+    c = np.array([1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.05])
+    without_n = Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=t,
+                value=c,
+                se=0.1 * c,
+                time_unit="hr",
+                unit="mg/l",
+                dose=Dose(amount=100, unit="mg"),
+            )
+        ],
+        dim="group",
+    )
+    row = (
+        nca(without_n, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+        .to_dataframe()
+        .iloc[0]
+    )
+    assert np.isnan(row["auc_inf_obs_sd"]) and np.isnan(row["auc_inf_obs_geocv"])
+    assert np.isfinite(row["auc_inf_obs_se"])
+
+
+def test_resolve_spread_takes_an_explicit_spread() -> None:
+    batch = b2_group_curve()
+    options = NCAOptions()
+    sd = resolve_spread(batch, options, spread=BootstrapSpread.SD)
+    se = resolve_spread(batch, options, spread=BootstrapSpread.SE)
+    np.testing.assert_allclose(se, sd / np.sqrt(12.0))
+    np.testing.assert_allclose(resolve_spread(batch, options), se)

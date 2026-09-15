@@ -12,6 +12,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pkpdutils.result import decode_flags as decode_flag_names
+
 
 class Kind(StrEnum):
     """What a timecourse measures."""
@@ -131,7 +133,7 @@ def decode_flags(value: int) -> list[str]:
     Returns:
         The names of the set flags, in the declaration order of `NCAFlag`.
     """
-    return [flag.name for flag in NCAFlag if flag.value and value & flag.value]
+    return decode_flag_names(NCAFlag, value)
 
 
 class TerminalPhase(BaseModel):
@@ -140,8 +142,13 @@ class TerminalPhase(BaseModel):
     Attributes:
         method: the selection rule
         min_points: minimal number of points of a regression (at least 3)
-        exclude_cmax: whether the windows must start after the point of the maximum
-            (`True`) or may start anywhere (`False`)
+        exclude_cmax: whether the windows must start after the point of the
+            maximum (`True`) or may start anywhere (`False`). It applies to
+            `BEST_FIT` and to `LAST_N`, whose window then holds the points
+            after the maximum when `n_points` reaches beyond it (fewer points
+            than asked for, `NCAFlag.TOO_FEW_POINTS` below `min_points`); it
+            does not apply to `MANUAL`, which regresses the given `points` as
+            they are, and `ALL_AFTER_TMAX` starts after the maximum anyway
         n_points: number of points for `LAST_N`
         points: indices of the points (in the time order of the curve) for `MANUAL`
         min_adj_r2: minimal adjusted R² a regression must reach, `None` for no limit

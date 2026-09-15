@@ -30,6 +30,7 @@ from pkpdutils.nca.auc import (
     insert_point,
     interpolate_at,
     pack_valid,
+    take_rows,
     time_above_threshold,
 )
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_UNITS
@@ -139,17 +140,66 @@ def unit_expression(name: str) -> str:
     return PARAMETER_UNITS[base]
 
 
-def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
-    """Element `idx[i]` of row `i`.
+def positive_dose(dose_amount: np.ndarray) -> np.ndarray:
+    """The dose amounts, `NaN` where a row carries no positive dose.
+
+    A dose of 0 is the encoding of a placebo arm (`Dose.amount` is
+    non-negative). The parameters which divide by the dose - the clearance, the
+    volumes and the dose normalized exposure - are not defined for it, so the
+    amount is `NaN` there and every one of them follows; the analysis reports
+    this in a debug log and sets no flag, since a zero dose is a property of
+    the data and not a finding of the analysis.
 
     Args:
-        a: array `(N, n)`
-        idx: one column index per row `(N,)`
+        dose_amount: the reference dose per row `(N,)`
 
     Returns:
-        The selected elements `(N,)`.
+        The amounts with the non-positive ones replaced by `NaN`.
     """
-    return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
+    with np.errstate(invalid="ignore"):
+        positive = dose_amount > 0
+        n_zero = int((np.isfinite(dose_amount) & ~positive).sum())
+    if n_zero:
+        logger.debug(
+            "%d of %d rows carry a dose of 0: their dose dependent parameters "
+            "(cl, vz, vss, auc_inf_dn, cmax_dn) are NaN",
+            n_zero,
+            dose_amount.shape[0],
+        )
+    return np.where(positive, dose_amount, np.nan)
+
+
+def bolus_c0(
+    tp: np.ndarray, cp: np.ndarray, n_valid: np.ndarray, options: NCAOptions
+) -> np.ndarray:
+    r"""Concentration at time 0 of an intravenous bolus, per row.
+
+    With `C0Method.LOG_BACK_EXTRAPOLATION` the first two samples are
+    extrapolated back to the dose,
+
+    $$C_0 = \exp\left(\ln C_1 - \frac{\ln C_2 - \ln C_1}{t_2 - t_1} t_1\right),$$
+
+    the estimate of Gabrielsson & Weiner (2016, ch. 2.8); the first sample is
+    used when the two samples do not decline or with `C0Method.FIRST_VALUE`.
+
+    Args:
+        tp: packed times `(N, n)`, relative to the dose
+        cp: packed values `(N, n)`
+        n_valid: valid points per row `(N,)`
+        options: the options, `c0_method` is used
+
+    Returns:
+        The estimate per row `(N,)`.
+    """
+    t1, c1 = tp[:, 0], cp[:, 0]
+    t2 = np.where(n_valid > 1, tp[:, 1], np.nan)
+    c2 = np.where(n_valid > 1, cp[:, 1], np.nan)
+    if options.c0_method is not C0Method.LOG_BACK_EXTRAPOLATION:
+        return c1
+    with np.errstate(divide="ignore", invalid="ignore"):
+        back = np.exp(np.log(c1) - (np.log(c2) - np.log(c1)) / (t2 - t1) * t1)
+        usable = (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)
+    return np.where(usable, back, c1)
 
 
 def _apply_lloq(c: np.ndarray, options: NCAOptions) -> tuple[np.ndarray, np.ndarray]:
@@ -178,13 +228,20 @@ def _apply_lloq(c: np.ndarray, options: NCAOptions) -> tuple[np.ndarray, np.ndar
 
 
 def _effect_parameters(
-    t: np.ndarray, c: np.ndarray, options: NCAOptions
+    t: np.ndarray, c: np.ndarray, truncated: np.ndarray, options: NCAOptions
 ) -> dict[str, np.ndarray]:
     """Parameters of effect timecourses (`Kind.EFFECT`).
 
+    The areas of an effect timecourse are always linear: the logarithmic rules
+    are exact for a mono-exponential decline of a concentration and need
+    positive values, which an effect - a change against a baseline, possibly
+    negative - does not have. `NCAOptions.auc_method` therefore does not apply
+    here, while `lloq` and `blq` do and are applied by the caller.
+
     Args:
         t: times `(N, n)`
-        c: values `(N, n)`
+        c: values `(N, n)`, already cleaned of the values below `lloq`
+        truncated: rows in which a value below `lloq` was replaced `(N,)`
         options: the options, `effect_threshold` is used
 
     Returns:
@@ -194,15 +251,16 @@ def _effect_parameters(
     _, n = tp.shape
     has_data = n_valid >= 2
     flags = np.where(has_data, 0, NCAFlag.NO_DATA).astype(np.int64)
+    flags |= np.where(truncated, NCAFlag.BLQ_TRUNCATED, 0)
     idx = np.arange(n)[None, :]
     in_row = idx < n_valid[:, None]
     e0 = np.where(n_valid > 0, cp[:, 0], np.nan)
     masked = np.where(in_row, cp, -np.inf)
     imax = masked.argmax(axis=1)
-    emax = np.where(has_data, _take(cp, imax), np.nan)
-    temax = np.where(has_data, _take(tp, imax), np.nan)
+    emax = np.where(has_data, take_rows(cp, imax), np.nan)
+    temax = np.where(has_data, take_rows(tp, imax), np.nan)
     last_idx = np.clip(n_valid - 1, 0, n - 1)
-    tlast = np.where(has_data, _take(tp, last_idx), np.nan)
+    tlast = np.where(has_data, take_rows(tp, last_idx), np.nan)
     auec, _ = auc_aumc(tp, cp, n_valid, AUCMethod.LINEAR)
     auec_base, _ = auc_aumc(tp, cp - e0[:, None], n_valid, AUCMethod.LINEAR)
     out: dict[str, np.ndarray] = {
@@ -258,10 +316,10 @@ def compute_parameters(
         # of the curve and only the dose-dependent parameters stay `NaN`
         shift = np.where(np.isfinite(dose_time), dose_time, 0.0)
         t = t - shift[:, None]
-    if options.kind is Kind.EFFECT:
-        return _effect_parameters(t, c, options)
-
     c, truncated = _apply_lloq(c, options)
+    if options.kind is Kind.EFFECT:
+        return _effect_parameters(t, c, truncated, options)
+
     tp, cp, n_valid = pack_valid(t, c)
     n_rows, n = tp.shape
     idx = np.arange(n)[None, :]
@@ -274,12 +332,12 @@ def compute_parameters(
     # observed maxima and minima
     masked_max = np.where(in_row, cp, -np.inf)
     imax = masked_max.argmax(axis=1)
-    cmax = np.where(has_data, _take(cp, imax), nan)
-    tmax = np.where(has_data, _take(tp, imax), nan)
+    cmax = np.where(has_data, take_rows(cp, imax), nan)
+    tmax = np.where(has_data, take_rows(tp, imax), nan)
     masked_min = np.where(in_row, cp, np.inf)
     imin = masked_min.argmin(axis=1)
-    cmin = np.where(has_data, _take(cp, imin), nan)
-    tmin = np.where(has_data, _take(tp, imin), nan)
+    cmin = np.where(has_data, take_rows(cp, imin), nan)
+    tmin = np.where(has_data, take_rows(tp, imin), nan)
     flags |= np.where(has_data & (imax == n_valid - 1), NCAFlag.NO_MAX, 0)
     if route is Route.ORAL:
         flags |= np.where(has_data & (imax == 0), NCAFlag.NO_ABSORPTION, 0)
@@ -289,26 +347,16 @@ def compute_parameters(
         positive = in_row & (cp > 0)
     has_positive = positive.any(axis=1)
     ilast = np.where(has_positive, n - 1 - positive[:, ::-1].argmax(axis=1), 0)
-    clast = np.where(has_data & has_positive, _take(cp, ilast), nan)
-    tlast = np.where(has_data & has_positive, _take(tp, ilast), nan)
+    clast = np.where(has_data & has_positive, take_rows(cp, ilast), nan)
+    tlast = np.where(has_data & has_positive, take_rows(tp, ilast), nan)
 
     # C0 of an intravenous bolus, inserted at t = 0 for the areas
     c0 = nan.copy()
     tp_area, cp_area, n_area = tp, cp, n_valid
     if route is Route.IV_BOLUS:
-        t1, c1 = tp[:, 0], cp[:, 0]
-        t2 = np.where(n_valid > 1, tp[:, 1], np.nan)
-        c2 = np.where(n_valid > 1, cp[:, 1], np.nan)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            back = np.exp(np.log(c1) - (np.log(c2) - np.log(c1)) / (t2 - t1) * t1)
-            usable = (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)
-        if options.c0_method is C0Method.LOG_BACK_EXTRAPOLATION:
-            c0 = np.where(usable, back, c1)
-        else:
-            c0 = c1
-        c0 = np.where(has_data, c0, nan)
+        c0 = np.where(has_data, bolus_c0(tp, cp, n_valid, options), nan)
         with np.errstate(invalid="ignore"):
-            insert = has_data & (t1 > 0)
+            insert = has_data & (tp[:, 0] > 0)
         tp_area, cp_area, n_area = insert_point(
             tp, cp, n_valid, np.where(insert, 0.0, np.nan), np.where(insert, c0, np.nan)
         )
@@ -352,8 +400,8 @@ def compute_parameters(
         distance = np.where(before_max, np.abs(cp - 0.5 * cmax[:, None]), np.inf)
     ihalf = distance.argmin(axis=1)
     has_half = has_data & (imax > 0) & (route is Route.ORAL)
-    cmax_half = np.where(has_half, _take(cp, ihalf), nan)
-    tmax_half = np.where(has_half, _take(tp, ihalf), nan)
+    cmax_half = np.where(has_half, take_rows(cp, ihalf), nan)
+    tmax_half = np.where(has_half, take_rows(tp, ihalf), nan)
 
     out: dict[str, np.ndarray] = {
         "cmax": cmax,
@@ -384,16 +432,17 @@ def compute_parameters(
         out["cmax_half"] = cmax_half
         out["tmax_half"] = tmax_half
     if dose_amount is not None and route is not None:
+        amount = positive_dose(dose_amount)
         with np.errstate(divide="ignore", invalid="ignore"):
-            cl = dose_amount / auc_inf_obs
+            cl = amount / auc_inf_obs
             vz = cl / lambda_z
             suffix = "" if route.is_iv else "_f"
             out[f"cl{suffix}"] = cl
             out[f"vz{suffix}"] = vz
             if route.is_iv:
                 out["vss"] = cl * mrt
-            out["auc_inf_dn"] = auc_inf_obs / dose_amount
-            out["cmax_dn"] = cmax / dose_amount
+            out["auc_inf_dn"] = auc_inf_obs / amount
+            out["cmax_dn"] = cmax / amount
     out["flags"] = flags
     return out
 
@@ -459,56 +508,163 @@ def is_multiple_dose(
     dose_amount: np.ndarray | None,
     dose_time: np.ndarray | None,
     options: NCAOptions,
-) -> bool:
-    """Whether a batch is analysed as a multiple dose batch.
+    *,
+    n_rows: int,
+) -> np.ndarray:
+    """Which rows of a batch are analysed as multiple dose rows.
 
-    A batch with a protocol of more than one dose in any of its rows, or with
-    `options.tau` (a steady state curve given with its last dose only), is
-    analysed over its dosing intervals (`compute_steady_state`); every other
-    batch is a single dose batch. The decision is taken for the whole batch, so
-    that every chunk of `run_rows` reports the same parameters.
+    A row whose protocol holds more than one dose is analysed over its dosing
+    intervals (`compute_steady_state`), every other row as a single dose curve
+    (`compute_parameters`); `options.tau` (a steady state curve given with its
+    last dose only) puts every row on the multiple dose path. The decision is
+    taken per row, so a batch mixing the protocols reports the single dose
+    parameters of its single dose rows and the steady state parameters of its
+    multiple dose rows, each row `NaN` in the variables of the other path.
 
     Args:
         dose_amount: dose amounts `(N, n_dose)`, `None` without doses
         dose_time: dose times `(N, n_dose)`, `None` without doses
         options: the options, `tau` is used
 
+    Keyword Args:
+        n_rows: number of rows `N`
+
     Returns:
-        Whether the multiple dose analysis applies.
+        The boolean mask of the multiple dose rows `(N,)`.
     """
     if options.tau is not None:
-        return True
+        return np.ones(n_rows, dtype=bool)
     if dose_amount is None or dose_time is None:
-        return False
+        return np.zeros(n_rows, dtype=bool)
     amounts = np.asarray(dose_amount, dtype=np.float64)
     times = np.asarray(dose_time, dtype=np.float64)
-    given = np.isfinite(amounts.reshape(amounts.shape[0], -1)) & np.isfinite(
-        times.reshape(times.shape[0], -1)
+    given = np.isfinite(amounts.reshape(n_rows, -1)) & np.isfinite(
+        times.reshape(n_rows, -1)
     )
-    counts = given.sum(axis=1)
-    return bool((counts >= 2).any())
+    return given.sum(axis=1) >= 2
+
+
+def dose_counts(dose_time: np.ndarray | None, n_rows: int) -> np.ndarray:
+    """Number of doses of the protocol of every row.
+
+    Args:
+        dose_time: dose times `(N, n_dose)`, `NaN` padded, `None` without doses
+        n_rows: number of rows `N`
+
+    Returns:
+        The count per row `(N,)`, 0 for a batch without doses.
+    """
+    if dose_time is None:
+        return np.zeros(n_rows)
+    times = np.asarray(dose_time, dtype=np.float64).reshape(n_rows, -1)
+    return np.isfinite(times).sum(axis=1).astype(np.float64)
+
+
+def merge_rows(
+    parts: list[dict[str, np.ndarray]], counts: list[int]
+) -> dict[str, np.ndarray]:
+    """Stack the parameters of row groups which need not carry the same variables.
+
+    A group which does not report a variable of another group is `NaN` in it
+    (0 in `flags`, an integer variable), so that the result of a batch is the
+    union of the variables of its groups: a single dose row of a mixed batch
+    carries `NaN` in the steady state variables and a multiple dose row `NaN`
+    in `cl`, `vz`, `vss`, `auc_inf_dn` and `cmax_dn`; `n_doses`, which
+    describes the protocol of a row and not the path it took, is filled in for
+    every row by the caller. The variables are ordered after the group which
+    reports the most of them.
+
+    Args:
+        parts: one mapping of variable name to `(n_k,)` or `(n_k, K)` array per
+            group, in the row order of the batch
+        counts: number of rows `n_k` of every group
+
+    Returns:
+        One array per variable of the union, stacked over the rows.
+
+    Raises:
+        ValueError: if a variable has a different second dimension in two groups.
+    """
+    if len(parts) == 1:
+        return parts[0]
+    names: list[str] = []
+    for index in sorted(range(len(parts)), key=lambda i: -len(parts[i])):
+        names.extend(name for name in parts[index] if name not in names)
+    widths: dict[str, int] = {}
+    for part in parts:
+        for name, array in part.items():
+            width = array.shape[1] if array.ndim > 1 else 0
+            if widths.setdefault(name, width) != width:
+                raise ValueError(
+                    f"'{name}' has {width} and {widths[name]} columns in two row groups"
+                )
+    out: dict[str, np.ndarray] = {}
+    for name in names:
+        blocks = []
+        for part, n_rows in zip(parts, counts, strict=True):
+            if name in part:
+                blocks.append(part[name])
+                continue
+            shape = (n_rows, widths[name]) if widths[name] else (n_rows,)
+            missing = (
+                np.zeros(shape, dtype=np.int64)
+                if name == "flags"
+                else np.full(shape, np.nan)
+            )
+            blocks.append(missing)
+        out[name] = np.concatenate(blocks)
+    return out
 
 
 def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
     """Worker entry: the parameters of a chunk of rows.
 
-    The chunk carries the dose arrays of the batch, `(N, n_dose)`. A single
-    dose batch is reduced to the one dose of every row (`reference_dose`) and
-    analysed by `compute_parameters`; a multiple dose batch keeps the whole
-    protocol and is analysed by `compute_steady_state`, which picks the last
-    dose of every row itself. Both paths run through the same entry, so a
+    The chunk carries the dose arrays of the batch, `(N, n_dose)`, and the mask
+    of its multiple dose rows (`is_multiple_dose`). A single dose row is
+    reduced to the one dose of its protocol (`reference_dose`) and analysed by
+    `compute_parameters`; a multiple dose row keeps the whole protocol and is
+    analysed by `compute_steady_state`, which picks the last dose itself. A
+    chunk holding both is split, both parts are analysed and the rows are put
+    back in order by `merge_rows`. Both paths run through the same entry, so a
     multiple dose batch is chunked and parallelized like a single dose batch.
 
     Args:
         args: the times, the values, the dose arrays over the dose dimension,
-            the route, the options and whether the multiple dose analysis
-            applies.
+            the route, the options and the mask of the multiple dose rows.
 
     Returns:
-        The parameters of the rows of the chunk.
+        The parameters of the rows of the chunk, in their order.
     """
     t, c, dose_amount, dose_time, dose_duration, route, options, multiple = args
-    if multiple:
+    if multiple.any() and not multiple.all():
+        groups = [~multiple, multiple]
+        order = np.concatenate([np.flatnonzero(mask) for mask in groups])
+        parts = [
+            _compute_chunk(
+                (
+                    t[mask],
+                    c[mask],
+                    None if dose_amount is None else dose_amount[mask],
+                    None if dose_time is None else dose_time[mask],
+                    None if dose_duration is None else dose_duration[mask],
+                    route,
+                    options,
+                    multiple[mask],
+                )
+            )
+            for mask in groups
+        ]
+        merged = merge_rows(parts, [int(mask.sum()) for mask in groups])
+        # the two groups are concatenated in the order of `groups`, the rows go
+        # back into the order of the chunk
+        back = np.empty_like(order)
+        back[order] = np.arange(order.size)
+        out = {name: array[back] for name, array in merged.items()}
+        # the number of doses describes the protocol of a row and not the path
+        # it took, so the single dose rows report theirs instead of `NaN`
+        out["n_doses"] = dose_counts(dose_time, t.shape[0])
+        return out
+    if multiple.all() and multiple.size:
         # the steady state analysis imports this module, so the import is local
         from pkpdutils.nca.steady_state import compute_steady_state
 
@@ -552,11 +708,14 @@ def run_rows(
     chunks are mapped in order over a `ProcessPoolExecutor`.
 
     The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
-    padded with `NaN`. A batch whose protocols hold more than one dose, or an
-    analysis with `options.tau`, is analysed over the dosing intervals
-    (`is_multiple_dose`, `pkpdutils.nca.steady_state.compute_steady_state`);
-    a single dose batch is reduced to the one dose of every row
-    (`reference_dose`). A 1-D array `(N,)` is one dose per row.
+    padded with `NaN`. A row whose protocol holds more than one dose, and every
+    row of an analysis with `options.tau`, is analysed over the dosing
+    intervals (`is_multiple_dose`,
+    `pkpdutils.nca.steady_state.compute_steady_state`); a single dose row is
+    reduced to the one dose of its protocol (`reference_dose`). A 1-D array
+    `(N,)` is one dose per row. A batch mixing the two carries the union of the
+    variables, every row `NaN` in the variables of the other path
+    (`merge_rows`).
 
     Args:
         t: times `(N, n)`
@@ -575,7 +734,8 @@ def run_rows(
     # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
     # the memory of the vectorized core; the worker pool maps the chunks in order
     n_chunks = max(1, -(-n_rows // options.chunk_rows))
-    multiple = is_multiple_dose(dose_amount, dose_time, options)
+    multiple = is_multiple_dose(dose_amount, dose_time, options, n_rows=n_rows)
+    chunks = np.array_split(np.arange(n_rows), n_chunks)
     jobs = [
         (
             t[rows],
@@ -585,20 +745,18 @@ def run_rows(
             None if dose_duration is None else dose_duration[rows],
             route,
             options,
-            multiple,
+            multiple[rows],
         )
-        for rows in np.array_split(np.arange(n_rows), n_chunks)
+        for rows in chunks
     ]
     if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
         with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
             parts = list(pool.map(_compute_chunk, jobs))
     else:
         parts = [_compute_chunk(job) for job in jobs]
-    names = list(parts[0])
-    assert all(list(part) == names for part in parts), (
-        "the chunks returned different parameters"
-    )
-    return {name: np.concatenate([part[name] for part in parts]) for name in names}
+    # a chunk of single dose rows reports fewer variables than one holding a
+    # multiple dose row, so the chunks are merged into their union
+    return merge_rows(parts, [int(rows.size) for rows in chunks])
 
 
 def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
@@ -608,12 +766,15 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     process or, with `options.n_workers`, in a pool of worker processes; a
     multiple dose analysis is chunked the same way.
 
-    A batch whose dosing protocols hold more than one dose (or an analysis with
-    `options.tau`) is analysed over its dosing intervals: the point parameters
-    are computed from the last dose on, the per-interval parameters
-    (`interval_*` over the dimension `interval`) over every dosing interval and
-    the steady state parameters from the last one, see
-    `pkpdutils.nca.steady_state`.
+    A sample whose dosing protocol holds more than one dose (and every sample
+    of an analysis with `options.tau`) is analysed over its dosing intervals:
+    the point parameters are computed from the last dose on, the per-interval
+    parameters (`interval_*` over the dimension `interval`) over every dosing
+    interval and the steady state parameters from the last one, see
+    `pkpdutils.nca.steady_state`. The decision is taken per sample, so a batch
+    mixing single dose and multiple dose subjects reports `cl`/`cl_f` for the
+    single dose samples and `cl_ss`/`cl_ss_f` for the multiple dose ones; every
+    sample is `NaN` in the variables of the other path.
 
     A batch of group curves (`sd` or `se` per point) also carries the
     uncertainty of every parameter, by default from the parametric bootstrap
@@ -775,6 +936,52 @@ def nca_single(timecourse: Timecourse, options: NCAOptions | None = None) -> NCA
     return NCAResult(result.ds.isel(_single=0).drop_vars("_single"))
 
 
+def _insert_dose_value(
+    tp: np.ndarray,
+    cp: np.ndarray,
+    n_valid: np.ndarray,
+    *,
+    route: Route | None,
+    options: NCAOptions,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Add the value at the dose to every curve whose first sample is after it.
+
+    The value at time 0 is 0 for an extravascular dose and the back
+    extrapolated `c0` for an intravenous bolus (`bolus_c0`); an infusion and a
+    batch without a route are left as they are, so that an area reaching before
+    the first sample stays `NaN` there.
+
+    Args:
+        tp: packed times `(N, n)`, relative to the dose
+        cp: packed values `(N, n)`
+        n_valid: valid points per row `(N,)`
+
+    Keyword Args:
+        route: route of the batch
+        options: the options, `c0_method` is used
+
+    Returns:
+        The packed times, values and counts, one column wider when a value was
+        added.
+    """
+    if route is None or route is Route.IV_INFUSION:
+        return tp, cp, n_valid
+    with np.errstate(invalid="ignore"):
+        insert = (n_valid >= 1) & (tp[:, 0] > 0)
+    value = (
+        bolus_c0(tp, cp, n_valid, options)
+        if route is Route.IV_BOLUS
+        else np.zeros(tp.shape[0])
+    )
+    return insert_point(
+        tp,
+        cp,
+        n_valid,
+        np.where(insert, 0.0, np.nan),
+        np.where(insert, value, np.nan),
+    )
+
+
 def partial_auc(
     timecourses: Timecourses,
     t_start: float,
@@ -786,9 +993,21 @@ def partial_auc(
     The values at the bounds are interpolated with the trapezoid rule of
     `options.auc_method` (`pkpdutils.nca.auc.interpolate_at`) and the area is
     summed with the same rule; a sample whose observed range does not cover
-    `[t_start, t_end]` gives `NaN`. Only `options.auc_method` is used: the area
-    is read from the values as they are, so `lloq`, `blq` and `kind` do not
-    apply and no uncertainty is propagated.
+    `[t_start, t_end]` gives `NaN`.
+
+    An interval which starts before the first sample of a curve but not before
+    its dose - `AUC(0-12)` of a schedule whose first sample is at 0.5 h - is
+    the common request, and the value at the dose comes from the route: 0 for
+    an extravascular dose (nothing is absorbed yet, so the area up to the first
+    sample is the triangle below it, the convention of Phoenix `AUC(0-t)`), the
+    back-extrapolated `c0` for an intravenous bolus (`bolus_c0`, the estimate
+    `compute_parameters` uses for the single dose areas) and `NaN` for an
+    infusion, whose curve rises over the infusion in a way no extrapolation of
+    the samples describes, and for a batch without a route.
+
+    Only `options.auc_method` and `options.c0_method` are used: the area is
+    read from the values as they are, so `lloq`, `blq` and `kind` do not apply
+    and no uncertainty is propagated.
 
     Args:
         timecourses: the batch
@@ -820,6 +1039,9 @@ def partial_auc(
     tp, cp, n_valid = pack_valid(t, c)
     start = np.full(n_rows, float(t_start))
     end = np.full(n_rows, float(t_end))
+    tp, cp, n_valid = _insert_dose_value(
+        tp, cp, n_valid, route=timecourses.route, options=options
+    )
     c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
     c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
     tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)

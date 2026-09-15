@@ -71,6 +71,24 @@ def check_coordinate_collision(
         )
 
 
+def decode_flags(flag_type: type[IntFlag], value: int) -> list[str]:
+    """Names of the flags set in an integer flag value, in bit order.
+
+    Args:
+        flag_type: the `IntFlag` type the value belongs to.
+        value: an integer combination of its members.
+
+    Returns:
+        The names of the set flags, in the declaration order of `flag_type`;
+        the zero member and unnamed members are left out.
+    """
+    return [
+        str(flag.name)
+        for flag in flag_type
+        if flag.value and value & flag.value and flag.name is not None
+    ]
+
+
 #: suffixes of the uncertainty variables of a parameter (`_cv` is the
 #: coefficient of variation of a fitted parameter, `pkpdutils.fit`)
 UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
@@ -251,11 +269,7 @@ class ParameterResult:
         Returns:
             The names of the set flags, in the declaration order of `flag_type`.
         """
-        names: list[str] = []
-        for flag in self.flag_type:
-            if flag.value and value & flag.value and flag.name is not None:
-                names.append(str(flag.name))
-        return names
+        return decode_flags(self.flag_type, value)
 
     def _sample(self, indexers: dict[str, Any]) -> xr.Dataset:
         """Select one sample of the dataset.
@@ -472,6 +486,13 @@ class ParameterResult:
         not a quantity of which a mean over samples would mean anything, and
         is read from the unsummarized result.
 
+        A discrete parameter (`discrete_parameters`: an observed time, a point
+        count, a diagnostic of the terminal regression) carries no uncertainty:
+        a standard error or a confidence interval of a point count is not a
+        quantity, so only `x`, `x_median`, `x_q25`, `x_q75` and `x_n` are
+        reported for it, the same set the uncertainty of an analysis of group
+        curves reports (`pkpdutils.nca.uncertainty`).
+
         The two counts differ: `n` is the number of samples along `dim`,
         `x_n` the number of them at which `x` is finite, and every statistic of
         `x` uses `x_n` (`x_se = x_sd / sqrt(x_n)`, the interval uses
@@ -516,18 +537,19 @@ class ParameterResult:
                 mean = np.where(count > 0, mean, np.nan)
                 median = np.where(count > 0, median, np.nan)
             data_vars[name] = (dims, mean, {"units": units})
-            data_vars[f"{name}_sd"] = (dims, sd, {"units": units})
-            data_vars[f"{name}_se"] = (dims, se, {"units": units})
-            data_vars[f"{name}_ci_low"] = (
-                dims,
-                np.where(count > 1, low, np.nan),
-                {"units": units},
-            )
-            data_vars[f"{name}_ci_high"] = (
-                dims,
-                np.where(count > 1, high, np.nan),
-                {"units": units},
-            )
+            if name not in self.discrete_parameters:
+                data_vars[f"{name}_sd"] = (dims, sd, {"units": units})
+                data_vars[f"{name}_se"] = (dims, se, {"units": units})
+                data_vars[f"{name}_ci_low"] = (
+                    dims,
+                    np.where(count > 1, low, np.nan),
+                    {"units": units},
+                )
+                data_vars[f"{name}_ci_high"] = (
+                    dims,
+                    np.where(count > 1, high, np.nan),
+                    {"units": units},
+                )
             data_vars[f"{name}_median"] = (dims, median, {"units": units})
             data_vars[f"{name}_q25"] = (
                 dims,
@@ -540,7 +562,10 @@ class ParameterResult:
                 {"units": units},
             )
             data_vars[f"{name}_n"] = (dims, count, {"units": "dimensionless"})
-            if name in self.lognormal_parameters:
+            if (
+                name in self.lognormal_parameters
+                and name not in self.discrete_parameters
+            ):
                 with (
                     np.errstate(invalid="ignore", divide="ignore"),
                     warnings.catch_warnings(),

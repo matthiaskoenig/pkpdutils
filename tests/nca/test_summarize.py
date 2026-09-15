@@ -91,3 +91,19 @@ def test_summarize_keeps_other_dims_and_ors_flags() -> None:
     )
     with pytest.raises(ValueError, match="dim"):
         result.summarize("study")
+
+
+def test_summarize_reports_no_uncertainty_for_discrete_parameters() -> None:
+    # B17: a confidence interval of a point count or of an adjusted R² is not a
+    # quantity; the bootstrap skips them and so does `summarize`
+    summary = nca(individuals()).summarize("individual")
+    names = set(summary.ds.data_vars)
+    for name in ("lambda_z_n_points", "lambda_z_r2_adj", "tmax", "tlast"):
+        assert name in names
+        for suffix in ("_sd", "_se", "_ci_low", "_ci_high", "_geomean", "_geocv"):
+            assert f"{name}{suffix}" not in names
+        for suffix in ("_median", "_q25", "_q75", "_n"):
+            assert f"{name}{suffix}" in names
+    # a continuous parameter keeps its statistics
+    for suffix in ("_sd", "_se", "_ci_low", "_ci_high", "_median", "_n"):
+        assert f"auc_last{suffix}" in names

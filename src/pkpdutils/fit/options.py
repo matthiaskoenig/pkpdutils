@@ -6,6 +6,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pkpdutils.fit.model import ModelParameter
+from pkpdutils.result import decode_flags as decode_flag_names
 
 #: loss functions of `scipy.optimize.least_squares`
 LOSSES: tuple[str, ...] = ("linear", "soft_l1", "huber", "cauchy", "arctan")
@@ -65,9 +66,7 @@ def decode_fit_flags(value: int) -> list[str]:
     Returns:
         The names of the flags set in `value`, in bit order.
     """
-    return [
-        f.name for f in FitFlag if f.value and value & f.value and f.name is not None
-    ]
+    return decode_flag_names(FitFlag, value)
 
 
 class FitOptions(BaseModel):

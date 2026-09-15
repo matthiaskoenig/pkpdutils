@@ -5,7 +5,7 @@ import pytest
 import xarray as xr
 
 from pkpdutils.nca import NCAResult
-from pkpdutils.result import ParameterResult
+from pkpdutils.result import ParameterResult, decode_flags
 
 
 class MyFlag(IntFlag):
@@ -158,3 +158,18 @@ def test_check_coordinate_collision() -> None:
     check_coordinate_collision({"period": [1, 2]}, {"a", "flags"})
     with pytest.raises(ValueError, match="collides"):
         check_coordinate_collision({"n": [1, 2]}, {"a", "n", "flags"})
+
+
+def test_decode_flags_of_a_flag_type() -> None:
+    assert decode_flags(MyFlag, 3) == ["BAD", "WORSE"]
+    assert decode_flags(MyFlag, 1) == ["BAD"]
+    assert decode_flags(MyFlag, 0) == []
+
+
+def test_summarize_skips_the_uncertainty_of_discrete_parameters() -> None:
+    s = make().summarize("s")
+    names = set(s.ds.data_vars)
+    assert "k" in names and "k_median" in names and "k_n" in names
+    for suffix in ("_sd", "_se", "_ci_low", "_ci_high"):
+        assert f"k{suffix}" not in names
+        assert f"a{suffix}" in names
