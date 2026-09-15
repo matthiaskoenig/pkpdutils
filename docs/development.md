@@ -150,6 +150,19 @@ uvx ty check
 
 The configuration lives in `[tool.ty]` in `pyproject.toml`. Warnings are treated as errors, so the codebase is kept free of diagnostics. Suppress an unavoidable diagnostic with a rule specific `# ty: ignore[rule-name]` rather than a blanket comment.
 
+## Benchmarks
+
+`scripts/benchmark.py` times the hot paths of the package: the analysis of a small, a large and a multiple dose batch, the bootstrap and the delta method, a batch fit, the construction of timecourses and the iteration over a batch.
+
+```bash
+uv run python scripts/benchmark.py all                        # every case, about 15 s
+uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
+```
+
+The cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `fit`, `constructors`, `iterate` and `all`; `--repeat` (3 by default) is the number of timed runs after one warm-up run. The script prints a markdown table with the size of the case, the median wall time and the peak resident set size. Every case runs in a fresh interpreter, so the memory and the caches (`pkpdutils.units`) of one case do not carry into the next.
+
+The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
+
 ## Examples
 
 The examples are runnable scripts in `examples/`, they are not part of the package. They are run as modules from the root of the repository:

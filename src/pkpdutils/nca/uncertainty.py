@@ -47,7 +47,7 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
 )
-from pkpdutils.result import base_name
+from pkpdutils.result import base_name, nan_percentile
 from pkpdutils.timecourse import Timecourses
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,40 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
 )
 
 
+def flatten_rows(a: np.ndarray | None, n_rows: int) -> np.ndarray | None:
+    """A per row dose array of shape `(*sample_shape, n_dose)` as `(N, n_dose)`.
+
+    Args:
+        a: the array, or `None`
+        n_rows: number of rows `N` of the batch
+
+    Returns:
+        The flattened array `(N, n_dose)`, or `None`.
+    """
+    if a is None:
+        return None
+    return np.asarray(a, dtype=np.float64).reshape(n_rows, -1)
+
+
+def repeat_block(
+    a: np.ndarray | None, start: int, stop: int, repeats: int
+) -> np.ndarray | None:
+    """Repeat every row of a block of a flattened dose array, keeping the rows grouped.
+
+    Args:
+        a: the flattened array `(N, n_dose)` (`flatten_rows`), or `None`
+        start: first row of the block
+        stop: row after the last one of the block
+        repeats: copies per row
+
+    Returns:
+        The repeated block `((stop - start) * repeats, n_dose)`, or `None`.
+    """
+    if a is None:
+        return None
+    return np.repeat(a[start:stop], repeats, axis=0)
+
+
 def repeat_rows(a: np.ndarray | None, n_rows: int, repeats: int) -> np.ndarray | None:
     """Repeat every row of a per row dose array, keeping the rows grouped.
 
@@ -151,11 +185,7 @@ def repeat_rows(a: np.ndarray | None, n_rows: int, repeats: int) -> np.ndarray |
     Returns:
         The repeated array `(N * repeats, n_dose)`, or `None`.
     """
-    if a is None:
-        return None
-    return np.repeat(
-        np.asarray(a, dtype=np.float64).reshape(n_rows, -1), repeats, axis=0
-    )
+    return repeat_block(flatten_rows(a, n_rows), 0, n_rows, repeats)
 
 
 def resolve_spread(
@@ -332,8 +362,8 @@ def reduce_replicates(
             count = finite.sum(axis=1)
             filled = np.where(finite, reps, np.nan)
             std = np.nanstd(filled, axis=1, ddof=1)
-            low, high = np.nanpercentile(
-                filled, [100 * alpha / 2, 100 * (1 - alpha / 2)], axis=1
+            low, high = nan_percentile(
+                filled, (100 * alpha / 2, 100 * (1 - alpha / 2)), axis=1
             )
             if spread_kind is BootstrapSpread.SE:
                 se = std
@@ -392,6 +422,12 @@ def bootstrap(
 ) -> dict[str, np.ndarray]:
     """Bootstrap the parameters of a batch.
 
+    The curves are processed in blocks: the replicates of a block are drawn,
+    analysed and reduced to their parameters before the next block is drawn, so
+    the `(N, B, n)` array of every replicate of the batch never exists at once.
+    The draws do not depend on the blocking, the random generator produces the
+    same numbers in the same order.
+
     Args:
         timecourses: the batch (group curves with `sd` or `se`)
         options: `n_boot`, `seed`, `bootstrap_spread`, `bootstrap_distribution`, `ci_level`
@@ -406,7 +442,7 @@ def bootstrap(
     """
     # the analysis of the replicates runs through the same core as the original
     # curves, whose module imports this one
-    from pkpdutils.nca.nca import run_rows
+    from pkpdutils.nca.nca import chunk_bounds, merge_rows, run_rows
 
     if (
         options.kind is Kind.EFFECT
@@ -422,26 +458,46 @@ def bootstrap(
     with np.errstate(invalid="ignore"):
         any_usable = (np.isfinite(spread) & (spread > 0)).any(axis=1)
     rng = np.random.default_rng(options.seed)
-    draws = resample_values(
-        c,
-        spread,
-        options.n_boot,
-        rng,
-        options.bootstrap_distribution,
-        clip_at_zero=options.kind is Kind.CONCENTRATION,
-    )
     b = options.n_boot
-
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
-    values = run_rows(
-        np.repeat(t, b, axis=0),
-        draws.reshape(n_rows * b, n_time),
-        dose_amount=repeat_rows(timecourses.dose_amount, n_rows, b),
-        dose_time=repeat_rows(timecourses.dose_time, n_rows, b),
-        dose_duration=repeat_rows(timecourses.dose_duration, n_rows, b),
-        route=timecourses.route,
-        options=options,
-    )
+
+    # the replicates are materialized block of curves by block of curves and
+    # only their parameters are kept, so the `(N, B, n)` array of every
+    # replicate of the batch never exists at once; a block carries as many
+    # replicate rows as the analysis would process at once anyway, so the core
+    # sees the same chunks (`chunk_rows` per worker) as an unblocked run and
+    # the draws, which are generated row block after row block from the same
+    # generator, are the same numbers
+    block_rows = max(1, (options.chunk_rows * max(options.n_workers or 1, 1)) // b)
+    n_blocks = max(1, -(-n_rows // block_rows))
+    dose_amount = flatten_rows(timecourses.dose_amount, n_rows)
+    dose_time = flatten_rows(timecourses.dose_time, n_rows)
+    dose_duration = flatten_rows(timecourses.dose_duration, n_rows)
+    parts: list[dict[str, np.ndarray]] = []
+    counts: list[int] = []
+    for start, stop in chunk_bounds(n_rows, n_blocks):
+        rows = stop - start
+        draws = resample_values(
+            c[start:stop],
+            spread[start:stop],
+            b,
+            rng,
+            options.bootstrap_distribution,
+            clip_at_zero=options.kind is Kind.CONCENTRATION,
+        )
+        parts.append(
+            run_rows(
+                np.repeat(t[start:stop], b, axis=0),
+                draws.reshape(rows * b, n_time),
+                dose_amount=repeat_block(dose_amount, start, stop, b),
+                dose_time=repeat_block(dose_time, start, stop, b),
+                dose_duration=repeat_block(dose_duration, start, stop, b),
+                route=timecourses.route,
+                options=options,
+            )
+        )
+        counts.append(rows * b)
+    values = merge_rows(parts, counts)
     # the per-interval parameters carry an extra dimension and are no
     # parameters of a sample: they are left to the point estimate
     replicates = {

@@ -136,3 +136,15 @@ def test_result_parameters_exclude_derived_variables() -> None:
         "n",
         "flags",
     ]
+
+
+def test_parameter_unit_is_cached() -> None:
+    # B1: the unit of a parameter is derived with several pint conversions and
+    # depends only on the four strings, of which an analysis has a handful
+    args = ("({unit}) * ({time})",)
+    kwargs = {"unit": "ng/ml", "time_unit": "hr", "dose_unit": "mg"}
+    first = parameter_unit(*args, **kwargs)
+    hits = parameter_unit.cache_info().hits
+    second = parameter_unit(*args, **kwargs)
+    assert second is first
+    assert parameter_unit.cache_info().hits == hits + 1

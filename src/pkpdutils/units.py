@@ -7,6 +7,12 @@ own. Numerics run on plain arrays in the units of the input, pint is used at the
 boundaries: parsing unit strings, deriving the units of results and converting
 volumes and clearances to their conventional units.
 
+The helpers which take a unit string and answer a question about it
+(`parse_unit`, `check_dose_unit`, `is_per_bodyweight`) are cached: pint parsing
+is not cheap, the same handful of unit strings is parsed for every timecourse,
+dose and parameter, and units are immutable, so the answer of a string never
+changes within a process.
+
 ```python
 from pkpdutils.units import Q_, ureg
 
@@ -14,6 +20,8 @@ dose = Q_(100, "mg")
 time = Q_([0, 1, 2], "hr")
 ```
 """
+
+from functools import lru_cache
 
 import pint
 from pint.facets.plain import PlainQuantity, PlainUnit
@@ -43,7 +51,13 @@ DOSE_DIMENSIONS: tuple[str, ...] = (
     "[activity_amount] / [mass]",
 )
 
+#: entries the caches of the unit helpers keep; the number of distinct unit
+#: strings of an analysis is small (the units of the values, the times and the
+#: doses and the unit expressions of the parameters derived from them)
+CACHE_SIZE: int = 1024
 
+
+@lru_cache(maxsize=CACHE_SIZE)
 def parse_unit(unit: str) -> Unit:
     """Parse a unit string with the registry of the package.
 
@@ -51,6 +65,11 @@ def parse_unit(unit: str) -> Unit:
     empty unit string then composes into the unit expressions of the derived
     parameters as `"()"`, so a dimensionless quantity (a pharmacodynamic score,
     a ratio) is spelled `"dimensionless"`.
+
+    The result is cached per unit string (`CACHE_SIZE`): parsing is the most
+    frequent pint call of the package (every timecourse, every dose, every
+    parameter of a result) and a `pint.Unit` is immutable, so every caller of
+    the same string can share one object.
 
     Args:
         unit: unit string, e.g. `"ng/ml"` or `"hr"`
@@ -83,12 +102,16 @@ def unit_str(unit: Unit | str) -> str:
     return str(parse_unit(unit) if isinstance(unit, str) else unit)
 
 
+@lru_cache(maxsize=CACHE_SIZE)
 def check_dose_unit(unit: str) -> None:
     """Check that a unit is a dose unit.
 
     A dose is an amount of substance, as mass (`mg`), as substance (`mmol`) or
     as activity (`IU`, for insulin, heparin, vaccines and enzyme replacement),
     or such an amount per body weight (`mg/kg`, `µmol/kg`, `IU/kg`).
+
+    The check is cached per unit string (`CACHE_SIZE`); a unit which fails it
+    raises on every call, as `functools.lru_cache` does not cache exceptions.
 
     Args:
         unit: unit string of the dose
@@ -105,8 +128,11 @@ def check_dose_unit(unit: str) -> None:
         )
 
 
+@lru_cache(maxsize=CACHE_SIZE)
 def is_per_bodyweight(unit: str) -> bool:
     """Check whether a dose unit is an amount per body weight.
+
+    The answer is cached per unit string (`CACHE_SIZE`).
 
     Args:
         unit: unit string of the dose, e.g. `"mg/kg"`.

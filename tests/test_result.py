@@ -1,3 +1,4 @@
+import warnings
 from enum import IntFlag
 
 import numpy as np
@@ -5,7 +6,7 @@ import pytest
 import xarray as xr
 
 from pkpdutils.nca import NCAResult
-from pkpdutils.result import ParameterResult, decode_flags
+from pkpdutils.result import ParameterResult, decode_flags, nan_percentile
 
 
 class MyFlag(IntFlag):
@@ -173,3 +174,58 @@ def test_summarize_skips_the_uncertainty_of_discrete_parameters() -> None:
     for suffix in ("_sd", "_se", "_ci_low", "_ci_high"):
         assert f"k{suffix}" not in names
         assert f"a{suffix}" in names
+
+
+def _reference(values: np.ndarray, q: float | list[float], axis: int) -> np.ndarray:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.asarray(np.nanpercentile(values, q, axis=axis))
+
+
+@pytest.mark.parametrize("q", [[2.5, 97.5], [25.0, 75.0], [0.0, 50.0, 100.0], 10.0])
+@pytest.mark.parametrize("axis", [0, 1, -1])
+def test_nan_percentile_equals_numpy(q: float | list[float], axis: int) -> None:
+    # B1 (F7): `np.nanpercentile` falls back to a python loop over the slices as
+    # soon as the array holds a NaN; the sorted version must agree bit by bit
+    rng = np.random.default_rng(20260915)
+    for _ in range(50):
+        values = rng.normal(size=(rng.integers(1, 8), rng.integers(1, 11)))
+        values[rng.random(values.shape) < 0.35] = np.nan
+        np.testing.assert_array_equal(
+            nan_percentile(values, q, axis=axis), _reference(values, q, axis)
+        )
+
+
+def test_nan_percentile_all_nan_and_single_value_slices() -> None:
+    values = np.array(
+        [
+            [np.nan, np.nan, np.nan],  # no value at all
+            [1.0, np.nan, np.nan],  # a single value
+            [1.0, 2.0, np.nan],
+            [-np.inf, 2.0, np.inf],  # infinities are ordinary values
+        ]
+    )
+    result = nan_percentile(values, [25.0, 75.0])
+    np.testing.assert_array_equal(result, _reference(values, [25.0, 75.0], -1))
+    assert np.isnan(result[:, 0]).all()
+    assert (result[:, 1] == 1.0).all()
+
+
+def test_nan_percentile_shapes() -> None:
+    rng = np.random.default_rng(1)
+    values = rng.normal(size=(2, 3, 4))
+    values[0, 1, :] = np.nan
+    assert nan_percentile(values, 50.0).shape == (2, 3)
+    assert nan_percentile(values, [10.0, 90.0], axis=1).shape == (2, 2, 4)
+    np.testing.assert_array_equal(
+        nan_percentile(values, [10.0, 90.0], axis=1),
+        _reference(values, [10.0, 90.0], 1),
+    )
+    single = nan_percentile(np.array([3.0, 1.0, np.nan, 2.0]), 50.0)
+    assert single.shape == ()
+    assert float(single) == 2.0
+
+
+def test_nan_percentile_of_an_empty_axis_is_nan() -> None:
+    assert np.isnan(nan_percentile(np.empty((3, 0)), [25.0, 75.0])).all()
+    assert np.isnan(nan_percentile(np.empty((3, 0)), 50.0)).all()

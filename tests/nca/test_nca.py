@@ -13,7 +13,7 @@ from pkpdutils.nca import (
     nca,
     nca_single,
 )
-from pkpdutils.nca.nca import run_rows
+from pkpdutils.nca.nca import chunk_bounds, run_rows
 
 K, C0 = 0.5, 10.0
 T_DENSE = np.linspace(0, 20, 401)
@@ -476,3 +476,18 @@ def test_effect_area_is_linear_whatever_the_auc_method() -> None:
         assert float(nca_single(effect_timecourse(), options)["auec_last"]) == (
             pytest.approx(19.0)
         )
+
+
+@pytest.mark.parametrize(
+    ("n_rows", "n_chunks"), [(0, 1), (1, 1), (10, 1), (10, 3), (10, 10), (7, 4)]
+)
+def test_chunk_bounds_cuts_as_array_split(n_rows: int, n_chunks: int) -> None:
+    # B1 (F5): the chunks are contiguous ranges, so a chunk of the batch is a
+    # view and not a copy; the cuts are the ones `np.array_split` makes
+    rows = np.arange(n_rows)
+    bounds = chunk_bounds(n_rows, n_chunks)
+    expected = np.array_split(rows, n_chunks)
+    assert len(bounds) == n_chunks
+    assert bounds[-1][1] == n_rows
+    for (start, stop), part in zip(bounds, expected, strict=True):
+        np.testing.assert_array_equal(rows[start:stop], part)

@@ -48,7 +48,7 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
-from pkpdutils.result import base_name, check_coordinate_collision
+from pkpdutils.result import base_name, check_coordinate_collision, nan_percentile
 
 logger = logging.getLogger(__name__)
 
@@ -456,10 +456,10 @@ def replicate_statistics(
     The finite replicates of a column are counted first and a column with
     fewer than two of them is reported as `NaN`, the guard
     `pkpdutils.result.ParameterResult.summarize` uses: `numpy.nanstd` with
-    `ddof=1` on such a column has no degrees of freedom left and
-    `numpy.nanpercentile` of an all-`NaN` column has nothing to interpolate,
-    and both would warn (and abort the batch under a strict warning filter)
-    rather than return a meaningful number.
+    `ddof=1` on such a column has no degrees of freedom left (and would warn,
+    and abort the batch under a strict warning filter) and the percentiles of
+    an all-`NaN` column have nothing to interpolate, so neither returns a
+    meaningful number.
 
     Args:
         values: the replicates, `(B, m)`, `NaN` where a replicate has no value.
@@ -473,8 +473,9 @@ def replicate_statistics(
     with np.errstate(invalid="ignore"), warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         sd = np.nanstd(values, axis=0, ddof=1)
-        low = np.nanpercentile(values, 100.0 * alpha / 2.0, axis=0)
-        high = np.nanpercentile(values, 100.0 * (1.0 - alpha / 2.0), axis=0)
+        low, high = nan_percentile(
+            values, (100.0 * alpha / 2.0, 100.0 * (1.0 - alpha / 2.0)), axis=0
+        )
     usable = count > 1
     return (
         np.where(usable, sd, np.nan),

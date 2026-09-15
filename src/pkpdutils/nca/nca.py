@@ -556,6 +556,32 @@ def dose_counts(dose_time: np.ndarray | None, n_rows: int) -> np.ndarray:
     return np.isfinite(times).sum(axis=1).astype(np.float64)
 
 
+def chunk_bounds(n_rows: int, n_chunks: int) -> list[tuple[int, int]]:
+    """Split `n_rows` rows into `n_chunks` contiguous ranges of nearly equal size.
+
+    The ranges are the ones `numpy.array_split` cuts (the first `n_rows %
+    n_chunks` of them are one row longer) and they are contiguous, so a chunk
+    of an array is a slice and therefore a view: a chunked analysis does not
+    copy the batch before it starts.
+
+    Args:
+        n_rows: number of rows to split, 0 or more
+        n_chunks: number of ranges, 1 or more
+
+    Returns:
+        The `(start, stop)` of every range, in row order; a range is empty if
+        there are fewer rows than chunks.
+    """
+    base, extra = divmod(n_rows, n_chunks)
+    bounds: list[tuple[int, int]] = []
+    start = 0
+    for index in range(n_chunks):
+        stop = start + base + (1 if index < extra else 0)
+        bounds.append((start, stop))
+        start = stop
+    return bounds
+
+
 def merge_rows(
     parts: list[dict[str, np.ndarray]], counts: list[int]
 ) -> dict[str, np.ndarray]:
@@ -697,7 +723,9 @@ def run_rows(
 
     The rows are analysed in chunks of at most `options.chunk_rows` rows, which
     bounds the memory of the vectorized core; with `options.n_workers > 1` the
-    chunks are mapped in order over a `ProcessPoolExecutor`.
+    chunks are mapped in order over a `ProcessPoolExecutor`. A chunk is a
+    contiguous range of rows (`chunk_bounds`), so it is a slice of the input
+    arrays and not a copy of them.
 
     The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
     padded with `NaN`. A row whose protocol holds more than one dose, and every
@@ -727,19 +755,19 @@ def run_rows(
     # the memory of the vectorized core; the worker pool maps the chunks in order
     n_chunks = max(1, -(-n_rows // options.chunk_rows))
     multiple = is_multiple_dose(dose_amount, dose_time, options, n_rows=n_rows)
-    chunks = np.array_split(np.arange(n_rows), n_chunks)
+    chunks = chunk_bounds(n_rows, n_chunks)
     jobs = [
         (
-            t[rows],
-            c[rows],
-            None if dose_amount is None else dose_amount[rows],
-            None if dose_time is None else dose_time[rows],
-            None if dose_duration is None else dose_duration[rows],
+            t[start:stop],
+            c[start:stop],
+            None if dose_amount is None else dose_amount[start:stop],
+            None if dose_time is None else dose_time[start:stop],
+            None if dose_duration is None else dose_duration[start:stop],
             route,
             options,
-            multiple[rows],
+            multiple[start:stop],
         )
-        for rows in chunks
+        for start, stop in chunks
     ]
     if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
         with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
@@ -748,7 +776,7 @@ def run_rows(
         parts = [_compute_chunk(job) for job in jobs]
     # a chunk of single dose rows reports fewer variables than one holding a
     # multiple dose row, so the chunks are merged into their union
-    values = merge_rows(parts, [int(rows.size) for rows in chunks])
+    values = merge_rows(parts, [stop - start for start, stop in chunks])
     if "n_doses" in values:
         # the number of doses describes the protocol of a row and not the path
         # it took: it is filled in for every row of the batch, so that a single
