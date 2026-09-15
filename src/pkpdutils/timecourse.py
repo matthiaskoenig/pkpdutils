@@ -206,15 +206,49 @@ class Dosing(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    amounts: Any
-    times: Any
-    durations: Any = None
+    amounts: np.ndarray
+    times: np.ndarray
+    durations: np.ndarray | None = None
     unit: str
     route: Route = Route.ORAL
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        """Convert `amounts`, `times` and `durations` to `float64` arrays.
+
+        Runs before pydantic's field validation, the same way
+        `Timecourse._normalize` does, so that list or array input is accepted
+        for a field annotated `np.ndarray`. `durations` is also normalized to
+        `None` here already when it is not given or every value is `NaN`
+        (allowed for every route, not only when it does not apply); the
+        `mode="after"` validator below still checks it against `route`.
+
+        Args:
+            data: the raw input to the model.
+
+        Returns:
+            `data` unchanged if it is not a `dict`, otherwise with `amounts`,
+            `times` and `durations` converted.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "amounts" in data:
+            data["amounts"] = _as_float_array("amounts", data["amounts"])
+        if "times" in data:
+            data["times"] = _as_float_array("times", data["times"])
+        durations = data.get("durations")
+        if durations is not None:
+            durations = _as_float_array("durations", durations)
+            if np.isnan(durations).all():
+                durations = None
+        data["durations"] = durations
+        return data
+
     @model_validator(mode="after")
     def _validate(self) -> Self:
-        """Convert the arrays, sort by time and check the doses against the route.
+        """Check the lengths, sort by time and check the doses against the route.
 
         Returns:
             The validated protocol.
@@ -225,8 +259,8 @@ class Dosing(BaseModel):
                 dose times contain duplicates, or if `durations` does not fit
                 `route`.
         """
-        amounts = _as_float_array("amounts", self.amounts)
-        times = _as_float_array("times", self.times)
+        amounts = self.amounts
+        times = self.times
         if amounts.size != times.size:
             raise ValueError(
                 f"'amounts' has length {amounts.size}, 'times' has length {times.size}"
@@ -237,14 +271,12 @@ class Dosing(BaseModel):
             raise ValueError("'amounts' must be non-negative")
         check_dose_unit(self.unit)
 
-        durations: np.ndarray | None = None
-        if self.durations is not None:
-            durations = _as_float_array("durations", self.durations)
-            if durations.size != times.size:
-                raise ValueError(
-                    f"'durations' has length {durations.size}, "
-                    f"'times' has length {times.size}"
-                )
+        durations = self.durations
+        if durations is not None and durations.size != times.size:
+            raise ValueError(
+                f"'durations' has length {durations.size}, "
+                f"'times' has length {times.size}"
+            )
 
         order = np.argsort(times, kind="stable")
         if not np.array_equal(order, np.arange(times.size)):
@@ -262,10 +294,7 @@ class Dosing(BaseModel):
                     "An infusion needs a positive 'duration' for every dose"
                 )
         elif durations is not None:
-            if np.isnan(durations).all():
-                durations = None
-            else:
-                raise ValueError("'durations' is only allowed for Route.IV_INFUSION")
+            raise ValueError("'durations' is only allowed for Route.IV_INFUSION")
 
         object.__setattr__(self, "amounts", amounts)
         object.__setattr__(self, "times", times)
@@ -700,7 +729,12 @@ class Timecourse(BaseModel):
 
     @property
     def dose(self) -> Dose | None:
-        """First dose of the protocol, `None` without `dosing`."""
+        """First dose of the protocol, `None` without `dosing`.
+
+        Read-only: `model_copy(update={"dose": ...})` is a silent no-op (a
+        property is not a field), use
+        `model_copy(update={"dosing": Dosing.single(dose)})` instead.
+        """
         return None if self.dosing is None else self.dosing.first
 
     @property
