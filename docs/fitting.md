@@ -6,13 +6,13 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 
 **Model.** A `Model` is a function \(y = f(x; p)\) with named parameters, bounds and an initial guess from the data. Every parameter states whether it is positive; positive parameters are searched on the logarithmic scale, which keeps them positive and makes the search insensitive to their magnitude (`FitOptions.parameter_scale`, `log10` by default). Bounds, start values and every reported number stay on the linear scale. The model library has three families: exponentials for concentration timecourses (`MonoExp`, `BiExp`, `TriExp`, `Bateman` with an optional lag time), the Emax family for concentration-effect data (`Emax`, `SigmoidEmax`, `Imax`, `SigmoidImax`), and `Linear`, `LogLinear`, `Power` and `Allometric` for a parameter against a dose or a covariate. The initial guesses are analytical: a log-linear regression of the terminal points, curve stripping for a sum of exponentials, the half-way crossing for an `ec50`, a log-log regression for a power model.
 
-**Weighting.** Concentrations span orders of magnitude and their error grows with their size, so an unweighted fit is dominated by the high points. `Weighting` names the variance model of the residuals: constant (`NONE`, the default), proportional to \(y\) (`INV_Y`), proportional to \(y^2\) (constant CV, `INV_Y2`) or the reported standard deviations (`INV_SD`). Residuals are divided by the standard deviation of that model before the sum of squares.
+**Weighting.** Concentrations span orders of magnitude and their error grows with their size, so an unweighted fit is dominated by the high points. `Weighting` names the variance model of the residuals: constant (`NONE`, the default), proportional to \(y\) (`INV_Y`), proportional to \(y^2\) (constant CV, `INV_Y2`) or the reported standard deviations (`INV_SD`). Residuals are divided by the standard deviation of that model before the sum of squares. Under `INV_SD` a point without a finite positive standard deviation carries no weight and is dropped from the fit, so `n_points` can be smaller than the number of observed points.
 
 **Uncertainty of the parameters.** The standard errors come from the Jacobian of the residuals at the optimum, a first order (Wald) approximation [^seber]. They are computed in the search space and transformed with \(|dp/dq|\), and the confidence intervals use the t distribution with \(n - k\) degrees of freedom on the search scale and are transformed back, so the interval of a parameter fitted on the log scale is asymmetric around the estimate. Derived parameters (half-lives, areas, \(\mathrm{EC}_{90}\), \(t_\mathrm{max}\)) get their uncertainty from the delta method with a numerical gradient; their interval is \(d \pm t\,\mathrm{se}(d)\) and therefore always symmetric, even for a strongly non-linear function of the parameters such as a half-life. The covariance is the least-squares covariance and is exact only for `loss="linear"`; under a robust loss (`soft_l1`, `huber`, `cauchy`, `arctan`) it is an approximation.
 
 **Residual bootstrap.** `FitOptions(bootstrap=B)` replaces the Jacobian uncertainties by the empirical ones of \(B\) refits [^efron]: the weighted residuals of the fit are centered and inflated so that their variance matches the residual variance of the fit, resampled with replacement, added back to the fitted curve, and the model is refitted from the fitted parameters. The standard errors are the standard deviations of the replicates, the intervals their percentiles at `ci_level` and the correlation matrix is theirs as well; no local linear approximation is involved, and the intervals of the derived parameters are free to be asymmetric. A replicate whose refit does not converge is skipped, so `n_bootstrap`, the number of converged replicates, is the honest sample size and a value far below the requested `attrs["bootstrap"]` signals an unstable fit. Fewer than two converged replicates cannot estimate anything: the Jacobian uncertainties are reported instead and `FitFlag.BOOTSTRAP_FALLBACK` is set.
 
-**Multi-start.** Nonlinear least squares finds a local optimum. `FitOptions(n_starts=k)` starts from the initial guess and \(k - 1\) Latin hypercube points of a box around it (`start_spread`) and keeps the solution with the smallest cost; `n_starts_converged` says how many of them converged. `n_workers` spreads the rows over a process pool; a pooled call needs an `if __name__ == "__main__":` guard, like every other use of `multiprocessing`.
+**Multi-start.** Nonlinear least squares finds a local optimum. `FitOptions(n_starts=m)` starts from the initial guess and \(m - 1\) Latin hypercube points of a box around it (`start_spread`) and keeps the best solution, a converged one before a non-converged one and the smaller cost among equals; `n_starts_converged` says how many of them converged. `n_workers` spreads the rows of a batch over a process pool (never the starts of a single row); a pooled call needs an `if __name__ == "__main__":` guard, like every other use of `multiprocessing`.
 
 **Model comparison.** `compare_models` fits every model to the same data and ranks them per sample by the corrected Akaike information criterion; the Akaike weight is the probability that a model is the best of the candidate set [^burnham]. AICc penalizes parameters, so a bi-exponential only wins over a mono-exponential when the second phase is supported by the data, and with few points the penalty can also favour a fixed exponent over a free one. The information criteria count the residual variance as an estimated parameter, \(K = k + 1\) [^burnham]; the reported `n_parameters` stays \(k\), the free parameters of the model.
 
@@ -86,7 +86,7 @@ b \in \left[1 + \frac{\ln \theta_L}{\ln r},\ 1 + \frac{\ln \theta_H}{\ln r}\righ
 | `Emax` | \(e_0 + e_\mathrm{max} \frac{x}{\mathrm{ec}_{50} + x}\) | `e0`, `emax`, `ec50` | `ec90` |
 | `SigmoidEmax` | \(e_0 + e_\mathrm{max} \frac{x^n}{\mathrm{ec}_{50}^n + x^n}\) | + `hill` | `ec90` |
 | `Imax`, `SigmoidImax` | \(e_0 \left(1 - i_\mathrm{max} \frac{x^n}{\mathrm{ic}_{50}^n + x^n}\right)\) | `e0`, `imax`, `ic50` (+ `hill`) | `ic90` |
-| `Linear`, `LogLinear` | \(a + b x\), \(a + b \ln x\) | `intercept`, `slope` | |
+| `Linear`, `LogLinear` | \(\mathrm{intercept} + \mathrm{slope}\,x\), \(\mathrm{intercept} + \mathrm{slope}\,\ln x\) | `intercept`, `slope` | |
 | `Power` | \(a x^b\) | `a`, `b` | |
 | `Allometric(exponent)` | \(a x^b\), \(b\) free or fixed | `a` (+ `b`) | |
 
@@ -103,7 +103,8 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `p_ci_low`, `p_ci_high` | \(p(q \pm t\,\mathrm{se}(q))\) | unit of `p` | confidence interval at `ci_level` (percentiles of the replicates with a bootstrap) |
 | `p_cv` | \(100\,\mathrm{se}(\hat p) / \lvert \hat p \rvert\) | % | relative standard error |
 | `cost` | \(\tfrac12\sum_i \rho(r_i^2)\) | - | the objective at the optimum |
-| `r2`, `rmse` | see Math | - | goodness of fit on the unweighted residuals |
+| `r2` | see Math | - | coefficient of determination of the unweighted residuals |
+| `rmse` | see Math | unit of `y` | root mean squared error of the unweighted residuals |
 | `aic`, `aicc`, `bic` | see Math | - | information criteria, \(K = k + 1\) |
 | `n_points` | \(n\) | - | points used in the fit |
 | `n_parameters` | \(k\) | - | free model parameters (fixed ones excluded) |
@@ -114,7 +115,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `correlation` | \(\mathrm{cov}(q)_{ij} / (\mathrm{se}(q_i)\mathrm{se}(q_j))\) | - | correlation matrix over `(parameter, parameter_)` |
 | `flags` | | - | `FitFlag` bits, see above |
 
-Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
+Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. `rmse` and the weighted residuals are the two variables whose `attrs["units"]` is `dimensionless` although they are not: `rmse` carries the unit of `y`, and a weighted residual is dimensionless only under `INV_SD`. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
 
 ## API
 
