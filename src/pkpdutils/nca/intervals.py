@@ -196,7 +196,7 @@ TROUGH_POINTS = 3
 
 def _interval_block(
     tp: np.ndarray, cp: np.ndarray, first: np.ndarray, n_inside: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """The samples of one interval gathered out of the packed rows.
 
     `pack_valid` keeps the time order, so the samples of an interval are the
@@ -213,8 +213,8 @@ def _interval_block(
         n_inside: number of samples of the interval per row `(N,)`
 
     Returns:
-        The times and the values of the block `(N, w)` with `w = max(n_inside)`
-        (`NaN` outside the block) and the mask of its entries.
+        The times and the values of the block `(N, w)` with `w = max(n_inside)`,
+        `NaN` outside the block.
     """
     n = tp.shape[1]
     width = int(n_inside.max()) if n_inside.size else 0
@@ -223,7 +223,7 @@ def _interval_block(
     in_block = columns[None, :] < n_inside[:, None]
     t_block = np.where(in_block, np.take_along_axis(tp, index, axis=1), np.nan)
     c_block = np.where(in_block, np.take_along_axis(cp, index, axis=1), np.nan)
-    return t_block, c_block, in_block
+    return t_block, c_block
 
 
 def _with_bounds(
@@ -378,7 +378,7 @@ def _interval_column(
     n_inside = inside.sum(axis=1)
     # the samples of the interval are a block of the packed row
     first = np.clip(before.sum(axis=1), 0, n - 1)
-    t_block, c_block, in_block = _interval_block(tp, cp, first, n_inside)
+    t_block, c_block = _interval_block(tp, cp, first, n_inside)
     last_idx = np.clip(first + n_inside - 1, 0, n - 1)
     c_last_inside = np.where(n_inside >= 1, take_rows(cp, last_idx), np.nan)
     has_sample_at_end = at_end.any(axis=1)
@@ -411,7 +411,11 @@ def _interval_column(
         )
     extrapolated = np.zeros(n_rows, dtype=bool)
     if np.any(post_dose):
-        trough = _extrapolate_end(t_block, c_block, in_block, t_end)
+        # the regression runs over the full row, not over the gathered block:
+        # its normal equations subtract two nearly equal sums, so the same
+        # samples at different column positions give a slope which differs by
+        # more than a rounding error of the trough
+        trough = _extrapolate_end(tp, cp, inside, t_end)
         c_end = np.where(post_dose, trough, c_end)
         extrapolated = post_dose & np.isfinite(trough)
 

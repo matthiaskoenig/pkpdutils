@@ -71,5 +71,6 @@ New:
 - `read_events`, `read_pknca`, `read_adnca`: column keywords renamed to `*_col`; `groups` of `read_pknca` renamed `covariates`.
 - `Timecourses.n_workers`/`NCAOptions.n_workers` semantics: `None` is automatic, `1` serial.
 - `stats`: `effects_from_arrays` defaults to `HEDGES_G`.
-- Reader errors are `ValueError`, not pydantic `ValidationError`.
+- Reader errors are `ValueError`, not pydantic `ValidationError`; `Timecourses.from_dataframe` raises the same way, since it no longer builds one `Timecourse` per sample: a sample with fewer than two time points, a `NaN` time, duplicate times or a dose which is not a valid protocol is a `ValueError` naming the sample.
+- `Timecourses.from_dataframe` rejects a value which is neither missing nor a number with a `ValueError` naming the sample and the column; a non-numeric `time` column raised a `TypeError` from pandas before, and a non-numeric dose column with `dose_time` was read as a missing dose.
 - `ParameterResult.summarize` no longer reports `_sd`, `_se`, `_ci_low`, `_ci_high`, `_geomean` and `_geocv` for the discrete parameters (`tmax`, `tlast`, `tau`, the counts and the diagnostics of the terminal regression); they keep `x`, `x_median`, `x_q25`, `x_q75` and `x_n`.

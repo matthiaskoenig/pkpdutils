@@ -1002,6 +1002,59 @@ def test_from_dataframe_names_the_sample_of_every_check() -> None:
         Timecourses.from_dataframe(frame(dose=[100.0, 200.0, 50.0, 50.0]), **protocol)
 
 
+def test_from_dataframe_rejects_a_value_which_is_not_a_number() -> None:
+    # a cell which is neither missing nor a number must not be read as a
+    # missing value: the dose record would be dropped from the protocol
+    rows = pd.DataFrame(
+        {
+            "subject": ["a", "a", "b", "b"],
+            "time": [0.0, 1.0, 0.0, 1.0],
+            "value": [1.0, 2.0, 3.0, 4.0],
+            "dose": ["abc", 100.0, 50.0, 50.0],
+            "dose_time": [0.0, 0.0, 0.0, 0.0],
+        }
+    )
+    doses: dict[str, Any] = {
+        "sample": ["subject"],
+        "time_unit": "hr",
+        "unit": "mg/l",
+        "dose_amount": "dose",
+        "dose_unit": "mg",
+        "route": Route.ORAL,
+    }
+    message = r"sample a: the column 'dose' has the non-numeric value 'abc'"
+    with pytest.raises(ValueError, match=message):
+        Timecourses.from_dataframe(rows, **doses)
+    with pytest.raises(ValueError, match=message):
+        Timecourses.from_dataframe(rows, **doses, dose_time="dose_time")
+    with pytest.raises(
+        ValueError, match=r"sample b: the column 'time' has the non-numeric value 'x'"
+    ):
+        Timecourses.from_dataframe(
+            rows.assign(dose=100.0, time=[0.0, 1.0, 0.0, "x"]),
+            sample=["subject"],
+            time_unit="hr",
+            unit="mg/l",
+        )
+    with pytest.raises(
+        ValueError, match=r"sample b: the column 'value' has the non-numeric value 'x'"
+    ):
+        Timecourses.from_dataframe(
+            rows.assign(dose=100.0, value=[1.0, 2.0, "x", 4.0]),
+            sample=["subject"],
+            time_unit="hr",
+            unit="mg/l",
+        )
+    # a missing value stays a missing value
+    batch = Timecourses.from_dataframe(
+        rows.assign(dose=100.0, value=[1.0, 2.0, None, 4.0]),
+        sample=["subject"],
+        time_unit="hr",
+        unit="mg/l",
+    )
+    assert np.isnan(batch.values[1, 0])
+
+
 def test_from_dataframe_of_an_empty_frame() -> None:
     empty = pd.DataFrame({"subject": [], "time": [], "value": []})
     with pytest.raises(ValueError, match="At least one timecourse"):

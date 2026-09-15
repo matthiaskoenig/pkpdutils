@@ -943,6 +943,48 @@ def _rows_by_sample(
     return order, codes[order], column, counts
 
 
+def _numeric_column(
+    df: pd.DataFrame, name: str, *, codes: np.ndarray, labels: Sequence[Any]
+) -> pd.Series:
+    """One column of a long frame as a float series, naming a value which is not a number.
+
+    A value which is missing becomes `NaN`, as it does for a single curve; a
+    value which is not missing and not a number is an error, so that no cell of
+    the frame is silently dropped on the way into the batch.
+
+    Args:
+        df: the long frame.
+        name: name of the column.
+
+    Keyword Args:
+        codes: the sample of every row.
+        labels: the samples, in the order of the batch.
+
+    Returns:
+        The column as `float64`, indexed like `df`.
+
+    Raises:
+        ValueError: for the first value which is not a number, named with the
+            sample and the column, and for a column which cannot be read as
+            numbers at all.
+    """
+    column = df[name]
+    try:
+        coerced = pd.to_numeric(column, errors="coerce")
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"The column '{name}' of dtype '{column.dtype}' does not hold numbers"
+        ) from err
+    bad = coerced.isna().to_numpy() & column.notna().to_numpy()
+    if bad.any():
+        i = int(np.flatnonzero(bad)[0])
+        raise ValueError(
+            f"sample {labels[codes[i]]}: the column '{name}' has the "
+            f"non-numeric value {column.iloc[i]!r}"
+        )
+    return coerced.astype(np.float64)
+
+
 def _frame_doses(
     df: pd.DataFrame,
     *,
@@ -977,16 +1019,20 @@ def _frame_doses(
         The `dose` mapping of `Timecourses.from_arrays`.
 
     Raises:
-        ValueError: if `dose_unit` or `route` is missing, if a sample has no
-            dose or the dose is not constant per sample (without `dose_time`),
-            if a dose time of a sample carries several amounts, or if an amount
-            is not finite or negative.
+        ValueError: if `dose_unit` or `route` is missing, if a dose column
+            holds a value which is not a number, if a sample has no dose or the
+            dose is not constant per sample (without `dose_time`), if a dose
+            time of a sample carries several amounts, or if an amount is not
+            finite or negative.
     """
     if dose_unit is None or route is None:
         raise ValueError("'dose_unit' and 'route' are required with 'dose_amount'")
     n_samples = len(labels)
+    # a value which is not a number is an error in both branches: it would
+    # otherwise become a missing dose and drop the record from the protocol
+    amount_column = _numeric_column(df, dose_amount, codes=codes, labels=labels)
     if dose_time is None:
-        column = df[dose_amount]
+        column = amount_column
         grouped = column.groupby(codes, sort=True)
         distinct = grouped.nunique(dropna=True).reindex(range(n_samples)).to_numpy()
         if (distinct != 1).any():
@@ -1008,8 +1054,10 @@ def _frame_doses(
     pairs = pd.DataFrame(
         {
             "sample": codes,
-            "time": pd.to_numeric(df[dose_time], errors="coerce"),
-            "amount": pd.to_numeric(df[dose_amount], errors="coerce"),
+            "time": _numeric_column(
+                df, dose_time, codes=codes, labels=labels
+            ).to_numpy(),
+            "amount": amount_column.to_numpy(),
         }
     ).dropna()
     pairs = pairs.drop_duplicates().sort_values(
@@ -2120,7 +2168,8 @@ class Timecourses:
 
         Raises:
             ValueError: if `sample` is empty, if the frame holds no sample, if
-                a sample has fewer than two time points, a `NaN` time or
+                a column holds a value which is neither missing nor a number,
+                if a sample has fewer than two time points, a `NaN` time or
                 duplicate times, or if the doses of a sample are not a valid
                 protocol; every one of them names the sample.
         """
@@ -2139,7 +2188,13 @@ class Timecourses:
         codes, keys = _sample_codes(df, sample)
         if not keys:
             raise ValueError("At least one timecourse is required")
-        times = _as_float_array(time, df[time].to_numpy())
+        columns = {
+            name: _numeric_column(df, name, codes=codes, labels=keys).to_numpy()
+            for name in dict.fromkeys(
+                name for name in (time, value, sd, se, n) if name is not None
+            )
+        }
+        times = columns[time]
         order, row, column, counts = _rows_by_sample(codes, times, len(keys))
         _check_sample_times(times[order], row, counts, keys)
 
@@ -2157,7 +2212,7 @@ class Timecourses:
             if name is None:
                 return None
             out = np.full((len(keys), int(counts.max())), np.nan)
-            out[row, column] = _as_float_array(name, df[name].to_numpy())[order]
+            out[row, column] = columns[name][order]
             return out
 
         grid = padded(time)
@@ -2579,6 +2634,12 @@ class Timecourses:
     ) -> tuple[int, ...]:
         """The position of one sample along the sample dimensions.
 
+        A label of a dimension which carries no coordinate is taken as the
+        position itself, so that `sel` selects such a dimension positionally as
+        `xarray.sel` does (which hands the label to `isel` unchanged); the
+        label is coerced with `int`, so a label which is not a number raises
+        here rather than in the indexing.
+
         Args:
             indexers: one index or coordinate label per sample dimension.
 
@@ -2590,7 +2651,8 @@ class Timecourses:
             The position of the sample.
 
         Raises:
-            ValueError: for an unknown dimension.
+            ValueError: for an unknown dimension, or for a label of a dimension
+                without a coordinate which is not an integer.
             KeyError: for a label which is not a coordinate of its dimension.
         """
         unknown = set(indexers) - set(self.sample_dims)
