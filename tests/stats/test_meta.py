@@ -200,9 +200,56 @@ def test_a_study_without_variance_is_rejected_by_the_pooling() -> None:
         for call in (heterogeneity, fixed_effect, random_effects):
             with pytest.raises(ValueError, match="Meier"):
                 call(effects)
-    nan_variance = effects_from_arrays(np.array([0.3, 0.2]), np.array([np.nan, 0.02]))
-    with pytest.raises(ValueError, match="'0' has the variance nan"):
-        fixed_effect(nan_variance)
+    # a study whose effect could not be estimated is dropped instead, with a warning
+    nan_variance = effects_from_arrays(
+        np.array([0.3, 0.2]), np.array([np.nan, 0.02]), labels=["Meier", "Müller"]
+    )
+    fixed = fixed_effect(nan_variance)
+    assert fixed.estimate == pytest.approx(0.2)
+    assert np.isnan(fixed.weights[0]) and fixed.weights[1] == pytest.approx(1.0)
+    assert heterogeneity(nan_variance).df == 0
+    with pytest.raises(ValueError, match="nothing to pool"):
+        fixed_effect(effects_from_arrays(np.array([0.3]), np.array([np.nan])))
+
+
+def test_a_dropped_study_is_logged_and_kept_in_the_table(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    effects = effects_from_arrays(
+        np.array([0.3, 0.2]), np.array([np.nan, 0.02]), labels=["Meier", "Müller"]
+    )
+    with caplog.at_level("WARNING", logger="pkpdutils.stats.meta"):
+        fixed_effect(effects)
+    assert "Meier" in caplog.text and "dropped from the pooling" in caplog.text
+    assert "Müller" not in caplog.text
+
+
+def test_degenerate_samples_give_a_nan_effect_of_every_kind() -> None:
+    empty = ParameterSample(values=np.array([np.nan, np.nan]), name="auc")
+    single = ParameterSample(values=np.array([5.0]), name="auc")
+    other = ParameterSample(values=np.array([1.0, 2.0, 3.0]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for kind in EffectKind:
+            no_values = effect_size(empty, other, kind, label="empty")
+            assert np.isnan(no_values.estimate), kind
+            assert np.isnan(no_values.variance) and np.isnan(no_values.se), kind
+            one_value = effect_size(single, other, kind, label="single")
+            assert np.isnan(one_value.variance) and np.isnan(one_value.se), kind
+            assert np.isnan(one_value.ci_low) and np.isnan(one_value.ci_high), kind
+        result = meta_analysis(
+            [
+                Study("empty", empty, other),
+                Study("full", ParameterSample(values=np.array([2.0, 3.0, 4.0])), other),
+            ],
+            EffectKind.LOG_RATIO,
+        )
+    assert np.isnan(result.effects[0].estimate)
+    assert np.isfinite(result.fixed.estimate) and np.isfinite(result.random.estimate)
+    assert list(result.to_dataframe()["label"]) == ["empty", "full"]
+    assert np.isnan(result.to_dataframe()["weight_fixed"][0])
+    with pytest.raises(ValueError, match="nothing to pool"):
+        meta_analysis([Study("empty", empty, other)], EffectKind.MEAN_DIFF)
 
 
 def test_pooled_effects_compare_equal() -> None:

@@ -381,9 +381,11 @@ def effect_size(
     \(\bar x_T - \bar x_C\) with \(s_T^2 / n_T + s_C^2 / n_C\). Log ratio:
     \(\mu_T - \mu_C\) of the log moments with \(\sigma_T^2 / n_T + \sigma_C^2 / n_C\).
 
-    A group of a single value and two groups without variance leave the
-    standardized difference undefined: `estimate` and `variance` are `NaN`,
-    and pooling such an effect raises instead of dropping it silently.
+    A degenerate group leaves the effect undefined and gives `NaN` rather
+    than raising: a group without a finite value has no effect and no
+    variance, a group of a single value has no variance to propagate, and
+    two groups without variance have no standardized difference. The
+    pooling drops such a study with a warning, see `_arrays`.
 
     Args:
         control: the control sample.
@@ -402,18 +404,24 @@ def effect_size(
     scale = Scale.LOG if kind is EffectKind.LOG_RATIO else Scale.LINEAR
     m_c, s_c, n_c = control.moments(scale)
     m_t, s_t, n_t = treatment.moments(scale)
+    nan = float("nan")
+    if n_c < 1 or n_t < 1:
+        logger.debug(
+            "study '%s' has a group without a finite value, its effect is NaN", label
+        )
+        return _effect(nan, nan, kind, n_c, n_t, label, ci_level)
     if kind is EffectKind.HEDGES_G:
         d, g = cohen_d(m_t, s_t, n_t, m_c, s_c, n_c)
         if not np.isfinite(d):
             logger.debug(
                 "study '%s' has no pooled standard deviation, its effect is NaN", label
             )
-            nan = float("nan")
             return _effect(nan, nan, kind, n_c, n_t, label, ci_level)
         total = n_c + n_t
         var_d = total / (n_c * n_t) + d**2 / (2.0 * total)
         j = hedges_correction(total)
         return _effect(g, var_d * j**2, kind, n_c, n_t, label, ci_level)
+    # a group of a single value has no variance to propagate: s is NaN and so is the sum
     return _effect(
         m_t - m_c, s_t**2 / n_t + s_c**2 / n_c, kind, n_c, n_t, label, ci_level
     )
@@ -456,55 +464,83 @@ def effects_from_arrays(
     ]
 
 
-def _arrays(effects: Sequence[EffectSize]) -> tuple[np.ndarray, np.ndarray]:
-    """The estimates and the variances of the effects, validated.
+def _arrays(
+    effects: Sequence[EffectSize],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The estimates, the variances and the usable studies of the effects.
 
-    The inverse variance weights need a positive variance of every study; a
-    study without one (a single subject, or a group without variance) would
-    otherwise get an infinite weight, or a weight of zero which drops it
-    from the pooling without a word.
+    A study whose effect could not be estimated (a group without a finite
+    value, a single subject, a group without variance) has a `NaN` estimate
+    or variance: it is dropped from the pooling with a warning naming it,
+    and its weight is `NaN`, so that the result still lists it. A variance
+    which is zero or negative is an error, not a missing value: it would
+    carry an infinite weight, so it raises naming the study.
 
     Args:
         effects: the effect sizes.
 
     Returns:
-        The estimates and the variances.
+        The estimates, the variances and the boolean mask of the studies
+        which enter the pooling.
 
     Raises:
-        ValueError: without effects, or if a study has a variance which is
-            not positive and finite, naming the study.
+        ValueError: without effects, if a study has a variance which is not
+            positive, naming the study, or if no study remains.
     """
     if not effects:
         raise ValueError("A meta-analysis needs at least one study")
     for e in effects:
-        if not (np.isfinite(e.variance) and e.variance > 0):
+        if np.isfinite(e.variance) and not e.variance > 0:
             raise ValueError(
                 f"Study '{e.label}' has the variance {e.variance}, "
                 "the inverse variance pooling needs a positive variance of every study"
             )
-    return (
-        np.array([e.estimate for e in effects], dtype=np.float64),
-        np.array([e.variance for e in effects], dtype=np.float64),
-    )
+    theta = np.array([e.estimate for e in effects], dtype=np.float64)
+    v = np.array([e.variance for e in effects], dtype=np.float64)
+    usable = np.isfinite(theta) & np.isfinite(v)
+    for e, ok in zip(effects, usable.tolist(), strict=True):
+        if not ok:
+            logger.warning(
+                "Study '%s' has the effect %s with the variance %s, "
+                "it is dropped from the pooling",
+                e.label,
+                e.estimate,
+                e.variance,
+            )
+    if not usable.any():
+        raise ValueError(
+            "No study has an effect with a finite variance, there is nothing to pool"
+        )
+    return theta, v, usable
 
 
 def _pool(
-    theta: np.ndarray, w: np.ndarray, model: str, tau2: float, ci_level: float
+    theta: np.ndarray,
+    v: np.ndarray,
+    usable: np.ndarray,
+    model: str,
+    tau2: float,
+    ci_level: float,
 ) -> PooledEffect:
-    """Inverse variance pooling.
+    r"""Inverse variance pooling with the weights \(w_i = 1 / (v_i + \tau^2)\).
 
     Args:
         theta: the effects.
-        w: the weights.
+        v: their variances.
+        usable: mask of the studies which enter the pooling.
         model: `"fixed"` or `"random"`.
         tau2: the between-study variance of the weights.
         ci_level: level of the interval.
 
     Returns:
-        The pooled effect.
+        The pooled effect; the weights of the studies which were dropped
+        are `NaN`, the others sum to 1.
     """
-    estimate = float((w * theta).sum() / w.sum())
-    se = float(np.sqrt(1.0 / w.sum()))
+    w = np.full(theta.shape, np.nan)
+    w[usable] = 1.0 / (v[usable] + tau2)
+    total = float(w[usable].sum())
+    estimate = float((w[usable] * theta[usable]).sum() / total)
+    se = float(np.sqrt(1.0 / total))
     z = estimate / se
     zq = _z(ci_level)
     return PooledEffect(
@@ -515,7 +551,7 @@ def _pool(
         ci_level=ci_level,
         z=float(z),
         p_value=float(2.0 * norm.sf(abs(z))),
-        weights=w / w.sum(),
+        weights=w / total,
         model=model,
         tau2=tau2,
     )
@@ -533,12 +569,15 @@ def fixed_effect(
     Returns:
         The pooled effect.
 
+    A study whose effect could not be estimated is dropped with a warning,
+    see `_arrays`.
+
     Raises:
-        ValueError: as `_arrays`, without effects or for a study without a
-            positive variance.
+        ValueError: as `_arrays`, without effects, for a study with a
+            variance which is not positive, or without a usable study.
     """
-    theta, v = _arrays(effects)
-    return _pool(theta, 1.0 / v, "fixed", 0.0, ci_level)
+    theta, v, usable = _arrays(effects)
+    return _pool(theta, v, usable, "fixed", 0.0, ci_level)
 
 
 def heterogeneity(effects: Sequence[EffectSize]) -> Heterogeneity:
@@ -549,6 +588,9 @@ def heterogeneity(effects: Sequence[EffectSize]) -> Heterogeneity:
     (DerSimonian & Laird 1986), \(I^2 = \max(0, (Q - (k-1)) / Q)\), \(H^2 = Q / (k-1)\)
     (Higgins & Thompson 2002).
 
+    A study whose effect could not be estimated is dropped with a warning,
+    see `_arrays`, so \(k\) counts the pooled studies.
+
     Args:
         effects: the effect sizes.
 
@@ -556,23 +598,27 @@ def heterogeneity(effects: Sequence[EffectSize]) -> Heterogeneity:
         The statistics.
 
     Raises:
-        ValueError: as `_arrays`, without effects or for a study without a
-            positive variance.
+        ValueError: as `_arrays`, without effects, for a study with a
+            variance which is not positive, or without a usable study.
     """
-    theta, v = _arrays(effects)
-    return _heterogeneity(theta, v)
+    theta, v, usable = _arrays(effects)
+    return _heterogeneity(theta, v, usable)
 
 
-def _heterogeneity(theta: np.ndarray, v: np.ndarray) -> Heterogeneity:
+def _heterogeneity(
+    theta: np.ndarray, v: np.ndarray, usable: np.ndarray
+) -> Heterogeneity:
     """Heterogeneity statistics of validated estimates and variances.
 
     Args:
         theta: the effects.
-        v: their variances, positive.
+        v: their variances.
+        usable: mask of the studies which enter the pooling.
 
     Returns:
         The statistics.
     """
+    theta, v = theta[usable], v[usable]
     w = 1.0 / v
     k = theta.size
     theta_f = (w * theta).sum() / w.sum()
@@ -600,16 +646,19 @@ def random_effects(
         effects: the effect sizes.
         ci_level: level of the interval.
 
+    A study whose effect could not be estimated is dropped with a warning,
+    see `_arrays`.
+
     Returns:
         The pooled effect.
 
     Raises:
-        ValueError: as `_arrays`, without effects or for a study without a
-            positive variance.
+        ValueError: as `_arrays`, without effects, for a study with a
+            variance which is not positive, or without a usable study.
     """
-    theta, v = _arrays(effects)
-    tau2 = _heterogeneity(theta, v).tau2
-    return _pool(theta, 1.0 / (v + tau2), "random", tau2, ci_level)
+    theta, v, usable = _arrays(effects)
+    tau2 = _heterogeneity(theta, v, usable).tau2
+    return _pool(theta, v, usable, "random", tau2, ci_level)
 
 
 def meta_analysis(
@@ -620,6 +669,10 @@ def meta_analysis(
 ) -> MetaResult:
     """Meta-analysis of a parameter over studies.
 
+    A study whose effect could not be estimated keeps its `NaN` effect in
+    `effects` and in `to_dataframe`, with a `NaN` weight, and is dropped
+    from the pooling with a warning naming it (see `_arrays`).
+
     Args:
         studies: the studies.
         kind: the kind of effect, as the member or as its string.
@@ -629,8 +682,9 @@ def meta_analysis(
         The per study effects, the fixed effect and random effects pooling and the heterogeneity.
 
     Raises:
-        ValueError: without studies, for an unknown `kind`, or for a study
-            without a positive variance of its effect.
+        ValueError: without studies, for an unknown `kind`, for a study
+            whose effect has a variance which is not positive, or when no
+            study is left to pool.
     """
     if not studies:
         raise ValueError("A meta-analysis needs at least one study")
@@ -639,13 +693,13 @@ def meta_analysis(
         effect_size(s.control, s.treatment, kind, ci_level=ci_level, label=s.label)
         for s in studies
     )
-    theta, v = _arrays(effects)
-    het = _heterogeneity(theta, v)
+    theta, v, usable = _arrays(effects)
+    het = _heterogeneity(theta, v, usable)
     return MetaResult(
         kind=kind,
         effects=effects,
-        fixed=_pool(theta, 1.0 / v, "fixed", 0.0, ci_level),
-        random=_pool(theta, 1.0 / (v + het.tau2), "random", het.tau2, ci_level),
+        fixed=_pool(theta, v, usable, "fixed", 0.0, ci_level),
+        random=_pool(theta, v, usable, "random", het.tau2, ci_level),
         heterogeneity=het,
         ci_level=ci_level,
     )

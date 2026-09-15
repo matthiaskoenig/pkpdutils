@@ -567,5 +567,7 @@ def multiple_comparison(
         stepped = np.minimum(1.0, m * p[order] / ranks)
         adjusted[order] = np.minimum.accumulate(stepped[::-1])[::-1]
     else:
+        # unreachable today, `coerce` rejects anything but the three members;
+        # a new member without a branch here must not fall through to another
         raise ValueError(f"'{resolved}' is not an implemented AdjustMethod")
     return adjusted
