@@ -26,6 +26,7 @@ nav = [
     { "Uncertainty" = "uncertainty.md" },
     { "Curve fitting" = "fitting.md" },
     { "Pharmacodynamics" = "pd.md" },
+    { "Statistics" = "statistics.md" },
     { "Plotting" = "plotting.md" },
     { "Glossary" = "glossary.md" },
   ] },
@@ -53,6 +54,12 @@ nav = [
       { "models" = "api/fit.models.md" },
       { "compare" = "api/fit.compare.md" },
       { "proportionality" = "api/fit.proportionality.md" },
+    ] },
+    { "pkpdutils.stats" = [
+      { "stats" = "api/stats.md" },
+      { "bioequivalence" = "api/stats.bioequivalence.md" },
+      { "ddi" = "api/stats.ddi.md" },
+      { "meta" = "api/stats.meta.md" },
     ] },
     { "pkpdutils.plot" = [
       { "plot" = "api/plot.md" },

@@ -15,3 +15,15 @@
 ## plot.fit
 
 ::: pkpdutils.plot.fit
+
+## plot.parameters
+
+::: pkpdutils.plot.parameters
+
+## plot.ratio
+
+::: pkpdutils.plot.ratio
+
+## plot.meta
+
+::: pkpdutils.plot.meta

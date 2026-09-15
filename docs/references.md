@@ -66,19 +66,61 @@
 > *Pharmaceutical Research.* 2000;17(10):1278-1283.
 > [doi:10.1023/A:1026451721686](https://doi.org/10.1023/A:1026451721686)
 
-**Effect sizes.**
+**Effect sizes.** The small sample correction \(J\) of Hedges' g and its variance.
 
 > Hedges LV.
 > **Distribution theory for Glass's estimator of effect size and related estimators.**
 > *Journal of Educational Statistics.* 1981;6(2):107-128.
 > [doi:10.3102/10769986006002107](https://doi.org/10.3102/10769986006002107)
 
-**Random effects meta-analysis.**
+**Random effects meta-analysis.** The between-study variance \(\tau^2\) of the random effects model.
 
 > DerSimonian R, Laird N.
 > **Meta-analysis in clinical trials.**
 > *Controlled Clinical Trials.* 1986;7(3):177-188.
 > [doi:10.1016/0197-2456(86)90046-2](https://doi.org/10.1016/0197-2456(86)90046-2)
+
+**Crossover designs.** The period-difference analysis of the 2x2 crossover, the tests of the period and the carryover effect and the within-subject CV.
+
+> Chow SC, Liu JP.
+> **Design and Analysis of Bioavailability and Bioequivalence Studies.**
+> 3rd edition. Chapman & Hall/CRC; 2009.
+
+**Heterogeneity.** \(I^2\) and \(H^2\) of a meta-analysis.
+
+> Higgins JPT, Thompson SG.
+> **Quantifying heterogeneity in a meta-analysis.**
+> *Statistics in Medicine.* 2002;21(11):1539-1558.
+> [doi:10.1002/sim.1186](https://doi.org/10.1002/sim.1186)
+
+**Multiple comparisons.**
+
+> Holm S.
+> **A simple sequentially rejective multiple test procedure.**
+> *Scandinavian Journal of Statistics.* 1979;6(2):65-70.
+
+> Benjamini Y, Hochberg Y.
+> **Controlling the false discovery rate: a practical and powerful approach to multiple testing.**
+> *Journal of the Royal Statistical Society B.* 1995;57(1):289-300.
+> [doi:10.1111/j.2517-6161.1995.tb02031.x](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x)
+
+**Agreement of two measurements.** The Bland-Altman plot of `plot_bland_altman`.
+
+> Bland JM, Altman DG.
+> **Statistical methods for assessing agreement between two methods of clinical measurement.**
+> *The Lancet.* 1986;327(8476):307-310.
+> [doi:10.1016/S0140-6736(86)90837-8](https://doi.org/10.1016/S0140-6736(86)90837-8)
+
+**Meta-analysis reference data.** The BCG vaccine trials used as the regression reference of the meta-analysis (`tests/data/reference/meta_bcg.json`), analysed with the R package `metafor`.
+
+> Colditz GA, Brewer TF, Berkey CS, et al.
+> **Efficacy of BCG vaccine in the prevention of tuberculosis: meta-analysis of the published literature.**
+> *JAMA.* 1994;271(9):698-702.
+
+> Viechtbauer W.
+> **Conducting meta-analyses in R with the metafor package.**
+> *Journal of Statistical Software.* 2010;36(3):1-48.
+> [doi:10.18637/jss.v036.i03](https://doi.org/10.18637/jss.v036.i03)
 
 **Bootstrap.** The parametric bootstrap and the delta method of the uncertainty of the NCA parameters (ch. 5 and 6) and the residual bootstrap of a fit (ch. 9).
 
