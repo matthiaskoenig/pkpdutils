@@ -391,3 +391,17 @@ def test_summary_table_method_and_errors() -> None:
 def test_summary_table_rejects_a_point_variable() -> None:
     with pytest.raises(ValueError, match="beyond the sample dimensions"):
         make().summary_table("s", parameters=["y_pred"])
+
+
+def test_summary_table_digits_per_parameter() -> None:
+    from pkpdutils.result import summary_table
+
+    df = summary_table(
+        make(),
+        "s",
+        parameters=["a", "k"],
+        stats=("mean",),
+        digits={"k": 1},
+    )
+    # the mapping names the parameters which differ, the rest keeps three digits
+    assert df.set_index("parameter")["mean"].to_dict() == {"a": "2.33", "k": "3"}

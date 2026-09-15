@@ -620,7 +620,7 @@ class ParameterResult:
         by: str | Sequence[str] | None = None,
         parameters: Sequence[str] | None = None,
         stats: Sequence[str] = DEFAULT_STATISTICS,
-        digits: int = 3,
+        digits: int | Mapping[str, int] = 3,
         units: Literal["column", "header"] = "column",
         layout: Literal[
             "parameters_rows", "parameters_columns", "long"
@@ -635,7 +635,8 @@ class ParameterResult:
                 result by default.
             stats: the statistics of the table, see
                 `pkpdutils.result.TABLE_STATISTICS`.
-            digits: significant digits of the numbers.
+            digits: significant digits of the numbers, one number for the
+                whole table or one per parameter.
             units: whether the unit is a column of its own or part of the
                 parameter name.
             layout: parameters as rows, as columns, or one row per parameter,
@@ -919,7 +920,7 @@ def summary_table(
     by: str | Sequence[str] | None = None,
     parameters: Sequence[str] | None = None,
     stats: Sequence[str] = DEFAULT_STATISTICS,
-    digits: int = 3,
+    digits: int | Mapping[str, int] = 3,
     units: Literal["column", "header"] = "column",
     layout: Literal[
         "parameters_rows", "parameters_columns", "long"
@@ -951,7 +952,11 @@ def summary_table(
         parameters: the parameters of the table, in this order; every
             parameter of the result by default.
         stats: the statistics, in this order, see `TABLE_STATISTICS`.
-        digits: significant digits of the numbers.
+        digits: significant digits of the numbers, one number for the whole
+            table or a mapping of parameter name to its own number, in which
+            case a parameter the mapping does not name keeps the default 3
+            (`{"tmax": 1}` writes the time of the maximum with one digit and
+            every other parameter with three).
         units: `"column"` gives the unit a column of its own (a row in the
             `"parameters_columns"` layout), `"header"` appends it to the
             parameter name (`"cmax [milligram / liter]"`).
@@ -1011,6 +1016,9 @@ def summary_table(
             }
             for name in names:
                 unit = result.units(name)
+                parameter_digits = (
+                    digits if isinstance(digits, int) else digits.get(name, 3)
+                )
                 row: dict[str, Any] = {
                     "parameter": f"{name} [{unit}]" if units == "header" else name
                 }
@@ -1019,7 +1027,9 @@ def summary_table(
                 row.update(labels)
                 row.update(sample)
                 for stat in stats:
-                    row[stat] = _statistic_cell(summary, name, stat, index, digits)
+                    row[stat] = _statistic_cell(
+                        summary, name, stat, index, parameter_digits
+                    )
                 records.append(row)
 
     df = pd.DataFrame.from_records(records)

@@ -157,6 +157,30 @@ def ratio(
     )
 
 
+def _aligned(low: float, high: float, digits: int) -> tuple[str, str]:
+    """Two numbers of one cell, written with the same number of decimals.
+
+    The bounds of an interval belong together, so `(0.8, 1.25)` in percent is
+    written `80.0 - 125.0` and not `80.0 - 125`: both are rounded to `digits`
+    significant digits and then printed with the decimals of the one which
+    needs more.
+
+    Args:
+        low: the lower number.
+        high: the upper number.
+        digits: significant digits.
+
+    Returns:
+        The two formatted numbers; a number which needs the scientific
+        notation or is missing keeps the formatting of `format_number`.
+    """
+    cells = (format_number(low, digits), format_number(high, digits))
+    if any("e" in cell or not cell for cell in cells):
+        return cells
+    decimals = max(len(cell.partition(".")[2]) for cell in cells)
+    return (f"{float(cells[0]):.{decimals}f}", f"{float(cells[1]):.{decimals}f}")
+
+
 def ratio_table(
     ratios: "Mapping[str, RatioResult] | BEResult",
     *,
@@ -184,6 +208,10 @@ def ratio_table(
         bioequivalence result, `cv_intra`, `limits` and `bioequivalent`; every
         cell is a string.
     """
+    # the local import keeps the cycle out of the module: `bioequivalence`
+    # builds on the ratio, the table only has to recognize its parameter
+    from pkpdutils.stats.bioequivalence import BEParameter
+
     entries = ratios if isinstance(ratios, Mapping) else ratios.parameters
     scale = 100.0 if percent else 1.0
     suffix = " %" if percent else ""
@@ -207,12 +235,14 @@ def ratio_table(
             # it is written without trailing zeros ("90 %", not "90.0 %")
             "ci_level": f"{result.ci_level * 100.0:g} %",
         }
-        if not isinstance(result, RatioResult):
-            # a `BEParameter`, which adds the acceptance limits and the verdict
+        if isinstance(result, BEParameter):
+            # a bioequivalence parameter adds the acceptance limits and the verdict
             cv_intra = format_number(result.cv_intra * 100.0, digits)
             row["cv_intra"] = f"{cv_intra} %" if cv_intra else ""
-            low, high = result.limits
-            row["limits"] = f"{value(low, scale)} - {value(high, scale)}"
+            low, high = _aligned(
+                result.limits[0] * scale, result.limits[1] * scale, digits
+            )
+            row["limits"] = f"{low} - {high}{suffix}"
             row["bioequivalent"] = str(bool(result.bioequivalent))
         records.append(row)
     return pd.DataFrame.from_records(records)

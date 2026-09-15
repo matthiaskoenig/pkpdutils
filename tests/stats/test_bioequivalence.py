@@ -291,7 +291,7 @@ def test_ratio_table_of_a_bioequivalence_result() -> None:
     assert df["parameter"].tolist() == ["auc_inf_obs", "cmax"]
     parameter = res["auc_inf_obs"]
     assert df.iloc[0]["gmr"] == f"{parameter.gmr * 100:.3g} %"
-    assert df.iloc[0]["limits"] == "80.0 % - 125 %"
+    assert df.iloc[0]["limits"] == "80.0 - 125.0 %"
     assert df.iloc[0]["ci_level"] == "90 %"
     assert df.iloc[0]["cv_intra"] == f"{parameter.cv_intra * 100:.3g} %"
     assert df.iloc[0]["bioequivalent"] == str(parameter.bioequivalent)

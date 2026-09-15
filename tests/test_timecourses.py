@@ -1273,6 +1273,11 @@ def test_select_errors() -> None:
         tcs.select(study="x")
     with pytest.raises(ValueError, match="no sample of the batch"):
         tcs.select(arm="c")
+    # a label no sample carries is the same error, not a KeyError of the index
+    with pytest.raises(ValueError, match="no sample of the batch has individual"):
+        tcs.select(individual="zzz")
+    with pytest.raises(ValueError, match="no sample of the batch"):
+        tcs.select(individual=["zzz", "yyy"])
 
 
 def test_groupby_partitions_in_order_of_appearance() -> None:
@@ -1482,3 +1487,5 @@ def test_select_a_dimension_without_labels_by_position() -> None:
     )
     assert tcs.select(individual=1).n_samples == 1
     np.testing.assert_allclose(tcs.select(individual=[0, 2]).values, V[[0, 2]])
+    # without labels a slice is the python slice, its stop is exclusive
+    np.testing.assert_allclose(tcs.select(individual=slice(0, 2)).values, V[:2])

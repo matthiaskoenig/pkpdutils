@@ -2875,8 +2875,10 @@ class Timecourses:
         (`treatment`, `sex`, the dose group of the individuals, as the readers
         of `pkpdutils.io` build them); its value is a label, a list of labels
         or a `slice` of labels, whose bounds are both included, as in
-        `xarray.Dataset.sel`. A sample dimension without labels is selected by
-        integer position.
+        `xarray.Dataset.sel`. The selected samples keep the order of the
+        batch. A sample dimension without labels is selected by integer
+        position instead, where a `slice` is the usual python slice with an
+        exclusive stop.
 
         Args:
             **indexers: label, list of labels or slice per sample dimension or
@@ -2892,17 +2894,17 @@ class Timecourses:
         ds = self.ds
         for name, value in indexers.items():
             dim = self._coordinate_dim(name)
-            if name == dim:
+            if name == dim and name not in ds.coords:
+                # a sample dimension without labels selects by integer position
                 selector = (
                     value if isinstance(value, slice | list | np.ndarray) else [value]
                 )
-                # a sample dimension without labels selects by integer position
-                ds = (
-                    ds.sel({dim: selector})
-                    if name in ds.coords
-                    else ds.isel({dim: selector})
-                )
+                ds = ds.isel({dim: selector})
             else:
+                # the labels of the dimension itself and the values of a
+                # coordinate along it are matched the same way, so that a
+                # label which no sample carries is a `ValueError` naming it
+                # and not a `KeyError` of the index
                 labels = ds[name].to_numpy()
                 mask = _label_mask(labels, value)
                 ds = ds.isel({dim: np.flatnonzero(mask)})

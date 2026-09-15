@@ -163,3 +163,21 @@ def test_ratio_table_of_a_mapping() -> None:
     plain = ratio_table(results, percent=False)
     assert plain.iloc[0]["gmr"] == f"{result.gmr:.3g}"
     assert plain.iloc[0]["ci_high"] == f"{result.ci_high:.3g}"
+
+
+def test_ratio_table_limits_share_their_decimals() -> None:
+    from pkpdutils.stats import ratio_table
+    from pkpdutils.stats.bioequivalence import BEResult, tost
+
+    sample = ParameterSample(values=TEST, labels=LABELS, name="auc", unit="mg*hr/l")
+    reference = ParameterSample(values=REF, labels=LABELS, name="auc", unit="mg*hr/l")
+    parameter = tost(sample, reference)
+    result = BEResult(
+        parameters={"auc_inf_obs": parameter},
+        bioequivalent=parameter.bioequivalent,
+        limits=(0.8, 1.25),
+        ci_level=0.90,
+    )
+    # the two bounds of one cell are written with the same decimals and one suffix
+    assert ratio_table(result).iloc[0]["limits"] == "80.0 - 125.0 %"
+    assert ratio_table(result, percent=False).iloc[0]["limits"] == "0.800 - 1.250"

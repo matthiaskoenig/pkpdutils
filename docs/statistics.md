@@ -114,13 +114,15 @@ be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
 ```python
 from pkpdutils.stats import ratio_table
 
-ratio_table(be)  # parameter, unit, n, gmr, ci_low, ci_high, cv_intra, bioequivalent
+# parameter, unit, n_test, n_reference, gmr, ci_low, ci_high, ci_level and,
+# for a bioequivalence result, cv_intra, limits and bioequivalent
+ratio_table(be)
 ratio_table({"auc_inf_obs": r}, percent=False, digits=4)  # plain ratios
 ```
 
 | parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 12 | 12 | 95.6 % | 88.6 % | 103 % | 90 % | 10.3 % | 80.0 % - 125 % | True |
+| auc_inf_obs | hour * milligram / liter | 12 | 12 | 95.6 % | 88.6 % | 103 % | 90 % | 10.3 % | 80.0 - 125.0 % | True |
 
 A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequence` along the individual dimension of both batches; they are given to `Timecourses.from_arrays` as `coords={"individual": ids, "period": ("individual", periods), "sequence": ("individual", sequences)}` and travel through the NCA to the result. Without them two results with the same individuals are paired, otherwise the groups are parallel; `design=Design.PARALLEL` overrides the detection.
 
