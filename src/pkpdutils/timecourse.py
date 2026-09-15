@@ -35,6 +35,7 @@ tc = Timecourse(
 
 import logging
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, Self
 
@@ -893,66 +894,241 @@ TIMES_VAR = "times"
 DOSE_DIM = "dose_index"
 
 
-def _dose_of_group(
-    g: pd.DataFrame,
-    dose_amount: str | None,
+def _sample_codes(
+    df: pd.DataFrame, sample: Sequence[str]
+) -> tuple[np.ndarray, list[Any]]:
+    """Number the rows of a long frame by sample, in the order of their first appearance.
+
+    Args:
+        df: the long frame.
+        sample: the columns which identify a sample.
+
+    Returns:
+        The sample of every row as an index into the labels, and the labels
+        (a tuple per sample for several sample columns).
+    """
+    key = (
+        df[sample[0]]
+        if len(sample) == 1
+        else pd.MultiIndex.from_frame(df[list(sample)])
+    )
+    codes, uniques = pd.factorize(key, use_na_sentinel=False)
+    return codes, list(uniques)
+
+
+def _rows_by_sample(
+    codes: np.ndarray, times: np.ndarray, n_samples: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Order the rows of a long frame by sample and time, and place them in a padded row.
+
+    The stable sort by time followed by the stable sort by sample sorts every
+    sample by time and leaves rows with equal times in the order of the frame,
+    which is what sorting every sample on its own does.
+
+    Args:
+        codes: the sample of every row.
+        times: the time of every row.
+        n_samples: number of samples.
+
+    Returns:
+        The order of the rows, the row and the column of every ordered row in
+        the padded `(n_samples, n_time)` arrays, and the number of rows per
+        sample.
+    """
+    by_time = np.argsort(times, kind="stable")
+    order = by_time[np.argsort(codes[by_time], kind="stable")]
+    counts = np.bincount(codes, minlength=n_samples)
+    starts = np.cumsum(counts) - counts
+    column = np.arange(order.size) - np.repeat(starts, counts)
+    return order, codes[order], column, counts
+
+
+def _frame_doses(
+    df: pd.DataFrame,
+    *,
+    codes: np.ndarray,
+    labels: Sequence[Any],
+    dose_amount: str,
     dose_unit: str | None,
     dose_time: str | None,
     route: Route | None,
-) -> Dosing | None:
-    """The dosing protocol of the rows of one sample of a long data frame.
+) -> dict[str, Any]:
+    """The padded dose arrays of the samples of a long data frame.
 
-    Without a `dose_time` column the sample carries one dose at time 0 and the
+    Without a `dose_time` column a sample carries one dose at time 0 and the
     amount must be constant over its rows. With a `dose_time` column every
-    distinct `(dose_time, dose_amount)` pair of the sample is one dose of the
-    protocol; rows whose dose columns are `NaN` are observations only.
+    distinct `(dose_time, dose_amount)` pair of a sample is one dose of its
+    protocol; rows whose dose columns are `NaN` are observations only. The
+    checks are the ones `Dosing` makes on a single protocol, applied to every
+    sample at once.
 
     Args:
-        g: the rows of one sample.
-        dose_amount: name of the dose column, `None` for no dose.
-        dose_unit: unit of the doses, required with `dose_amount`.
+        df: the long frame.
+
+    Keyword Args:
+        codes: the sample of every row.
+        labels: the samples, in the order of the batch.
+        dose_amount: name of the dose column.
+        dose_unit: unit of the doses.
         dose_time: name of the dose time column, 0 by default.
-        route: route of the doses, required with `dose_amount`.
+        route: route of the doses.
 
     Returns:
-        The protocol, or `None` when `dose_amount` is `None`.
+        The `dose` mapping of `Timecourses.from_arrays`.
 
     Raises:
-        ValueError: if `dose_unit` or `route` is missing, if the dose is not
-            constant per sample (without `dose_time`), or if a dose time
-            carries several amounts.
+        ValueError: if `dose_unit` or `route` is missing, if a sample has no
+            dose or the dose is not constant per sample (without `dose_time`),
+            if a dose time of a sample carries several amounts, or if an amount
+            is not finite or negative.
     """
-    if dose_amount is None:
-        return None
     if dose_unit is None or route is None:
         raise ValueError("'dose_unit' and 'route' are required with 'dose_amount'")
+    n_samples = len(labels)
     if dose_time is None:
-        amounts = g[dose_amount].dropna().unique()
-        if amounts.size != 1:
-            raise ValueError(f"The dose must be constant per sample, found {amounts}")
-        return Dosing(
-            amounts=[float(amounts[0])], times=[0.0], unit=dose_unit, route=route
+        column = df[dose_amount]
+        grouped = column.groupby(codes, sort=True)
+        distinct = grouped.nunique(dropna=True).reindex(range(n_samples)).to_numpy()
+        if (distinct != 1).any():
+            i = int(np.argmax(distinct != 1))
+            found = column[codes == i].dropna().unique()
+            raise ValueError(
+                f"sample {labels[i]}: the dose must be constant per sample, "
+                f"found {found}"
+            )
+        amounts = (
+            grouped.first()
+            .reindex(range(n_samples))
+            .to_numpy(dtype=np.float64)
+            .reshape(n_samples, 1)
         )
-    pairs = (
-        g[[dose_time, dose_amount]]
-        .dropna()
-        .drop_duplicates()
-        .sort_values([dose_time, dose_amount])
+        _check_dose_amounts(amounts, labels)
+        return {"amount": amounts, "unit": dose_unit, "time": np.zeros((n_samples, 1))}
+
+    pairs = pd.DataFrame(
+        {
+            "sample": codes,
+            "time": pd.to_numeric(df[dose_time], errors="coerce"),
+            "amount": pd.to_numeric(df[dose_amount], errors="coerce"),
+        }
+    ).dropna()
+    pairs = pairs.drop_duplicates().sort_values(
+        ["sample", "time", "amount"], kind="stable"
     )
-    if pairs.empty:
-        raise ValueError(f"The sample has no dose in '{dose_amount}'")
-    times = pairs[dose_time].to_numpy(dtype=np.float64)
-    if np.unique(times).size != times.size:
+    counts = np.bincount(pairs["sample"].to_numpy(), minlength=n_samples)
+    if (counts == 0).any():
+        i = int(np.argmax(counts == 0))
         raise ValueError(
-            f"The dose must be constant per dose time, found "
-            f"{pairs[dose_amount].to_numpy()} at {times}"
+            f"sample {labels[i]}: the sample has no dose in '{dose_amount}'"
         )
-    return Dosing(
-        amounts=pairs[dose_amount].to_numpy(dtype=np.float64),
-        times=times,
-        unit=dose_unit,
-        route=route,
-    )
+    n_dose = int(counts.max())
+    column = np.arange(len(pairs)) - np.repeat(np.cumsum(counts) - counts, counts)
+    row = pairs["sample"].to_numpy()
+    times = np.full((n_samples, n_dose), np.nan)
+    amounts = np.full((n_samples, n_dose), np.nan)
+    times[row, column] = pairs["time"].to_numpy()
+    amounts[row, column] = pairs["amount"].to_numpy()
+    duplicate = np.diff(times, axis=1) == 0
+    if duplicate.any():
+        i = int(np.argmax(duplicate.any(axis=1)))
+        valid = slice(0, counts[i])
+        raise ValueError(
+            f"sample {labels[i]}: the dose must be constant per dose time, found "
+            f"{amounts[i, valid]} at {times[i, valid]}"
+        )
+    _check_dose_amounts(amounts, labels)
+    return {"amount": amounts, "unit": dose_unit, "time": times}
+
+
+def _check_sample_times(
+    times: np.ndarray, row: np.ndarray, counts: np.ndarray, labels: Sequence[Any]
+) -> None:
+    """Check the sampling times of every sample of a long data frame.
+
+    The checks `Timecourse` makes on a single curve, applied to every sample at
+    once: at least two time points, no `NaN` and no duplicates. They are the
+    invariant of a batch built from the padded arrays, which no longer goes
+    through one `Timecourse` per sample.
+
+    Args:
+        times: the times of every row, ordered by sample and by time.
+        row: the sample of every ordered row.
+        counts: number of rows per sample.
+        labels: the samples, in the order of the batch.
+
+    Raises:
+        ValueError: for the first sample with fewer than two time points, a
+            `NaN` time or duplicate times, named with the sample.
+    """
+    n_samples = len(labels)
+    missing = np.isnan(times)
+    duplicate = np.zeros(times.size, dtype=bool)
+    if times.size > 1:
+        duplicate[1:] = (np.diff(times) == 0) & (row[1:] == row[:-1])
+    short = counts < 2
+    with_nan = np.bincount(row[missing], minlength=n_samples) > 0
+    with_duplicate = np.bincount(row[duplicate], minlength=n_samples) > 0
+    bad = short | with_nan | with_duplicate
+    if not bad.any():
+        return
+    i = int(np.argmax(bad))
+    if short[i]:
+        raise ValueError(
+            f"sample {labels[i]}: a timecourse needs at least 2 time points"
+        )
+    if with_nan[i]:
+        raise ValueError(f"sample {labels[i]}: 'time' contains NaN")
+    raise ValueError(f"sample {labels[i]}: 'time' contains duplicate values")
+
+
+def _one_n_per_sample(subjects: np.ndarray, labels: Sequence[Any]) -> np.ndarray:
+    """Reduce the number of subjects per time point to one number per sample.
+
+    Args:
+        subjects: the padded `n` column `(n_samples, n_time)`.
+        labels: the samples, in the order of the batch.
+
+    Returns:
+        The maximum of every sample; a sample whose `n` varies over its time
+        points logs a warning.
+    """
+    maxima = np.nanmax(subjects, axis=1)
+    minima = np.nanmin(subjects, axis=1)
+    for i in np.flatnonzero(minima != maxima):
+        sample = int(i)
+        logger.warning(
+            "'n' varies over the time points of '%s', the batch keeps "
+            "one number per sample, the maximum %s",
+            labels[sample],
+            maxima[sample],
+        )
+    return maxima
+
+
+def _check_dose_amounts(amounts: np.ndarray, labels: Sequence[Any]) -> None:
+    """Check the dose amounts of the samples of a batch, as `Dosing` does per protocol.
+
+    Args:
+        amounts: the padded dose amounts `(n_samples, n_dose)`.
+        labels: the samples, in the order of the batch.
+
+    Raises:
+        ValueError: if an amount which is not padding is not finite or is
+            negative, named with the sample.
+    """
+    given = ~np.isnan(amounts)
+    with np.errstate(invalid="ignore"):
+        bad_finite = given & ~np.isfinite(amounts)
+        negative = given & (amounts < 0)
+    for mask, message in (
+        (bad_finite, "must be finite"),
+        (negative, "must be non-negative"),
+    ):
+        if mask.any():
+            i = int(np.argwhere(mask.any(axis=1))[0][0])
+            raise ValueError(
+                f"sample {labels[i]}: 'amounts' {message}, got {amounts[i]}"
+            )
 
 
 def pad_rows(arrays: Sequence[np.ndarray], n_columns: int) -> np.ndarray:
@@ -1258,6 +1434,58 @@ def _dose_variables(
     }
 
 
+@dataclass(frozen=True)
+class _SampleArrays:
+    """The arrays and the metadata a batch builds its single timecourses from.
+
+    Every array is aligned to `(*sample_dims, time)` or, for the dose
+    variables, to `(*sample_dims, dose_index)`, so that the row of a sample is
+    the entry of its position along the sample dimensions. The metadata of the
+    batch is read once here rather than once per sample: every one of its
+    properties goes through the dataset, which rebuilds a `DataArray`.
+
+    Attributes:
+        sample_dims: the dimensions other than `time`
+        time_unit: unit of the times
+        unit: unit of the values
+        substance: name of the substance or effect
+        tissue: tissue the values were measured in, `None` when not known
+        route: route of the doses, `None` without doses
+        dose_unit: unit of the doses, `None` without doses
+        times: the sampling times, the shared grid itself when `shared_grid`
+        shared_grid: whether every sample has the same sampling times
+        values: the values
+        sd: the standard deviations, `None` without
+        se: the standard errors, `None` without
+        n: the number of subjects per sample, `None` without
+        dose_amount: the dose amounts, `None` without doses
+        dose_time: the dose times, `None` without doses
+        dose_duration: the infusion durations, `None` without doses
+        labels: the coordinate values of every sample dimension which has one
+        complete: whether a curve of the batch needs nothing derived, i.e.
+            whether `Timecourse` would leave `sd`, `se` and `n` as they are
+    """
+
+    sample_dims: tuple[str, ...]
+    time_unit: str
+    unit: str
+    substance: str
+    tissue: str | None
+    route: Route | None
+    dose_unit: str | None
+    times: np.ndarray
+    shared_grid: bool
+    values: np.ndarray
+    sd: np.ndarray | None
+    se: np.ndarray | None
+    n: np.ndarray | None
+    dose_amount: np.ndarray | None
+    dose_time: np.ndarray | None
+    dose_duration: np.ndarray | None
+    labels: dict[str, np.ndarray]
+    complete: bool
+
+
 class Timecourses:
     """A batch of timecourses as an `xarray.Dataset`.
 
@@ -1336,6 +1564,9 @@ class Timecourses:
         if "units" not in time_var.attrs:
             raise ValueError("the time coordinate needs attrs['units']")
         self.ds: xr.Dataset = ds
+        #: the units `_check_units_once` has parsed, so that building single
+        #: timecourses parses the three unit strings of the batch once
+        self._checked_units: tuple[str, str, str | None] | None = None
 
     # --- layout -------------------------------------------------------------
 
@@ -1878,11 +2109,20 @@ class Timecourses:
             tissue: tissue or matrix the values were measured in, e.g.
                 `"plasma"`
 
+        The batch is built from the padded arrays of the frame, not from one
+        `Timecourse` per sample: the checks of a single curve (at least two
+        time points, no `NaN` and no duplicate times) and of a single protocol
+        (finite, non-negative amounts, one amount per dose time) are made for
+        every sample at once and name the sample they fail for.
+
         Returns:
             The batch.
 
         Raises:
-            ValueError: if `sample` is empty.
+            ValueError: if `sample` is empty, if the frame holds no sample, if
+                a sample has fewer than two time points, a `NaN` time or
+                duplicate times, or if the doses of a sample are not a valid
+                protocol; every one of them names the sample.
         """
         sample = list(sample)
         if not sample:
@@ -1894,40 +2134,85 @@ class Timecourses:
                 "'dose_amount', 'dose_time' and 'dose_duration'"
             )
         route = None if route is None else Route(route)
-        # a single column groups by the column itself (scalar keys, no
-        # deprecation warning); several columns need the list form (tuple keys);
-        # `sort=False` keeps the samples in the order of the frame, the order
+        # the samples in the order of their first appearance, the order
         # `to_dataframe` and the readers write them in
-        groups = df.groupby(
-            sample[0] if len(sample) == 1 else sample, sort=False, dropna=False
-        )
-        keys = list(groups.groups)
-        # from_timecourses decides between a shared grid and per sample grids
-        timecourses = [
-            Timecourse.from_dataframe(
-                g.sort_values(time),
-                time_unit=time_unit,
-                unit=unit,
-                time=time,
-                value=value,
-                sd=sd,
-                se=se,
-                n=n,
-                substance=substance,
-                tissue=tissue,
-                label=str(key),
-                dosing=_dose_of_group(g, dose_amount, dose_unit, dose_time, route),
+        codes, keys = _sample_codes(df, sample)
+        if not keys:
+            raise ValueError("At least one timecourse is required")
+        times = _as_float_array(time, df[time].to_numpy())
+        order, row, column, counts = _rows_by_sample(codes, times, len(keys))
+        _check_sample_times(times[order], row, counts, keys)
+
+        def padded(name: str | None) -> np.ndarray | None:
+            """Stack one column of the frame into the `(n_samples, n_time)` array.
+
+            Args:
+                name: name of the column, `None` for a column the caller
+                    switched off.
+
+            Returns:
+                The padded array, `NaN` where a sample has fewer time points,
+                or `None` when `name` is `None`.
+            """
+            if name is None:
+                return None
+            out = np.full((len(keys), int(counts.max())), np.nan)
+            out[row, column] = _as_float_array(name, df[name].to_numpy())[order]
+            return out
+
+        grid = padded(time)
+        assert grid is not None
+        values = padded(value)
+        spread = {"sd": padded(sd), "se": padded(se)}
+        subjects = padded(n)
+        if subjects is not None:
+            # the batch keeps one `n` per sample; `sd` and `se` are derived
+            # from each other per time point, as a single curve does
+            with np.errstate(invalid="ignore"):
+                root = np.sqrt(subjects)
+            if spread["se"] is None and spread["sd"] is not None:
+                spread["se"] = spread["sd"] / root
+            elif spread["sd"] is None and spread["se"] is not None:
+                spread["sd"] = spread["se"] * root
+        dose: dict[str, Any] | None = None
+        if dose_amount is not None:
+            dose = _frame_doses(
+                df,
+                codes=codes,
+                labels=keys,
+                dose_amount=dose_amount,
+                dose_unit=dose_unit,
+                dose_time=dose_time,
+                route=route,
             )
-            for key, g in groups
-        ]
 
-        if len(sample) == 1:
-            return cls.from_timecourses(timecourses, dim=sample[0], labels=list(keys))
-
-        # several sample columns: build along one flat dimension, then unstack
-        flat = cls.from_timecourses(
-            timecourses, dim="_sample", labels=list(range(len(keys)))
+        shared = bool(
+            (counts == counts[0]).all()
+            and np.array_equal(grid, np.broadcast_to(grid[0], grid.shape))
         )
+        flat = cls.from_arrays(
+            grid[0] if shared else grid,
+            values,
+            time_unit=time_unit,
+            unit=unit,
+            dims=(sample[0] if len(sample) == 1 else "_sample",),
+            coords={
+                (sample[0] if len(sample) == 1 else "_sample"): (
+                    list(keys) if len(sample) == 1 else list(range(len(keys)))
+                )
+            },
+            sd=spread["sd"],
+            se=spread["se"],
+            n=None if subjects is None else _one_n_per_sample(subjects, keys),
+            dose=dose,
+            route=route,
+            substance=substance,
+            tissue=tissue,
+        )
+        if len(sample) == 1:
+            return flat
+
+        # several sample columns: built along one flat dimension, then unstacked
         tuple_keys: list[tuple[Any, ...]] = []
         for k in keys:
             assert isinstance(k, tuple)
@@ -2076,80 +2361,271 @@ class Timecourses:
     #: (python would set this implicitly, it is spelled out to say so)
     __hash__ = None
 
-    def _timecourse(self, sample: xr.Dataset, label: Any) -> Timecourse:
-        """Build the `Timecourse` of a dataset without sample dimensions.
+    def _sample_arrays(self) -> "_SampleArrays":
+        """The arrays of the batch, aligned once for building single timecourses.
+
+        `isel`, `sel` and the iteration take the row of a sample out of these
+        arrays instead of indexing the dataset, which rebuilds every
+        `DataArray` of the batch per sample.
+
+        Returns:
+            The arrays, transposed to `(*sample_dims, time)` and
+            `(*sample_dims, dose_index)`; `times` is the shared grid itself
+            when the samples share one.
+        """
+        variables = self.ds.variables
+        sample_dims = self.sample_dims
+        order = (
+            *sample_dims,
+            *(d for d in (TIME_DIM, DOSE_DIM) if d not in sample_dims),
+        )
+
+        def aligned(name: str) -> np.ndarray | None:
+            """The data of one variable in the dimension order of the batch.
+
+            Args:
+                name: name of the variable.
+
+            Returns:
+                The array, or `None` when the variable is not in the dataset.
+            """
+            variable = variables.get(name)
+            if variable is None:
+                return None
+            dims = tuple(str(d) for d in variable.dims)
+            target = tuple(d for d in order if d in dims)
+            data = np.asarray(variable.values)
+            if target != dims:
+                data = data.transpose([dims.index(d) for d in target])
+            return data
+
+        per_sample = aligned(TIMES_VAR)
+        shared = per_sample is None
+        times = (
+            np.asarray(variables[TIME_DIM].values, dtype=np.float64)
+            if per_sample is None
+            else per_sample
+        )
+        values = aligned("value")
+        assert values is not None
+        sd, se = aligned("sd"), aligned("se")
+        n = aligned("n")
+        # `Timecourse` derives the missing one of `sd` and `se` from `n`: a
+        # batch which carries only one of them needs that validation
+        derives = n is not None and (sd is None) != (se is None)
+        return _SampleArrays(
+            sample_dims=sample_dims,
+            time_unit=self.time_unit,
+            unit=self.unit,
+            substance=self.substance,
+            tissue=self.tissue,
+            route=self.route,
+            dose_unit=self.dose_unit,
+            times=times,
+            shared_grid=shared,
+            values=values,
+            sd=sd,
+            se=se,
+            n=n,
+            dose_amount=aligned("dose_amount"),
+            dose_time=aligned("dose_time"),
+            dose_duration=aligned("dose_duration"),
+            labels={
+                d: self.ds[d].to_numpy() for d in sample_dims if d in self.ds.coords
+            },
+            complete=not derives,
+        )
+
+    def _check_units_once(self, arrays: "_SampleArrays") -> None:
+        """Check the unit strings of the batch, once per set of units.
+
+        The units of a batch are three strings, not per sample data, so the
+        pint parse of `Timecourse` and `Dosing` is done once for the batch
+        instead of once per sample built from it.
 
         Args:
-            sample: the dataset indexed down to a single sample.
+            arrays: the arrays of the batch, which carry its units.
+
+        Raises:
+            ValueError: if a unit is not a unit, or the dose unit is not an
+                amount (`pkpdutils.units.check_dose_unit`).
+        """
+        units = (arrays.time_unit, arrays.unit, arrays.dose_unit)
+        if units == self._checked_units:
+            return
+        parse_unit(units[0])
+        parse_unit(units[1])
+        if units[2] is not None:
+            check_dose_unit(units[2])
+        self._checked_units = units
+
+    def _timecourse_at(
+        self, arrays: "_SampleArrays", index: tuple[int, ...], label: Any
+    ) -> Timecourse:
+        """Build the `Timecourse` of one sample from the arrays of the batch.
+
+        The curve is built with `model_construct`, which skips the validation
+        of `Timecourse`, when the row of the sample already holds every
+        invariant it validates: at least two time points which are strictly
+        increasing (so no `NaN`, no duplicates and no sorting), `float64`
+        arrays and nothing to derive (`_SampleArrays.complete`). The units are
+        checked once per batch by `_check_units_once`. Every other row goes
+        through the validating constructor, which sorts it or raises as before.
+
+        Args:
+            arrays: the arrays of the batch.
+            index: the position of the sample along the sample dimensions.
             label: label of the sample, `None` without sample dimensions.
 
         Returns:
             The timecourse.
         """
-        time = (
-            sample[TIMES_VAR].to_numpy()
-            if TIMES_VAR in sample
-            else sample[TIME_DIM].to_numpy().astype(np.float64)
-        )
-        value = sample["value"].to_numpy()
+        time = arrays.times if arrays.shared_grid else arrays.times[index]
         mask = ~np.isnan(time)
         data: dict[str, Any] = {
-            "time": time[mask],
-            "value": value[mask],
-            "time_unit": self.time_unit,
-            "unit": self.unit,
-            "substance": self.substance,
-            "tissue": self.tissue,
+            "time": np.asarray(time[mask], dtype=np.float64),
+            "value": np.asarray(arrays.values[index][mask], dtype=np.float64),
+            "time_unit": arrays.time_unit,
+            "unit": arrays.unit,
+            "substance": arrays.substance,
+            "tissue": arrays.tissue,
             "label": None if label is None else str(label),
         }
         for name in ("sd", "se"):
-            if name in sample:
-                data[name] = sample[name].to_numpy()[mask]
-        if "n" in sample:
-            data["n"] = float(sample["n"].to_numpy())
-        dosing = self._dosing_of_sample(sample)
+            array = getattr(arrays, name)
+            if array is not None:
+                data[name] = np.asarray(array[index][mask], dtype=np.float64)
+        if arrays.n is not None:
+            data["n"] = float(arrays.n[index])
+        dosing = self._dosing_at(arrays, index)
         if dosing is not None:
             data["dosing"] = dosing
+        curve = data["time"]
+        if arrays.complete and curve.size >= 2 and bool((np.diff(curve) > 0).all()):
+            self._check_units_once(arrays)
+            return Timecourse.model_construct(**data)
         return Timecourse(**data)
 
-    def _dosing_of_sample(self, sample: xr.Dataset) -> Dosing | None:
-        """Rebuild the dosing protocol of a dataset indexed down to a single sample.
+    def _dosing_at(
+        self, arrays: "_SampleArrays", index: tuple[int, ...]
+    ) -> Dosing | None:
+        """Rebuild the dosing protocol of one sample from the arrays of the batch.
 
         The doses of a sample are the finite entries of its dose row; a row of
         `NaN` marks a sample combination which is not in the batch (its values
-        are `NaN` as well), it has no protocol.
+        are `NaN` as well), it has no protocol. The protocol is built with
+        `model_construct`, which skips the validation of `Dosing`, when the row
+        already holds every invariant it validates: finite, non-negative
+        amounts at strictly increasing times and durations which fit the route.
+        Every other row goes through the validating constructor.
 
         Args:
-            sample: the dataset indexed down to a single sample.
+            arrays: the arrays of the batch.
+            index: the position of the sample along the sample dimensions.
 
         Returns:
             The protocol, or `None` without doses.
         """
-        if not self.has_dose:
+        # the three dose variables are present together
+        if (
+            arrays.dose_amount is None
+            or arrays.dose_time is None
+            or arrays.dose_duration is None
+        ):
             return None
-        amounts = np.atleast_1d(
-            np.asarray(sample["dose_amount"].to_numpy(), dtype=np.float64)
-        )
-        times = np.atleast_1d(
-            np.asarray(sample["dose_time"].to_numpy(), dtype=np.float64)
-        )
+        amounts = np.atleast_1d(np.asarray(arrays.dose_amount[index], dtype=np.float64))
+        times = np.atleast_1d(np.asarray(arrays.dose_time[index], dtype=np.float64))
         durations = np.atleast_1d(
-            np.asarray(sample["dose_duration"].to_numpy(), dtype=np.float64)
+            np.asarray(arrays.dose_duration[index], dtype=np.float64)
         )
         mask = np.isfinite(amounts) & np.isfinite(times)
         if not mask.any():
             return None
-        # both are set with the dose variables, `has_dose` was checked above
-        route = self.route
-        dose_unit = self.dose_unit
+        amounts, times, durations = amounts[mask], times[mask], durations[mask]
+        # both are set with the dose variables, which were checked above
+        route = arrays.route
+        dose_unit = arrays.dose_unit
         assert route is not None and dose_unit is not None
+        given = None if bool(np.isnan(durations).all()) else durations
+        infusion = route is Route.IV_INFUSION
+        fits = (
+            given is not None and bool((np.isfinite(given) & (given > 0)).all())
+            if infusion
+            else given is None
+        )
+        if (
+            fits
+            and bool((amounts >= 0).all())
+            and bool((np.diff(times) > 0).all() if times.size > 1 else True)
+        ):
+            self._check_units_once(arrays)
+            return Dosing.model_construct(
+                amounts=amounts,
+                times=times,
+                durations=given,
+                unit=dose_unit,
+                route=route,
+            )
         return Dosing(
-            amounts=amounts[mask],
-            times=times[mask],
-            durations=durations[mask],
+            amounts=amounts,
+            times=times,
+            durations=durations,
             unit=dose_unit,
             route=route,
         )
+
+    def _position(
+        self, indexers: Mapping[str, Any], *, by_label: bool
+    ) -> tuple[int, ...]:
+        """The position of one sample along the sample dimensions.
+
+        Args:
+            indexers: one index or coordinate label per sample dimension.
+
+        Keyword Args:
+            by_label: whether the indexers are coordinate labels (`sel`) or
+                integer positions (`isel`).
+
+        Returns:
+            The position of the sample.
+
+        Raises:
+            ValueError: for an unknown dimension.
+            KeyError: for a label which is not a coordinate of its dimension.
+        """
+        unknown = set(indexers) - set(self.sample_dims)
+        if unknown:
+            raise ValueError(
+                f"{sorted(unknown)} are not sample dimensions of the batch, "
+                f"which has {list(self.sample_dims)}"
+            )
+        position: list[int] = []
+        for dim in self.sample_dims:
+            label = indexers[dim]
+            index = self.ds.indexes.get(dim) if by_label else None
+            position.append(
+                int(index.get_loc(label)) if index is not None else int(label)
+            )
+        return tuple(position)
+
+    def _label_at(self, arrays: "_SampleArrays", index: tuple[int, ...]) -> Any:
+        """Label of a sample: the coordinates of the sample dimensions joined by `|`.
+
+        Args:
+            arrays: the arrays of the batch.
+            index: the position of the sample along the sample dimensions.
+
+        Returns:
+            The label, `None` when no sample dimension carries a coordinate.
+        """
+        parts = [
+            str(arrays.labels[dim][position])
+            for dim, position in zip(arrays.sample_dims, index, strict=True)
+            if dim in arrays.labels
+        ]
+        if not parts:
+            return None
+        return parts[0] if len(parts) == 1 else "|".join(parts)
 
     def dosing_of(self, **indexers: Any) -> Dosing | None:
         """The dosing protocol of one sample, selected by coordinate label.
@@ -2169,7 +2645,9 @@ class Timecourses:
             raise ValueError(
                 f"dosing_of needs a label for every sample dimension, missing {sorted(missing)}"
             )
-        return self._dosing_of_sample(self.ds.sel(indexers))
+        return self._dosing_at(
+            self._sample_arrays(), self._position(indexers, by_label=True)
+        )
 
     def isel(self, **indexers: int) -> Timecourse:
         """One timecourse by integer position on every sample dimension."""
@@ -2178,9 +2656,9 @@ class Timecourses:
             raise ValueError(
                 f"isel needs an index for every sample dimension, missing {sorted(missing)}"
             )
-        sample = self.ds.isel(indexers)
-        label = self._label(sample)
-        return self._timecourse(sample, label)
+        arrays = self._sample_arrays()
+        index = self._position(indexers, by_label=False)
+        return self._timecourse_at(arrays, index, self._label_at(arrays, index))
 
     def sel(self, **indexers: Any) -> Timecourse:
         """One timecourse by coordinate label on every sample dimension."""
@@ -2189,22 +2667,17 @@ class Timecourses:
             raise ValueError(
                 f"sel needs a label for every sample dimension, missing {sorted(missing)}"
             )
-        sample = self.ds.sel(indexers)
-        label = self._label(sample)
-        return self._timecourse(sample, label)
-
-    def _label(self, sample: xr.Dataset) -> Any:
-        """Label of a selected sample: the coordinates of the sample dimensions joined by `|`."""
-        parts = [str(sample[d].values) for d in self.sample_dims if d in sample.coords]
-        if not parts:
-            return None
-        return parts[0] if len(parts) == 1 else "|".join(parts)
+        arrays = self._sample_arrays()
+        index = self._position(indexers, by_label=True)
+        return self._timecourse_at(arrays, index, self._label_at(arrays, index))
 
     def __iter__(self) -> Iterator[Timecourse]:
         """Iterate over the timecourses in C order of the sample dimensions."""
+        arrays = self._sample_arrays()
         for index in np.ndindex(*self.sample_shape):
-            yield self.isel(
-                **dict(zip(self.sample_dims, (int(i) for i in index), strict=True))
+            position = tuple(int(i) for i in index)
+            yield self._timecourse_at(
+                arrays, position, self._label_at(arrays, position)
             )
 
     def to_dataframe(self) -> pd.DataFrame:

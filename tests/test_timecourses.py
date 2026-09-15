@@ -1,5 +1,5 @@
 import logging
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -826,3 +826,185 @@ def test_from_arrays_rejects_an_empty_unit() -> None:
         Timecourses.from_arrays(T, V, time_unit="hr", unit="")
     with pytest.raises(ValueError, match="dimensionless"):
         Timecourses.from_arrays(T, V, time_unit="", unit="mg/l")
+
+
+def curves_of_every_kind() -> list[Timecourse]:
+    """One curve per case the batch arrays have to carry: ragged, spread, doses."""
+    return [
+        Timecourse(
+            time=[0.5, 1.0, 2.0, 4.0],
+            value=[1.0, 2.0, 1.5, 0.8],
+            sd=[0.1, 0.2, 0.15, 0.08],
+            n=8.0,
+            time_unit="hr",
+            unit="ng/ml",
+            label="a",
+            tissue="plasma",
+            dosing=Dosing(amounts=[100.0], times=[0.0], unit="mg", route=Route.ORAL),
+        ),
+        Timecourse(
+            time=[0.25, 1.0, 3.0],
+            value=[0.5, 2.1, 1.1],
+            sd=[0.05, 0.2, 0.1],
+            n=6.0,
+            time_unit="hr",
+            unit="ng/ml",
+            label="b",
+            tissue="plasma",
+            dosing=Dosing(
+                amounts=[100.0, 50.0], times=[0.0, 12.0], unit="mg", route=Route.ORAL
+            ),
+        ),
+    ]
+
+
+def test_iteration_rebuilds_the_curves_the_batch_was_built_from() -> None:
+    # B3: the curves are built from the arrays of the batch with
+    # `model_construct`, which must give exactly what the validating
+    # constructor of `from_timecourses` was given
+    curves = curves_of_every_kind()
+    batch = Timecourses.from_timecourses(curves)
+    assert list(batch) == curves
+    assert batch.isel(individual=1) == curves[1]
+    assert batch.sel(individual="b") == curves[1]
+    assert batch.dosing_of(individual="b") == curves[1].dosing
+
+
+def test_iteration_rebuilds_an_infusion_protocol() -> None:
+    curve = Timecourse(
+        time=[0.5, 1.0, 2.0],
+        value=[1.0, 2.0, 1.5],
+        time_unit="hr",
+        unit="ng/ml",
+        label="a",
+        dosing=Dosing(
+            amounts=[100.0, 100.0],
+            times=[0.0, 12.0],
+            durations=[0.5, 0.25],
+            unit="mg",
+            route=Route.IV_INFUSION,
+        ),
+    )
+    batch = Timecourses.from_timecourses([curve])
+    rebuilt = batch.isel(individual=0)
+    assert rebuilt == curve
+    assert rebuilt.dosing is not None and rebuilt.dosing.durations is not None
+
+
+def test_iteration_validates_a_batch_which_does_not_hold_the_invariants(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # the fast path is only taken for a row which is already valid; a dataset
+    # built by hand still goes through the validation of `Timecourse`
+    duplicate = Timecourses.from_arrays(
+        np.array([1.0, 1.0, 2.0]),
+        np.array([[1.0, 2.0, 3.0]]),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        duplicate.isel(individual=0)
+    unsorted = Timecourses.from_arrays(
+        np.array([2.0, 1.0]),
+        np.array([[1.0, 2.0]]),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.timecourse"):
+        curve = unsorted.isel(individual=0)
+    assert "Unsorted time points" in caplog.text
+    np.testing.assert_allclose(curve.time, [1.0, 2.0])
+    np.testing.assert_allclose(curve.value, [2.0, 1.0])
+    one_point = Timecourses.from_arrays(
+        np.array([1.0, 2.0]),
+        np.array([[1.0, np.nan]]),
+        time_unit="hr",
+        unit="mg/l",
+        sd=np.array([[0.1, np.nan]]),
+        n=np.array([4.0]),
+    )
+    assert one_point.isel(individual=0).size == 2  # a NaN value keeps its time
+
+
+def test_iteration_derives_the_missing_spread_of_a_hand_built_batch() -> None:
+    # `Timecourse` derives `se` from `sd` and `n`, which the fast path of the
+    # iteration must not skip: such a batch takes the validating path
+    ds = Timecourses.from_arrays(
+        T, V, time_unit="hr", unit="mg/l", sd=0.1 * V, n=np.array([4.0, 4.0, 4.0])
+    ).ds
+    batch = Timecourses(ds.drop_vars("se"))
+    curve = batch.isel(individual=0)
+    assert curve.se is not None
+    np.testing.assert_allclose(curve.se, 0.1 * V[0] / 2.0)
+
+
+def test_from_dataframe_matches_the_curves_of_the_batch() -> None:
+    # B3: the frame is read into the padded arrays directly; the batch must be
+    # the one the per curve path built
+    batch = Timecourses.from_timecourses(curves_of_every_kind())
+    back = Timecourses.from_dataframe(
+        batch.to_dataframe(),
+        sample=["individual"],
+        time_unit="hr",
+        unit="ng/ml",
+        sd="sd",
+        se="se",
+        n="n",
+        tissue="plasma",
+    )
+    assert back.ds["individual"].to_numpy().tolist() == ["a", "b"]
+    for name in ("value", "sd", "se", "n", "times"):
+        np.testing.assert_allclose(
+            back.ds[name].to_numpy(), batch.ds[name].to_numpy(), equal_nan=True
+        )
+
+
+def test_from_dataframe_names_the_sample_of_every_check() -> None:
+    def frame(**changes: Any) -> pd.DataFrame:
+        rows = pd.DataFrame(
+            {
+                "subject": ["a", "a", "b", "b"],
+                "time": [0.0, 1.0, 0.0, 1.0],
+                "value": [1.0, 2.0, 3.0, 4.0],
+                "dose": [100.0, 100.0, 50.0, 50.0],
+                "dose_time": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
+        for column, values in changes.items():
+            rows[column] = values
+        return rows
+
+    base: dict[str, Any] = {"sample": ["subject"], "time_unit": "hr", "unit": "mg/l"}
+    with pytest.raises(ValueError, match=r"sample b: 'time' contains duplicate"):
+        Timecourses.from_dataframe(frame(time=[0.0, 1.0, 2.0, 2.0]), **base)
+    with pytest.raises(ValueError, match=r"sample b: 'time' contains NaN"):
+        Timecourses.from_dataframe(frame(time=[0.0, 1.0, 0.0, np.nan]), **base)
+    with pytest.raises(ValueError, match=r"sample b: a timecourse needs at least 2"):
+        Timecourses.from_dataframe(frame().iloc[:3], **base)
+    doses: dict[str, Any] = {
+        **base,
+        "dose_amount": "dose",
+        "dose_unit": "mg",
+        "route": Route.ORAL,
+    }
+    with pytest.raises(ValueError, match=r"sample a: the dose must be constant"):
+        Timecourses.from_dataframe(frame(dose=[100.0, 200.0, 50.0, 50.0]), **doses)
+    with pytest.raises(ValueError, match=r"sample a: 'amounts' must be non-negative"):
+        Timecourses.from_dataframe(frame(dose=-1.0), **doses)
+    protocol: dict[str, Any] = {**doses, "dose_time": "dose_time"}
+    with pytest.raises(ValueError, match=r"sample b: the sample has no dose"):
+        Timecourses.from_dataframe(
+            frame(dose=[100.0, 100.0, np.nan, np.nan]), **protocol
+        )
+    with pytest.raises(
+        ValueError, match=r"sample a: the dose must be constant per dose"
+    ):
+        Timecourses.from_dataframe(frame(dose=[100.0, 200.0, 50.0, 50.0]), **protocol)
+
+
+def test_from_dataframe_of_an_empty_frame() -> None:
+    empty = pd.DataFrame({"subject": [], "time": [], "value": []})
+    with pytest.raises(ValueError, match="At least one timecourse"):
+        Timecourses.from_dataframe(
+            empty, sample=["subject"], time_unit="hr", unit="mg/l"
+        )

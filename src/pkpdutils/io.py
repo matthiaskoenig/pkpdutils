@@ -178,6 +178,62 @@ def _constant_per_subject(
     return grouped.first().reindex(labels).to_numpy()
 
 
+def _subject_codes(df: pd.DataFrame, column: str) -> tuple[np.ndarray, list[Any]]:
+    """Number the rows of a table by subject, in the order of their first appearance.
+
+    The positional counterpart of `_subjects`: the reader indexes its columns
+    as numpy arrays, so the rows of a subject are a group of positions rather
+    than an index of labels.
+
+    Args:
+        df: the table.
+        column: name of the subject column.
+
+    Returns:
+        The subject of every row as an index into the labels (`-1` for a row
+        without a subject) and the labels in the order of their first
+        appearance.
+    """
+    codes, uniques = pd.factorize(df[column], use_na_sentinel=True)
+    missing = int((codes < 0).sum())
+    if missing:
+        logger.warning("Dropped %d rows without a value in '%s'", missing, column)
+    return codes, list(uniques)
+
+
+def _grouped_rows(codes: np.ndarray, n_subjects: int) -> tuple[np.ndarray, np.ndarray]:
+    """The row positions of every subject, grouped and in the order of the table.
+
+    Args:
+        codes: the subject of every row, `-1` for a row without one.
+        n_subjects: number of subjects.
+
+    Returns:
+        The positions of the rows with a subject, ordered by subject and within
+        a subject by the table, and the number of rows per subject.
+    """
+    known = codes >= 0
+    positions = np.flatnonzero(known)
+    order = np.argsort(codes[positions], kind="stable")
+    counts = np.bincount(codes[positions], minlength=n_subjects)
+    return positions[order], counts
+
+
+def _split_by_subject(values: np.ndarray, counts: np.ndarray) -> list[np.ndarray]:
+    """Cut an array whose entries are grouped by subject into one array per subject.
+
+    Args:
+        values: the entries, ordered by subject.
+        counts: number of entries per subject.
+
+    Returns:
+        One array per subject, empty for a subject without entries.
+    """
+    if counts.size == 0:
+        return []
+    return np.split(values, np.cumsum(counts)[:-1])
+
+
 def _subjects(df: pd.DataFrame, column: str) -> dict[Any, pd.Index]:
     """Group the rows of a table by subject, in the order of their first appearance.
 
@@ -214,6 +270,46 @@ def _subject_arrays(
     return times[order], [
         column[rows].to_numpy(dtype=np.float64)[order] for column in columns
     ]
+
+
+def _constant_n(
+    values: np.ndarray,
+    *,
+    counts: np.ndarray,
+    labels: Sequence[Any],
+    column: str | None,
+) -> np.ndarray:
+    """The number of subjects of every group curve, one value per subject.
+
+    Args:
+        values: the column of the number of subjects, the rows grouped by
+            subject.
+        counts: number of rows per subject.
+
+    Keyword Args:
+        labels: the subjects, in the order of the batch.
+        column: name of the column, for the error message.
+
+    Returns:
+        The value of every subject, `NaN` for a subject without one.
+
+    Raises:
+        ValueError: if a subject carries more than one value, named with the
+            subject.
+    """
+    starts = np.cumsum(counts) - counts
+    known = ~np.isnan(values)
+    low = np.minimum.reduceat(np.where(known, values, np.inf), starts)
+    high = np.maximum.reduceat(np.where(known, values, -np.inf), starts)
+    varies = np.isfinite(low) & np.isfinite(high) & (low != high)
+    if varies.any():
+        i = int(np.argmax(varies))
+        rows = values[starts[i] : starts[i] + counts[i]]
+        found = pd.unique(rows[~np.isnan(rows)])
+        raise ValueError(
+            f"subject {labels[i]}: '{column}' is not constant, found {found}"
+        )
+    return np.where(np.isfinite(low), low, np.nan)
 
 
 def _dosing(label: Any, **fields: Any) -> Dosing:
@@ -346,52 +442,65 @@ def _build_batch(
     )
 
 
-def _dose_times(
-    time: float,
+def _expand_doses(
     *,
-    addl: float,
-    interval: float,
-    steady_state: bool,
+    time: np.ndarray,
+    addl: np.ndarray,
+    interval: np.ndarray,
+    steady_state: np.ndarray,
     ss_doses: int,
-    subject: Any,
-) -> list[float]:
-    """The times of a dose record, expanded by `ADDL` and `SS`.
+    subjects: Sequence[Any],
+    codes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The times of the dose records of a table, expanded by `ADDL` and `SS`.
 
     `ADDL` gives `addl` further doses at `time + k * interval`; a steady state
     record (`SS == 1`) stands for a dosing history, represented by `ss_doses`
     preceding doses at `time - k * interval` (Bauer 2019). Both need a positive
     interdose interval `II`: a record which asks for repeated doses without one
-    is an incomplete table, not a single dose, and raises.
+    is an incomplete table, not a single dose, and raises. The doses of one
+    record are therefore `time + k * interval` for `k` from `-ss_doses` (or 0)
+    to `addl`, which the whole table is expanded with in one `numpy.repeat`.
 
     Args:
-        time: time of the record.
-        addl: number of additional doses, `NaN` or 0 for none.
-        interval: interdose interval `II`, `NaN` or 0 for none.
+        time: time of every record.
+        addl: number of additional doses per record, `NaN` or 0 for none.
+        interval: interdose interval `II` per record, `NaN` or 0 for none.
         steady_state: whether the record is marked as a steady state dose.
         ss_doses: number of preceding doses a steady state record stands for.
-        subject: the subject of the record, for the error message.
+        subjects: the subjects, in the order of the batch, for the error message.
+        codes: the subject of every record, an index into `subjects`.
 
     Returns:
-        The dose times, ascending.
+        The dose times, ascending per record, and the number of doses every
+        record expands into.
 
     Raises:
-        ValueError: if the record has `ADDL > 0` or `SS == 1` without a
-            positive interdose interval.
+        ValueError: if a record has `ADDL > 0` or `SS == 1` without a positive
+            interdose interval; the first such record of the first such subject
+            is named.
     """
-    has_interval = np.isfinite(interval) and interval > 0
-    repeated = steady_state or (np.isfinite(addl) and addl > 0)
-    if repeated and not has_interval:
-        raise ValueError(
-            f"'ADDL'/'SS' need a positive 'II': subject '{subject}' has the "
-            f"dose record at time {time} with ADDL {addl}, SS "
-            f"{int(steady_state)} and II {interval}"
+    with np.errstate(invalid="ignore"):
+        has_interval = np.isfinite(interval) & (interval > 0)
+        additional = np.where(np.isfinite(addl) & (addl > 0), addl, 0.0).astype(
+            np.int64
         )
-    times = [time]
-    if steady_state:
-        times = [time - k * interval for k in range(ss_doses, 0, -1)] + times
-    if np.isfinite(addl) and addl > 0:
-        times = times + [time + k * interval for k in range(1, int(addl) + 1)]
-    return times
+    incomplete = (steady_state | (additional > 0)) & ~has_interval
+    if incomplete.any():
+        i = int(np.argmax(incomplete))
+        raise ValueError(
+            f"'ADDL'/'SS' need a positive 'II': subject '{subjects[codes[i]]}' has "
+            f"the dose record at time {float(time[i])} with ADDL {float(addl[i])}, "
+            f"SS {int(steady_state[i])} and II {float(interval[i])}"
+        )
+    first = np.where(steady_state, -ss_doses, 0)
+    counts = additional - first + 1
+    total = int(counts.sum())
+    # `k` runs from `first` to `additional` within every record
+    within = np.arange(total) - np.repeat(np.cumsum(counts) - counts, counts)
+    k = within + np.repeat(first, counts)
+    step = np.where(has_interval, interval, 0.0)
+    return np.repeat(time, counts) + k * np.repeat(step, counts), counts
 
 
 def read_events(
@@ -596,59 +705,78 @@ def read_events(
             "'ss_doses' doses) are read"
         )
 
-    subjects = _subjects(df, c_id)
-    labels = list(subjects)
-    spread = [_numeric(df, c_sd), _numeric(df, c_se)]
-    n_values = _numeric(df, c_n)
-    steady_state_marker = False
-    sample_times: list[np.ndarray] = []
-    sample_values: list[np.ndarray] = []
-    sample_sd: list[np.ndarray] = []
-    sample_se: list[np.ndarray] = []
-    sample_n: list[float] = []
-    protocols: list[Dosing | None] = []
-    for label, rows in subjects.items():
-        dose_rows = [i for i in rows if bool(is_dose[i])]
-        dose_times: list[float] = []
-        dose_amounts: list[float] = []
-        dose_durations: list[float] = []
-        for i in dose_rows:
-            steady_state = bool(ss_values[i] == 1)
-            steady_state_marker |= steady_state
-            expanded = _dose_times(
-                float(times[i]),
-                addl=float(addl_values[i]),
-                interval=float(ii_values[i]),
-                steady_state=steady_state,
-                ss_doses=ss_doses,
-                subject=label,
-            )
-            dose_times.extend(expanded)
-            dose_amounts.extend([float(amounts[i])] * len(expanded))
-            dose_durations.extend([float(durations[i])] * len(expanded))
-        dosing = None
-        if dose_times:
-            dosing = _dosing(
-                label,
-                amounts=np.array(dose_amounts),
-                times=np.array(dose_times),
-                durations=np.array(dose_durations),
-                unit=dose_unit,
-                route=route,
-            )
-        protocols.append(dosing)
-        observation_rows = pd.Index([i for i in rows if bool(is_observation[i])])
-        observed, columns = _subject_arrays(observation_rows, times, [values, *spread])
-        sample_times.append(observed)
-        sample_values.append(columns[0])
-        sample_sd.append(columns[1])
-        sample_se.append(columns[2])
-        subject_n = n_values[rows].dropna().unique()
-        if subject_n.size > 1:
-            raise ValueError(
-                f"subject {label}: '{c_n}' is not constant, found {subject_n}"
-            )
-        sample_n.append(float(subject_n[0]) if subject_n.size else np.nan)
+    codes, labels = _subject_codes(df, c_id)
+    rows_by_subject, rows_per_subject = _grouped_rows(codes, len(labels))
+
+    # the doses: every dose record of the table is expanded at once, the rows
+    # grouped by subject and in the order of the table within a subject
+    dose_rows = rows_by_subject[is_dose.to_numpy(dtype=bool)[rows_by_subject]]
+    dose_of_row = codes[dose_rows]
+    dose_time = times.to_numpy()[dose_rows]
+    steady = ss_values.to_numpy()[dose_rows] == 1.0
+    steady_state_marker = bool(steady.any())
+    expanded_times, expanded_counts = _expand_doses(
+        time=dose_time,
+        addl=addl_values.to_numpy()[dose_rows],
+        interval=ii_values.to_numpy()[dose_rows],
+        steady_state=steady,
+        ss_doses=ss_doses,
+        subjects=labels,
+        codes=dose_of_row,
+    )
+    expanded_amounts = np.repeat(amounts.to_numpy()[dose_rows], expanded_counts)
+    expanded_durations = np.repeat(durations.to_numpy()[dose_rows], expanded_counts)
+    doses_per_subject = np.bincount(
+        np.repeat(dose_of_row, expanded_counts), minlength=len(labels)
+    )
+    protocols: list[Dosing | None] = [
+        None
+        if count == 0
+        else _dosing(
+            label,
+            amounts=subject_amounts,
+            times=subject_times,
+            durations=subject_durations,
+            unit=dose_unit,
+            route=route,
+        )
+        for label, count, subject_amounts, subject_times, subject_durations in zip(
+            labels,
+            doses_per_subject,
+            _split_by_subject(expanded_amounts, doses_per_subject),
+            _split_by_subject(expanded_times, doses_per_subject),
+            _split_by_subject(expanded_durations, doses_per_subject),
+            strict=True,
+        )
+    ]
+
+    # the observations: sorted by time within every subject, which the stable
+    # sort by time followed by the stable sort by subject leaves in the order
+    # of the table for equal times
+    observation_rows = rows_by_subject[
+        is_observation.to_numpy(dtype=bool)[rows_by_subject]
+    ]
+    observed_times = times.to_numpy()[observation_rows]
+    by_time = np.argsort(observed_times, kind="stable")
+    observation_rows = observation_rows[
+        by_time[np.argsort(codes[observation_rows][by_time], kind="stable")]
+    ]
+    observed = np.bincount(codes[observation_rows], minlength=len(labels))
+    sample_times = _split_by_subject(times.to_numpy()[observation_rows], observed)
+    sample_values = _split_by_subject(values.to_numpy()[observation_rows], observed)
+    sample_sd = _split_by_subject(
+        _numeric(df, c_sd).to_numpy()[observation_rows], observed
+    )
+    sample_se = _split_by_subject(
+        _numeric(df, c_se).to_numpy()[observation_rows], observed
+    )
+
+    sample_n = _constant_n(
+        _numeric(df, c_n).to_numpy()[rows_by_subject],
+        counts=rows_per_subject,
+        labels=labels,
+        column=c_n,
+    )
 
     known = {
         column
@@ -701,7 +829,7 @@ def read_events(
                 )
             coordinates[column] = constant
 
-    subject_counts = np.array(sample_n) if c_n is not None else None
+    subject_counts = sample_n if c_n is not None else None
     if subject_counts is not None and not np.isfinite(subject_counts).all():
         logger.warning(
             "'%s' is missing for some subjects, the batch carries no 'n'", c_n
