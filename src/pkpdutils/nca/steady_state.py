@@ -43,12 +43,18 @@ def compute_steady_state(
 ) -> dict[str, np.ndarray]:
     """Single dose and steady state parameters of every row over the dosing interval.
 
+    The dose arrays are one dose per row, the reference dose of the interval:
+    `pkpdutils.nca.nca.reference_dose` picks the last dose of the protocol of
+    every row of the batch before the chunk reaches this function.
+
     Args:
         t: times `(N, n)`
         c: values `(N, n)`
-        dose_amount: dose per row, `None` without doses
-        dose_time: dose time per row, `None` for the time of `options.regimen.dose`
-        dose_duration: infusion duration per row
+        dose_amount: amount of the reference dose per row `(N,)`, `None`
+            without doses
+        dose_time: time of the reference dose per row `(N,)`, `None` for the
+            time of `options.regimen.dose`
+        dose_duration: infusion duration of the reference dose per row `(N,)`
         route: route of the batch
         options: the options; `options.regimen` must be set
 

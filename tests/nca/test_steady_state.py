@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pytest
 
-from pkpdutils import Dose, DosingRegimen, Route, Timecourse, Timecourses
+from pkpdutils import Dose, Dosing, DosingRegimen, Route, Timecourse, Timecourses
 from pkpdutils.nca import AUCMethod, NCAOptions, nca, nca_single
 from pkpdutils.nca.steady_state import accumulation_ratio, superposition
 
@@ -222,3 +222,43 @@ def test_superposition_needs_n_doses_and_terminal_phase() -> None:
     )
     with pytest.raises(ValueError, match="lambda_z"):
         superposition(rising, DosingRegimen(dose=DOSE, interval=TAU, n_doses=3))
+
+
+def test_protocol_analysis_uses_the_last_dose_at_steady_state() -> None:
+    # two doses, the last one at t = 2: the steady state parameters belong to
+    # the interval of the last dose, while the single dose analysis is relative
+    # to the first dose of the protocol
+    dose_time = 2.0
+    dose = DOSE.model_copy(update={"time": dose_time})
+    t_rel = np.array([-dose_time, 0.5, 1, 2, 4, 6, 8, 10, 12])
+    c = AMPLITUDE * np.exp(-K * np.abs(t_rel))
+    c[0] = AMPLITUDE * np.exp(-K * (TAU - dose_time))
+    protocol = Dosing(
+        amounts=[100, 100],
+        times=[dose_time - TAU, dose_time],
+        unit="mg",
+        route=Route.IV_BOLUS,
+    )
+
+    def curve(dosing: Dosing) -> Timecourse:
+        return Timecourse(
+            time=t_rel + dose_time,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dosing=dosing,
+            substance="x",
+        )
+
+    options = NCAOptions(
+        regimen=DosingRegimen(dose=dose, interval=TAU), auc_method=AUCMethod.LOG
+    )
+    q = nca_single(curve(protocol), options).to_quantities()
+    expected = nca_single(curve(Dosing.single(dose)), options).to_quantities()
+    for name in ("auc_tau", "ctrough", "cmin_ss", "cmax_ss", "cavg", "cl_ss"):
+        assert q[name].magnitude == pytest.approx(expected[name].magnitude, rel=1e-9)
+    # without a regimen the times are relative to the first dose of the protocol
+    plain = nca_single(
+        curve(protocol), NCAOptions(auc_method=AUCMethod.LOG)
+    ).to_quantities()
+    assert plain["tmax"].magnitude == pytest.approx(0.5 + dose_time - (dose_time - TAU))

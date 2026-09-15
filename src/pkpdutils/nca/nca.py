@@ -403,38 +403,102 @@ def compute_parameters(
     return out
 
 
+def reference_dose(
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    dose_duration: np.ndarray | None,
+    *,
+    last: bool,
+) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    """Pick one dose per row from the `(N, n_dose)` dose arrays of a batch.
+
+    A row carries the dosing protocol of its sample, the doses at the front and
+    the remaining columns `NaN` (`pkpdutils.timecourse.Timecourses`). The core
+    of the analysis works with one reference dose per row: the first dose of
+    the protocol for the single dose analysis and the last dose for the steady
+    state analysis. A 1-D array is taken as one dose per row already.
+
+    Args:
+        dose_amount: the amounts `(N, n_dose)`, `None` without doses
+        dose_time: the times `(N, n_dose)`, `None` without doses
+        dose_duration: the infusion durations `(N, n_dose)`, `None` for none
+
+    Keyword Args:
+        last: whether to pick the last dose of every protocol instead of the
+            first
+
+    Returns:
+        The amount, the time and the duration of the reference dose, each
+        `(N,)` (`NaN` for a row without a dose) or `None` where the input is
+        `None`.
+    """
+    arrays = [
+        None if a is None else np.asarray(a, dtype=np.float64)
+        for a in (dose_amount, dose_time, dose_duration)
+    ]
+    shaped = [None if a is None else a.reshape(a.shape[0], -1) for a in arrays]
+    if all(a is None for a in shaped):
+        return None, None, None
+    valid: np.ndarray | None = None
+    for a in shaped[:2]:
+        if a is not None:
+            finite = np.isfinite(a)
+            valid = finite if valid is None else (valid & finite)
+    assert valid is not None
+    counts = valid.sum(axis=1)
+    index = np.maximum(counts - 1, 0) if last else np.zeros_like(counts)
+    picked = [
+        None
+        if a is None
+        else np.where(
+            counts > 0, np.take_along_axis(a, index[:, None], axis=1)[:, 0], np.nan
+        )
+        for a in shaped
+    ]
+    return picked[0], picked[1], picked[2]
+
+
 def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
     """Worker entry: the parameters of a chunk of rows.
 
-    The steady state analysis runs through the same entry, so a batch with a
-    `regimen` is chunked and parallelized like a single dose batch.
+    The chunk carries the dose arrays of the batch, `(N, n_dose)`; the core
+    gets the reference dose of every row (`reference_dose`): the first dose of
+    the protocol for the single dose analysis, the last dose for the steady
+    state analysis. The steady state analysis runs through the same entry, so
+    a batch with a `regimen` is chunked and parallelized like a single dose
+    batch.
 
     Args:
-        args: the arguments of `compute_parameters` as a tuple.
+        args: the arguments of `compute_parameters` as a tuple, with the dose
+            arrays over the dose dimension.
 
     Returns:
         The parameters of the rows of the chunk.
     """
     t, c, dose_amount, dose_time, dose_duration, route, options = args
-    if options.regimen is not None:
+    steady_state = options.regimen is not None
+    amount, time, duration = reference_dose(
+        dose_amount, dose_time, dose_duration, last=steady_state
+    )
+    if steady_state:
         # the steady state analysis imports this module, so the import is local
         from pkpdutils.nca.steady_state import compute_steady_state
 
         return compute_steady_state(
             t,
             c,
-            dose_amount=dose_amount,
-            dose_time=dose_time,
-            dose_duration=dose_duration,
+            dose_amount=amount,
+            dose_time=time,
+            dose_duration=duration,
             route=route,
             options=options,
         )
     return compute_parameters(
         t,
         c,
-        dose_amount=dose_amount,
-        dose_time=dose_time,
-        dose_duration=dose_duration,
+        dose_amount=amount,
+        dose_time=time,
+        dose_duration=duration,
         route=route,
         options=options,
     )
@@ -456,12 +520,16 @@ def run_rows(
     bounds the memory of the vectorized core; with `options.n_workers > 1` the
     chunks are mapped in order over a `ProcessPoolExecutor`.
 
+    The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
+    padded with `NaN`; `_compute_chunk` reduces them to the reference dose of
+    the row (`reference_dose`). A 1-D array `(N,)` is one dose per row.
+
     Args:
         t: times `(N, n)`
         c: values `(N, n)`
-        dose_amount: dose per row, `None` without doses
-        dose_time: dose time per row, `None` for 0
-        dose_duration: infusion duration per row, `None` for none
+        dose_amount: dose amounts per row `(N, n_dose)`, `None` without doses
+        dose_time: dose times per row `(N, n_dose)`, `None` for 0
+        dose_duration: infusion durations per row `(N, n_dose)`, `None` for none
         route: route of the batch
         options: the options
 
@@ -525,16 +593,22 @@ def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResul
     t = timecourses.times.reshape(n_rows, timecourses.n_time)
     c = timecourses.values.reshape(n_rows, timecourses.n_time)
 
+    n_dose = timecourses.n_dose
+
     def flat(a: np.ndarray | None) -> np.ndarray | None:
-        """Flatten an optional per sample array to `(n_rows,)`.
+        """Flatten an optional dose array to `(n_rows, n_dose)`.
 
         Args:
-            a: the array, or `None`.
+            a: the array of shape `(*sample_shape, n_dose)`, or `None`.
 
         Returns:
             The flattened array, or `None`.
         """
-        return None if a is None else np.asarray(a, dtype=np.float64).reshape(n_rows)
+        return (
+            None
+            if a is None
+            else np.asarray(a, dtype=np.float64).reshape(n_rows, n_dose)
+        )
 
     dose_amount = flat(timecourses.dose_amount)
     dose_time = flat(timecourses.dose_time)
@@ -646,7 +720,7 @@ def partial_auc(
     t_end: float,
     options: NCAOptions | None = None,
 ) -> xr.DataArray:
-    """Area under the curve of every sample between two times relative to the dose.
+    """Area under the curve of every sample between two times relative to the first dose.
 
     The values at the bounds are interpolated with the trapezoid rule of
     `options.auc_method` (`pkpdutils.nca.auc.interpolate_at`) and the area is
@@ -657,7 +731,8 @@ def partial_auc(
 
     Args:
         timecourses: the batch
-        t_start: start of the interval, in the time unit of the batch, relative to the dose
+        t_start: start of the interval, in the time unit of the batch, relative
+            to the first dose of the protocol
         t_end: end of the interval, greater than `t_start`
         options: the options, defaults for `None`
 
@@ -677,13 +752,10 @@ def partial_auc(
     n_rows = timecourses.n_samples
     t = timecourses.times.reshape(n_rows, timecourses.n_time)
     c = timecourses.values.reshape(n_rows, timecourses.n_time)
-    if timecourses.dose_time is not None:
-        t = (
-            t
-            - np.asarray(timecourses.dose_time, dtype=np.float64).reshape(n_rows)[
-                :, None
-            ]
-        )
+    first_dose_time = timecourses.first_dose_time
+    if first_dose_time is not None:
+        # the area is relative to the first dose of the protocol
+        t = t - np.asarray(first_dose_time, dtype=np.float64).reshape(n_rows)[:, None]
     tp, cp, n_valid = pack_valid(t, c)
     start = np.full(n_rows, float(t_start))
     end = np.full(n_rows, float(t_end))

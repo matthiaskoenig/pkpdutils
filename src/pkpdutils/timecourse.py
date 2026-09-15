@@ -852,6 +852,11 @@ TIME_DIM = "time"
 #: name of the per sample time variable of a `Timecourses` dataset with ragged grids
 TIMES_VAR = "times"
 
+#: name of the dose dimension of the dose variables of a `Timecourses` dataset;
+#: not `"dose"`, which stays free as a sample dimension (a dose group of a dose
+#: proportionality study, the dose axis of a simulation scan)
+DOSE_DIM = "dose_index"
+
 
 def _dose_of_group(
     g: pd.DataFrame,
@@ -859,8 +864,13 @@ def _dose_of_group(
     dose_unit: str | None,
     dose_time: str | None,
     route: Route | None,
-) -> Dose | None:
-    """The dose of the rows of one sample of a long data frame.
+) -> Dosing | None:
+    """The dosing protocol of the rows of one sample of a long data frame.
+
+    Without a `dose_time` column the sample carries one dose at time 0 and the
+    amount must be constant over its rows. With a `dose_time` column every
+    distinct `(dose_time, dose_amount)` pair of the sample is one dose of the
+    protocol; rows whose dose columns are `NaN` are observations only.
 
     Args:
         g: the rows of one sample.
@@ -870,28 +880,193 @@ def _dose_of_group(
         route: route of the doses, required with `dose_amount`.
 
     Returns:
-        The dose, or `None` when `dose_amount` is `None`.
+        The protocol, or `None` when `dose_amount` is `None`.
 
     Raises:
-        ValueError: if `dose_unit` or `route` is missing, or the dose (or its
-            time) is not constant per sample.
+        ValueError: if `dose_unit` or `route` is missing, if the dose is not
+            constant per sample (without `dose_time`), or if a dose time
+            carries several amounts.
     """
     if dose_amount is None:
         return None
     if dose_unit is None or route is None:
         raise ValueError("'dose_unit' and 'route' are required with 'dose_amount'")
-    amounts = g[dose_amount].dropna().unique()
-    if amounts.size != 1:
-        raise ValueError(f"The dose must be constant per sample, found {amounts}")
-    time = 0.0
-    if dose_time is not None:
-        times = g[dose_time].dropna().unique()
-        if times.size != 1:
+    if dose_time is None:
+        amounts = g[dose_amount].dropna().unique()
+        if amounts.size != 1:
+            raise ValueError(f"The dose must be constant per sample, found {amounts}")
+        return Dosing(
+            amounts=[float(amounts[0])], times=[0.0], unit=dose_unit, route=route
+        )
+    pairs = (
+        g[[dose_time, dose_amount]]
+        .dropna()
+        .drop_duplicates()
+        .sort_values([dose_time, dose_amount])
+    )
+    if pairs.empty:
+        raise ValueError(f"The sample has no dose in '{dose_amount}'")
+    times = pairs[dose_time].to_numpy(dtype=np.float64)
+    if np.unique(times).size != times.size:
+        raise ValueError(
+            f"The dose must be constant per dose time, found "
+            f"{pairs[dose_amount].to_numpy()} at {times}"
+        )
+    return Dosing(
+        amounts=pairs[dose_amount].to_numpy(dtype=np.float64),
+        times=times,
+        unit=dose_unit,
+        route=route,
+    )
+
+
+def _pad_protocols(
+    protocols: Sequence[Dosing | None], n_dose: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Stack dosing protocols into `(len(protocols), n_dose)` arrays padded with `NaN`.
+
+    Args:
+        protocols: one protocol per sample, `None` for a sample without doses.
+        n_dose: number of columns, at least the longest protocol.
+
+    Returns:
+        The amounts, the times and the durations; the doses of a sample are at
+        the front of its row, the remaining columns are `NaN`.
+    """
+    amounts = np.full((len(protocols), n_dose), np.nan)
+    times = np.full((len(protocols), n_dose), np.nan)
+    durations = np.full((len(protocols), n_dose), np.nan)
+    for i, protocol in enumerate(protocols):
+        if protocol is None:
+            continue
+        k = protocol.n_doses
+        amounts[i, :k] = protocol.amounts
+        times[i, :k] = protocol.times
+        if protocol.durations is not None:
+            durations[i, :k] = protocol.durations
+    return amounts, times, durations
+
+
+def _batch_dose_arrays(
+    dose: "Dose | Dosing | Mapping[str, Any]",
+    *,
+    route: Route | None,
+    sample_shape: tuple[int, ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str, Route]:
+    """The `(*sample_shape, n_dose)` dose arrays of a batch, its dose unit and its route.
+
+    A `Dose` or a `Dosing` gives the same protocol to every sample. A mapping
+    carries the arrays: `amount` (and `time`, `duration`) either of shape
+    `sample_shape`, one dose per sample, or of shape `(*sample_shape, n_dose)`,
+    one protocol per sample padded with `NaN`.
+
+    Args:
+        dose: the dose, the protocol or the mapping.
+        route: route of the doses; required for a mapping, checked against the
+            route of a `Dose` or `Dosing`.
+        sample_shape: shape of the sample dimensions of the batch.
+
+    Returns:
+        The amounts, the times, the durations, the dose unit and the route.
+
+    Raises:
+        ValueError: if `route` is missing or contradicts the route of the
+            protocol, if the dose times are missing for a mapping of
+            protocols, or if the shapes do not fit `sample_shape`.
+    """
+    if isinstance(dose, Dose):
+        dose = Dosing.single(dose)
+    if isinstance(dose, Dosing):
+        if route is not None and route is not dose.route:
             raise ValueError(
-                f"The dose time must be constant per sample, found {times}"
+                f"'route' is '{route.value}' but the dose is given '{dose.route.value}'"
             )
-        time = float(times[0])
-    return Dose(amount=float(amounts[0]), unit=dose_unit, route=route, time=time)
+        shape = (*sample_shape, dose.n_doses)
+        durations = (
+            np.full(dose.n_doses, np.nan) if dose.durations is None else dose.durations
+        )
+        return (
+            np.broadcast_to(dose.amounts, shape).copy(),
+            np.broadcast_to(dose.times, shape).copy(),
+            np.broadcast_to(durations, shape).copy(),
+            dose.unit,
+            dose.route,
+        )
+
+    if route is None:
+        raise ValueError("'route' is required when 'dose' is given as arrays")
+    dose_unit = str(dose["unit"])
+    check_dose_unit(dose_unit)
+    amount = np.asarray(dose["amount"], dtype=np.float64)
+    per_sample = amount.shape == sample_shape
+    if not per_sample and (
+        amount.ndim != len(sample_shape) + 1 or amount.shape[:-1] != sample_shape
+    ):
+        # a scalar or anything else broadcastable: one dose per sample
+        amount = np.broadcast_to(amount, sample_shape).copy()
+        per_sample = True
+    if per_sample:
+        shape = (*sample_shape, 1)
+        time = np.asarray(dose.get("time", 0.0), dtype=np.float64)
+        duration = np.asarray(dose.get("duration", np.nan), dtype=np.float64)
+        return (
+            amount.reshape(shape),
+            np.broadcast_to(time, sample_shape).copy().reshape(shape),
+            np.broadcast_to(duration, sample_shape).copy().reshape(shape),
+            dose_unit,
+            route,
+        )
+
+    shape = amount.shape
+    if dose.get("time") is None:
+        raise ValueError(
+            "'time' is required when 'amount' carries the dose dimension "
+            f"(shape {shape} for the sample shape {sample_shape})"
+        )
+    time = np.broadcast_to(np.asarray(dose["time"], dtype=np.float64), shape).copy()
+    duration = np.broadcast_to(
+        np.asarray(dose.get("duration", np.nan), dtype=np.float64), shape
+    ).copy()
+    return amount, time, duration, dose_unit, route
+
+
+def _dose_variables(
+    amounts: np.ndarray,
+    times: np.ndarray,
+    durations: np.ndarray,
+    *,
+    dims: tuple[str, ...],
+    dose_unit: str,
+    time_unit: str,
+) -> dict[str, tuple[tuple[str, ...], np.ndarray, dict[str, str]]]:
+    """The three dose variables of a `Timecourses` dataset over `(*dims, DOSE_DIM)`.
+
+    Args:
+        amounts: the dose amounts of shape `(*sample_shape, n_dose)`.
+        times: the dose times with the shape of `amounts`.
+        durations: the infusion durations with the shape of `amounts`.
+        dims: names of the sample dimensions.
+        dose_unit: unit of the amounts.
+        time_unit: unit of the times and the durations.
+
+    Returns:
+        `dose_amount`, `dose_time` and `dose_duration` as xarray tuples.
+
+    Raises:
+        ValueError: if a sample dimension is named like the dose dimension.
+    """
+    if DOSE_DIM in dims:
+        raise ValueError(
+            f"A sample dimension must not be named '{DOSE_DIM}' in a batch with "
+            f"doses: '{DOSE_DIM}' is the dimension of the doses of "
+            "'dose_amount', 'dose_time' and 'dose_duration'"
+        )
+    all_dims = (*dims, DOSE_DIM)
+    return {
+        "dose_amount": (all_dims, amounts, {"units": dose_unit}),
+        "dose_time": (all_dims, times, {"units": time_unit}),
+        "dose_duration": (all_dims, durations, {"units": time_unit}),
+    }
 
 
 class Timecourses:
@@ -904,8 +1079,12 @@ class Timecourses:
     - `value` over `(*sample_dims, time)`, the values; `NaN` marks missing points,
     - `sd`, `se` over the same dimensions and `n` over the sample dimensions,
       for group data (optional),
-    - `dose_amount`, `dose_time`, `dose_duration` over the sample dimensions
-      (optional; `dose_duration` is `NaN` without infusion),
+    - `dose_amount`, `dose_time`, `dose_duration` over the sample dimensions and
+      the dose dimension `dose_index` (optional; `dose_duration` is `NaN`
+      without infusion). Every sample carries its dosing protocol in its row,
+      the doses at the front and the remaining columns `NaN`, so that samples
+      with different numbers of doses share one layout; a single dose batch has
+      one column,
     - the coordinate `time` with the shared sampling grid, or, when the samples
       have different sampling times, the variable `times` over
       `(*sample_dims, time)` padded with `NaN` and an integer coordinate `time`.
@@ -923,15 +1102,16 @@ class Timecourses:
     Several sample dimensions span their cartesian product, which can have
     combinations without data (no curve was measured for them). Such a sample
     is all `NaN`; iteration and `sel`/`isel` return a `Timecourse` with `NaN`
-    values and `dose=None` for it.
+    values and `dosing=None` for it.
     """
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a dataset, see the class documentation for its layout.
 
         Every variable with the `time` dimension (`value`, `sd`, `se`, `times`)
-        is transposed to `(*sample_dims, time)`, so that the arrays and the data
-        frame of the batch are built from one layout.
+        is transposed to `(*sample_dims, time)` and every dose variable to
+        `(*sample_dims, dose_index)`, so that the arrays and the data frame of
+        the batch are built from one layout.
 
         Raises:
             ValueError: if the dataset does not have the layout.
@@ -946,8 +1126,15 @@ class Timecourses:
                 f"'{TIMES_VAR}' needs the dimensions {layout} of 'value', "
                 f"not {tuple(str(d) for d in ds[TIMES_VAR].dims)}"
             )
+        if "dose_amount" in ds and DOSE_DIM in layout:
+            raise ValueError(
+                f"A sample dimension must not be named '{DOSE_DIM}' in a batch "
+                f"with doses: '{DOSE_DIM}' is the dimension of the doses of "
+                "'dose_amount', 'dose_time' and 'dose_duration'"
+            )
+        expected = layout if DOSE_DIM in layout else (*layout, DOSE_DIM)
         if any(
-            tuple(ds[name].dims) != tuple(d for d in layout if d in ds[name].dims)
+            tuple(ds[name].dims) != tuple(d for d in expected if d in ds[name].dims)
             for name in ds.data_vars
         ):
             ds = ds.transpose(*layout, ...)
@@ -1028,7 +1215,7 @@ class Timecourses:
         return self.ds["value"].transpose(*self.sample_dims, TIME_DIM).to_numpy()
 
     def _optional(self, name: str) -> np.ndarray | None:
-        """Return a variable as an array transposed to `(*sample_dims[, time])`, or `None` if absent.
+        """Return a variable as an array transposed to `(*sample_dims[, time | dose])`, or `None` if absent.
 
         Args:
             name: name of the data variable.
@@ -1039,9 +1226,11 @@ class Timecourses:
         if name not in self.ds:
             return None
         da = self.ds[name]
-        if TIME_DIM in da.dims:
-            return da.transpose(*self.sample_dims, TIME_DIM).to_numpy()
-        return da.transpose(*self.sample_dims).to_numpy()
+        sample_dims = self.sample_dims
+        extra = [
+            d for d in (TIME_DIM, DOSE_DIM) if d in da.dims and d not in sample_dims
+        ]
+        return da.transpose(*sample_dims, *extra).to_numpy()
 
     @property
     def sd(self) -> np.ndarray | None:
@@ -1060,17 +1249,17 @@ class Timecourses:
 
     @property
     def dose_amount(self) -> np.ndarray | None:
-        """Dose amounts per sample, `None` without doses."""
+        """Dose amounts of shape `(*sample_shape, n_dose)`, `None` without doses."""
         return self._optional("dose_amount")
 
     @property
     def dose_time(self) -> np.ndarray | None:
-        """Dose times per sample, `None` without doses."""
+        """Dose times of shape `(*sample_shape, n_dose)`, `None` without doses."""
         return self._optional("dose_time")
 
     @property
     def dose_duration(self) -> np.ndarray | None:
-        """Infusion durations per sample (`NaN` without infusion), `None` without doses."""
+        """Infusion durations of shape `(*sample_shape, n_dose)` (`NaN` without infusion), `None` without doses."""
         return self._optional("dose_duration")
 
     @property
@@ -1079,6 +1268,68 @@ class Timecourses:
         if not self.has_dose:
             return None
         return str(self.ds["dose_amount"].attrs["units"])
+
+    @property
+    def n_dose(self) -> int:
+        """Size of the dose dimension, the longest protocol of the batch; 0 without doses."""
+        return int(self.ds.sizes[DOSE_DIM]) if self.has_dose else 0
+
+    def _dose_mask(self) -> np.ndarray | None:
+        """The `(*sample_shape, n_dose)` mask of the doses which are not padding.
+
+        Returns:
+            The mask, or `None` without doses.
+        """
+        amounts = self.dose_amount
+        times = self.dose_time
+        if amounts is None or times is None:
+            return None
+        return np.isfinite(amounts) & np.isfinite(times)
+
+    @property
+    def n_doses(self) -> np.ndarray | None:
+        """Number of doses per sample of shape `sample_shape`, `None` without doses."""
+        mask = self._dose_mask()
+        return None if mask is None else mask.sum(axis=-1)
+
+    def _dose_entry(self, name: str, *, last: bool) -> np.ndarray | None:
+        """The first or the last dose of every sample of a dose variable.
+
+        Args:
+            name: name of the dose variable.
+            last: whether to take the last dose instead of the first.
+
+        Returns:
+            The array of shape `sample_shape` (`NaN` for a sample without a
+            dose), or `None` without doses.
+        """
+        array = self._optional(name)
+        counts = self.n_doses
+        if array is None or counts is None:
+            return None
+        index = np.maximum(counts - 1, 0) if last else np.zeros_like(counts)
+        picked = np.take_along_axis(array, index[..., None], axis=-1)[..., 0]
+        return np.where(counts > 0, picked, np.nan)
+
+    @property
+    def first_dose_amount(self) -> np.ndarray | None:
+        """Amount of the first dose per sample, `None` without doses."""
+        return self._dose_entry("dose_amount", last=False)
+
+    @property
+    def last_dose_amount(self) -> np.ndarray | None:
+        """Amount of the last dose per sample, `None` without doses."""
+        return self._dose_entry("dose_amount", last=True)
+
+    @property
+    def first_dose_time(self) -> np.ndarray | None:
+        """Time of the first dose per sample, `None` without doses."""
+        return self._dose_entry("dose_time", last=False)
+
+    @property
+    def last_dose_time(self) -> np.ndarray | None:
+        """Time of the last dose per sample, `None` without doses."""
+        return self._dose_entry("dose_time", last=True)
 
     # --- construction -------------------------------------------------------
 
@@ -1095,7 +1346,7 @@ class Timecourses:
         sd: Any | None = None,
         se: Any | None = None,
         n: Any | None = None,
-        dose: Dose | Mapping[str, Any] | None = None,
+        dose: Dose | Dosing | Mapping[str, Any] | None = None,
         route: Route | None = None,
         substance: str = "substance",
     ) -> "Timecourses":
@@ -1112,9 +1363,12 @@ class Timecourses:
             sd: standard deviations with the shape of `values`
             se: standard errors with the shape of `values`
             n: number of subjects, one number or an array of shape `sample_shape`
-            dose: one `Dose` for all samples, or a mapping with `amount`
-                (array of shape `sample_shape`), `unit`, and optionally `time`
-                and `duration` arrays; the route is then given by `route`
+            dose: one `Dose` or one `Dosing` protocol for all samples, or a
+                mapping with `amount`, `unit` and optionally `time` and
+                `duration`; the arrays of the mapping have the shape
+                `sample_shape` (one dose per sample) or
+                `(*sample_shape, n_dose)` (one protocol per sample, padded with
+                `NaN`, `time` required); the route is then given by `route`
             route: route of the doses when `dose` is a mapping
             substance: name of the substance or effect
 
@@ -1122,7 +1376,9 @@ class Timecourses:
             The batch.
 
         Raises:
-            ValueError: if the shapes do not fit.
+            ValueError: if the shapes do not fit, if `route` is missing for a
+                mapping or contradicts the route of a `Dose` or `Dosing`, or if
+                a sample dimension is named `dose_index`.
         """
         values_arr = np.asarray(values, dtype=np.float64)
         dims = tuple(dims)
@@ -1185,34 +1441,22 @@ class Timecourses:
             "time_unit": time_unit,
             "unit": unit,
         }
-        if isinstance(dose, Dose):
-            attrs["route"] = dose.route.value
-            amount = np.full(sample_shape, dose.amount)
-            dose_time = np.full(sample_shape, dose.time)
-            duration = np.full(
-                sample_shape, np.nan if dose.duration is None else dose.duration
+        if dose is not None:
+            amounts, dose_times, durations, dose_unit, dose_route = _batch_dose_arrays(
+                dose, route=route, sample_shape=sample_shape
             )
-            data_vars["dose_amount"] = (dims, amount, {"units": dose.unit})
-            data_vars["dose_time"] = (dims, dose_time, {"units": time_unit})
-            data_vars["dose_duration"] = (dims, duration, {"units": time_unit})
-        elif dose is not None:
-            if route is None:
-                raise ValueError("'route' is required when 'dose' is given as arrays")
-            dose_unit = str(dose["unit"])
-            check_dose_unit(dose_unit)
-            attrs["route"] = route.value
-            amount = np.broadcast_to(
-                np.asarray(dose["amount"], dtype=np.float64), sample_shape
-            ).copy()
-            dose_time = np.broadcast_to(
-                np.asarray(dose.get("time", 0.0), dtype=np.float64), sample_shape
-            ).copy()
-            duration = np.broadcast_to(
-                np.asarray(dose.get("duration", np.nan), dtype=np.float64), sample_shape
-            ).copy()
-            data_vars["dose_amount"] = (dims, amount, {"units": dose_unit})
-            data_vars["dose_time"] = (dims, dose_time, {"units": time_unit})
-            data_vars["dose_duration"] = (dims, duration, {"units": time_unit})
+            attrs["route"] = dose_route.value
+            data_vars.update(
+                _dose_variables(
+                    amounts,
+                    dose_times,
+                    durations,
+                    dims=dims,
+                    dose_unit=dose_unit,
+                    time_unit=time_unit,
+                )
+            )
+            coordinates[DOSE_DIM] = (DOSE_DIM, np.arange(amounts.shape[-1]))
 
         ds = xr.Dataset(data_vars=data_vars, coords=coordinates, attrs=attrs)
         return cls(ds)
@@ -1231,8 +1475,9 @@ class Timecourses:
         `time` coordinate, otherwise the times are stored per sample and shorter
         curves are padded with `NaN`.
 
-        Either all or no curves carry a dose, and all doses need the same route
-        and unit; curves with different routes go into separate batches. A batch
+        Either all or no curves carry a dosing protocol, and all protocols need
+        the same route and unit; curves with different routes go into separate
+        batches. The protocols are padded to the longest one. A batch
         keeps one `n` per sample: an `n` which varies over the time points of a
         curve is reduced to its maximum and logs a warning. `sd`, `se` and `n`
         are kept only when every curve carries them; a field which some curves
@@ -1340,20 +1585,20 @@ class Timecourses:
                 maxima.append(maximum)
             n = np.array(maxima)
 
-        doses = [tc.dose for tc in timecourses]
+        protocols = [tc.dosing for tc in timecourses]
         without_dose = [
-            label for label, d in zip(labels, doses, strict=True) if d is None
+            label for label, d in zip(labels, protocols, strict=True) if d is None
         ]
-        if without_dose and len(without_dose) != len(doses):
+        if without_dose and len(without_dose) != len(protocols):
             raise ValueError(
                 "Either all or no timecourses need a dose, there is no dose for "
                 f"{[str(label) for label in without_dose]}"
             )
         dose: Mapping[str, Any] | None = None
         route: Route | None = None
-        if all(d is not None for d in doses):
-            routes = {d.route for d in doses if d is not None}
-            units = {d.unit for d in doses if d is not None}
+        if all(d is not None for d in protocols):
+            routes = {d.route for d in protocols if d is not None}
+            units = {d.unit for d in protocols if d is not None}
             if len(routes) != 1:
                 raise ValueError(
                     "A batch has one route, found "
@@ -1363,17 +1608,13 @@ class Timecourses:
             if len(units) != 1:
                 raise ValueError(f"All doses need the same unit, found {sorted(units)}")
             route = routes.pop()
+            n_dose = max(d.n_doses for d in protocols if d is not None)
+            amounts, dose_times, durations = _pad_protocols(protocols, n_dose)
             dose = {
-                "amount": np.array([d.amount for d in doses if d is not None]),
+                "amount": amounts,
                 "unit": units.pop(),
-                "time": np.array([d.time for d in doses if d is not None]),
-                "duration": np.array(
-                    [
-                        np.nan if d.duration is None else d.duration
-                        for d in doses
-                        if d is not None
-                    ]
-                ),
+                "time": dose_times,
+                "duration": durations,
             }
 
         return cls.from_arrays(
@@ -1429,9 +1670,13 @@ class Timecourses:
             sd: name of the standard deviation column
             se: name of the standard error column
             n: name of the column with the number of subjects (constant per sample)
-            dose_amount: name of the dose column (constant per sample)
+            dose_amount: name of the dose column (constant per sample without
+                `dose_time`, one value per dose time with it)
             dose_unit: unit of the doses, required with `dose_amount`
-            dose_time: name of the dose time column, 0 by default
+            dose_time: name of the dose time column, 0 by default; every
+                distinct `(dose_time, dose_amount)` pair of a sample is one
+                dose of its protocol, rows with `NaN` dose columns are
+                observations only
             route: route of the doses, required with `dose_amount`
             substance: name of the substance or effect
 
@@ -1444,6 +1689,12 @@ class Timecourses:
         sample = list(sample)
         if not sample:
             raise ValueError("'sample' needs at least one column")
+        if dose_amount is not None and DOSE_DIM in sample:
+            raise ValueError(
+                f"A sample column must not be named '{DOSE_DIM}' in a batch "
+                f"with doses: '{DOSE_DIM}' is the dimension of the doses of "
+                "'dose_amount', 'dose_time' and 'dose_duration'"
+            )
         # a single column groups by the column itself (scalar keys, no
         # deprecation warning); several columns need the list form (tuple keys)
         groups = df.groupby(
@@ -1463,7 +1714,7 @@ class Timecourses:
                 n=n,
                 substance=substance,
                 label=str(key),
-                dose=_dose_of_group(g, dose_amount, dose_unit, dose_time, route),
+                dosing=_dose_of_group(g, dose_amount, dose_unit, dose_time, route),
             )
             for key, g in groups
         ]
@@ -1489,7 +1740,7 @@ class Timecourses:
             ds[name].attrs.update(flat.ds[name].attrs)
         if TIME_DIM in ds.coords:
             ds[TIME_DIM].attrs.update(flat.ds[TIME_DIM].attrs)
-        return cls(ds.transpose(*sample, TIME_DIM))
+        return cls(ds.transpose(*sample, TIME_DIM, ...))
 
     @classmethod
     def from_dataset(
@@ -1501,7 +1752,8 @@ class Timecourses:
         time_unit: str,
         time_dim: str = "_time",
         time: str | None = None,
-        dose: Dose | None = None,
+        dose: Dose | Dosing | Mapping[str, Any] | None = None,
+        route: Route | None = None,
         substance: str | None = None,
     ) -> "Timecourses":
         """Create a batch from a dataset of a simulation, e.g. a parameter scan.
@@ -1515,7 +1767,9 @@ class Timecourses:
             time_dim: name of the time dimension
             time: name of the variable with the time values, the coordinate of
                 `time_dim` by default
-            dose: one dose for all samples
+            dose: the doses, as in `from_arrays`: one `Dose` or one `Dosing`
+                protocol for all samples, or a mapping of arrays
+            route: route of the doses when `dose` is a mapping
             substance: name of the substance, `value` by default
 
         Returns:
@@ -1546,6 +1800,7 @@ class Timecourses:
             dims=sample_dims,
             coords=coords,
             dose=dose,
+            route=route,
             substance=value if substance is None else substance,
         )
 
@@ -1555,7 +1810,7 @@ class Timecourses:
         xres: Any,
         selection: str,
         *,
-        dose: Dose | None = None,
+        dose: Dose | Dosing | None = None,
         substance: str | None = None,
     ) -> "Timecourses":
         """Create a batch from the result of an sbmlsim simulation.
@@ -1567,7 +1822,7 @@ class Timecourses:
         Args:
             xres: the `sbmlsim.result.XResult`
             selection: the variable of the result, e.g. `"[Cve_mid]"`
-            dose: one dose for all samples
+            dose: one dose or one dosing protocol for all samples
             substance: name of the substance, `selection` by default
 
         Returns:
@@ -1618,22 +1873,67 @@ class Timecourses:
                 data[name] = sample[name].to_numpy()[mask]
         if "n" in sample:
             data["n"] = float(sample["n"].to_numpy())
-        if self.has_dose:
-            amount = float(sample["dose_amount"].to_numpy())
-            if not np.isnan(amount):
-                # a NaN amount marks a sample combination which is not in the
-                # batch (its values are NaN as well), it has no dose
-                duration = float(sample["dose_duration"].to_numpy())
-                route = self.route
-                assert route is not None
-                data["dose"] = Dose(
-                    amount=amount,
-                    unit=self.dose_unit or "mg",
-                    route=route,
-                    time=float(sample["dose_time"].to_numpy()),
-                    duration=None if np.isnan(duration) else duration,
-                )
+        dosing = self._dosing_of_sample(sample)
+        if dosing is not None:
+            data["dosing"] = dosing
         return Timecourse(**data)
+
+    def _dosing_of_sample(self, sample: xr.Dataset) -> Dosing | None:
+        """Rebuild the dosing protocol of a dataset indexed down to a single sample.
+
+        The doses of a sample are the finite entries of its dose row; a row of
+        `NaN` marks a sample combination which is not in the batch (its values
+        are `NaN` as well), it has no protocol.
+
+        Args:
+            sample: the dataset indexed down to a single sample.
+
+        Returns:
+            The protocol, or `None` without doses.
+        """
+        if not self.has_dose:
+            return None
+        amounts = np.atleast_1d(
+            np.asarray(sample["dose_amount"].to_numpy(), dtype=np.float64)
+        )
+        times = np.atleast_1d(
+            np.asarray(sample["dose_time"].to_numpy(), dtype=np.float64)
+        )
+        durations = np.atleast_1d(
+            np.asarray(sample["dose_duration"].to_numpy(), dtype=np.float64)
+        )
+        mask = np.isfinite(amounts) & np.isfinite(times)
+        if not mask.any():
+            return None
+        route = self.route
+        assert route is not None
+        return Dosing(
+            amounts=amounts[mask],
+            times=times[mask],
+            durations=durations[mask],
+            unit=self.dose_unit or "mg",
+            route=route,
+        )
+
+    def dosing_of(self, **indexers: Any) -> Dosing | None:
+        """The dosing protocol of one sample, selected by coordinate label.
+
+        Args:
+            **indexers: one label per sample dimension, as for `sel`.
+
+        Returns:
+            The protocol, `None` without doses or for a sample combination
+            which is not in the batch.
+
+        Raises:
+            ValueError: without a label for every sample dimension.
+        """
+        missing = set(self.sample_dims) - set(indexers)
+        if missing:
+            raise ValueError(
+                f"dosing_of needs a label for every sample dimension, missing {sorted(missing)}"
+            )
+        return self._dosing_of_sample(self.ds.sel(indexers))
 
     def isel(self, **indexers: int) -> Timecourse:
         """One timecourse by integer position on every sample dimension."""
@@ -1672,10 +1972,22 @@ class Timecourses:
             )
 
     def to_dataframe(self) -> pd.DataFrame:
-        """The batch as a long data frame: the sample coordinates, `time`, `value` and the optional columns."""
+        """The batch as a long data frame: the sample coordinates, `time`, `value` and the optional columns.
+
+        One row per sample and time point. The dose variables are not part of
+        the frame: they live over the dose dimension, not over the time
+        dimension, and there is no one dose per row; `to_events` writes the
+        dosing protocol as its own rows.
+
+        Returns:
+            The long data frame.
+        """
         names = ["value", *[v for v in ("sd", "se", "n") if v in self.ds]]
         dim_order = [*self.sample_dims, TIME_DIM]
-        df = self.ds[names].to_dataframe(dim_order=dim_order).reset_index()
+        sub = self.ds[names]
+        if DOSE_DIM in sub.dims and DOSE_DIM not in self.sample_dims:
+            sub = sub.drop_dims(DOSE_DIM)
+        df = sub.to_dataframe(dim_order=dim_order).reset_index()
         if TIMES_VAR in self.ds:
             # the rows are in C order of `dim_order`, as are the padded times
             df[TIME_DIM] = self.times.ravel()

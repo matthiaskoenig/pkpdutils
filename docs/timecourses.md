@@ -21,11 +21,11 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 | `value` | `(*sample, time)` | the values, `NaN` for missing points |
 | `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
 | `n` | `(*sample)` | number of subjects of group data (optional), one number per sample; an `n` which varies over the time points of a curve is reduced to its maximum with a warning |
-| `dose_amount`, `dose_time`, `dose_duration` | `(*sample)` | the doses (optional), `dose_duration` is `NaN` without infusion |
+| `dose_amount`, `dose_time`, `dose_duration` | `(*sample, dose_index)` | the dosing protocol of every sample (optional), the doses at the front of the row and the remaining columns `NaN`; `dose_duration` is `NaN` without infusion |
 | `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
 | `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
 
-Every variable carries `attrs["units"]`; the dataset carries `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when doses are present. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results. Several sample dimensions span their cartesian product: a combination without data is a sample of `NaN` values, which iteration and `sel`/`isel` return as a `Timecourse` with `NaN` values and without a dose.
+Every variable carries `attrs["units"]`; the dataset carries `substance`, `time_unit` and `unit` in its `attrs`, and `route` only when doses are present. Any further metadata (sex, body weight, study) is a coordinate on a sample dimension and travels with the results. Several sample dimensions span their cartesian product: a combination without data is a sample of `NaN` values, which iteration and `sel`/`isel` return as a `Timecourse` with `NaN` values and without a dose. The dose dimension is called `dose_index` so that `dose` stays free as a sample dimension (the dose groups of a dose proportionality study, the dose axis of a simulation scan); a single dose batch has one dose column, and `n_doses`, `first_dose_amount`, `last_dose_time` and `dosing_of` read the protocol of a sample back.
 
 ## API
 
