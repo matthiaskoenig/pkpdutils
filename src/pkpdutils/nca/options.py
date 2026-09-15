@@ -210,9 +210,9 @@ class NCAOptions(BaseModel):
         n_workers: workers of the analysis. `None` is automatic: the calling
             thread up to `pkpdutils.parallel.NCA_WORKER_THRESHOLD` rows and
             one worker per usable core, at most 8, above it; `1` is always
-            serial and `n > 1` uses that many workers. The
-            core is vectorized numpy and releases the GIL, so its workers are
-            threads of the calling process (`pkpdutils.parallel`) and no
+            serial and `n > 1` uses that many workers. The core is vectorized
+            numpy and releases the GIL, so its workers are threads of the
+            calling process (`pkpdutils.parallel`) and no
             `if __name__ == "__main__":` guard is needed; the fit
             (`FitOptions.n_workers`) uses processes and does need one
         chunk_rows: most rows of a chunk of the vectorized core, which bounds

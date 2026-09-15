@@ -919,10 +919,9 @@ def fit_rows(
     that dies takes the pool with it (`BrokenProcessPool`): the pool is then
     evicted and the batch is fitted once more in a fresh one, with a warning.
     A pooled call must run under an `if __name__ == "__main__":` guard, since
-    python's
-    `spawn` and `forkserver` process start methods (the default on macOS and
-    Windows, and on Linux from python 3.14) re-import the module without
-    re-running it.
+    python's `spawn` and `forkserver` process start methods (the default on
+    macOS and Windows, and on Linux from python 3.14) re-import the module
+    without re-running it.
 
     Args:
         model: the model

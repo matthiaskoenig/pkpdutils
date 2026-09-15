@@ -734,10 +734,11 @@ def run_rows(
     `options.n_workers` decides how many workers run them
     (`pkpdutils.parallel.resolve_workers`): `None` is automatic and stays in
     the calling thread below `pkpdutils.parallel.NCA_WORKER_THRESHOLD` rows,
-    `1` is serial and any other number is taken as given. The chunks of a parallel run are mapped in order over
-    the shared thread pool (`pkpdutils.parallel.executor`), since the core is
-    vectorized numpy and releases the GIL for most of its time: the chunks are
-    neither pickled nor copied and the pool starts in half a millisecond. The
+    `1` is serial and any other number is taken as given. The chunks of a
+    parallel run are mapped in order over the shared thread pool
+    (`pkpdutils.parallel.executor`), since the core is vectorized numpy and
+    releases the GIL for most of its time: the chunks are neither pickled nor
+    copied and the pool starts in half a millisecond. The
     temporaries of the core then live for as many chunks as run at once, so a
     run holds up to `min(n_workers, len(chunks)) * options.chunk_rows` rows of
     them instead of `chunk_rows`.
