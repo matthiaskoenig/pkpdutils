@@ -1,5 +1,12 @@
 """Statistics on parameters: samples, tests, ratios, bioequivalence, drug-drug interactions and meta-analysis."""
 
+from pkpdutils.stats.bioequivalence import (
+    BEParameter,
+    BEResult,
+    Design,
+    bioequivalence,
+    tost,
+)
 from pkpdutils.stats.ddi import (
     DDIKind,
     DDIResult,
@@ -23,10 +30,13 @@ from pkpdutils.stats.tests import (
 __all__ = [
     "AdjustMethod",
     "Alternative",
+    "BEParameter",
+    "BEResult",
     "DDIKind",
     "DDIResult",
     "DDIStrength",
     "DDIThresholds",
+    "Design",
     "ParameterSample",
     "RatioResult",
     "Scale",
@@ -34,10 +44,12 @@ __all__ = [
     "Summary",
     "TestMethod",
     "TestResult",
+    "bioequivalence",
     "compare",
     "ddi_classification",
     "multiple_comparison",
     "ratio",
     "substrate_sensitivity",
     "summarize",
+    "tost",
 ]
