@@ -150,7 +150,7 @@ def compute_steady_state(
         if options.tau is not None
         else _interval_length(times, counts)
     )
-    intervals = compute_intervals(
+    intervals, extrapolated = compute_intervals(
         t,
         c,
         dose_amount=amounts,
@@ -213,12 +213,18 @@ def compute_steady_state(
         out["eavg"] = last_interval("interval_eavg")
         out["time_above_tau"] = last_interval("interval_time_above")
         out["accumulation_ratio_obs"] = accumulation_obs
-    out["n_doses"] = counts.astype(np.float64)
+    # a batch without a protocol carries no dose: the interval of `tau` only
+    out["n_doses"] = (
+        np.zeros(n_rows) if dose_time is None else counts.astype(np.float64)
+    )
     out["tau"] = np.where(has_interval, tau, np.nan)
 
     with np.errstate(invalid="ignore"):
         incomplete = has_interval & np.isfinite(tau) & ~np.isfinite(area)
     flags = flags | np.where(incomplete, int(NCAFlag.INCOMPLETE_INTERVAL), 0).astype(
+        flags.dtype
+    )
+    flags = flags | np.where(extrapolated, int(NCAFlag.EXTRAPOLATED_TROUGH), 0).astype(
         flags.dtype
     )
     if options.intervals:
@@ -267,6 +273,10 @@ def superposition(
     which holds for linear kinetics (Gabrielsson & Weiner 2016, ch. 2.8). The
     curve is interpolated on the union of the shifted time grids and continued
     beyond its last observed point with its terminal phase.
+
+    The reference amount is the dose of the single dose curve; a curve whose
+    dose amount is 0 carries no scale, so every dose of the protocol then
+    contributes the curve unscaled.
 
     Args:
         timecourse: the single dose curve (its dose is the reference amount)

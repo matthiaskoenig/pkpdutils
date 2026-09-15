@@ -83,12 +83,19 @@ class NCAResult(ParameterResult):
         number of the interval.
 
         Returns:
-            One row per sample and interval with the sample coordinates,
-            `interval` and every `interval_*` variable; an empty frame for a
-            single dose result.
+            One row per sample and interval with the sample coordinates (the
+            dimension coordinates and the coordinates along them, such as the
+            weight of a subject), `interval` and every `interval_*` variable;
+            an empty frame for a single dose result.
         """
         names = self._interval_variables
         if not self.has_intervals:
             return pd.DataFrame()
         df = self.ds[names].to_dataframe().reset_index()
-        return df[[*self.sample_dims, INTERVAL_DIM, *names]]
+        leading = [*self.sample_dims, INTERVAL_DIM]
+        # the non-dimension coordinates along the sample dimensions travel with
+        # the samples, as they do in the result itself
+        coordinates = [
+            column for column in df.columns if column not in (*leading, *names)
+        ]
+        return df[[*leading, *coordinates, *names]]

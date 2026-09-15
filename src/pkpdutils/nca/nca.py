@@ -559,7 +559,8 @@ def run_rows(
         options: the options
 
     Returns:
-        One `(N,)` array per parameter and `flags`.
+        One `(N,)` array per parameter and `flags`, and one `(N, K)` array per
+        per-interval parameter of a multiple dose batch (`K` dosing intervals).
     """
     n_rows = t.shape[0]
     # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
@@ -693,8 +694,12 @@ def _to_result(
 ) -> NCAResult:
     """Build the result dataset over the sample dimensions of the batch.
 
+    A parameter is one `(N,)` array over the sample dimensions; a per-interval
+    parameter is one `(N, K)` array and gets the extra dimension `interval`.
+
     Args:
-        values: one `(N,)` array per parameter
+        values: one `(N,)` array per parameter, one `(N, K)` array per
+            per-interval parameter
         timecourses: the analysed batch
         shape: the sample shape the arrays are reshaped to
 

@@ -30,15 +30,25 @@ more than an interpolation:
 - after an intravenous bolus the concentration jumps at the dose. An interval
   which starts before the first sample of the curve therefore gets the
   log-linearly back-extrapolated `C0` of its first two samples, the estimate
-  `compute_parameters` uses for the single dose areas, and an interval whose
-  end carries the next bolus ends *before* that dose: a sample recorded at the
-  end which lies above the preceding sample is a post-dose sample of the next
-  dose and belongs to the next interval, so the trough of this one is
-  extrapolated log-linearly from its own last segment. A sample at the end
-  which continues the decline is the observed trough and is used as it is.
-- an interval whose end is not covered by the data at all is incomplete: its
-  parameters are `NaN` and only the number of samples inside it is reported
-  (`pkpdutils.nca.options.NCAFlag.INCOMPLETE_INTERVAL` for the last interval).
+  `compute_parameters` uses for the single dose areas.
+- an interval whose end carries the next bolus ends *before* that dose, so a
+  sample recorded exactly at its end may be a post-dose sample of the next
+  dose. It is taken as such only when it lies above the last sample inside the
+  interval, which no decline can do; the trough is then the log-linear
+  regression of the last (up to three) positive samples inside the interval
+  evaluated at the end of the interval, and the row carries
+  `pkpdutils.nca.options.NCAFlag.EXTRAPOLATED_TROUGH`. Every other sample at
+  the end, and every interpolated end value, is the observed trough and is
+  used as it is; the substitution never applies to another route, since only a
+  bolus makes the concentration jump.
+- an interval whose end is not covered by the data, or which holds no sample at
+  all, is incomplete: its parameters are `NaN` and only the number of samples
+  is reported (`pkpdutils.nca.options.NCAFlag.INCOMPLETE_INTERVAL` for the last
+  interval).
+
+`interval_n_points` counts the samples the interval uses; a sample at a
+boundary is used by both neighbouring intervals, so the counts of the
+intervals of a curve do not partition its samples.
 """
 
 import numpy as np
@@ -144,28 +154,6 @@ def _take(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
     return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
 
 
-def _use_log(
-    c1: np.ndarray, c2: np.ndarray, method: AUCMethod
-) -> np.ndarray | np.bool_:
-    """Whether a segment is treated logarithmically by a trapezoid rule.
-
-    Args:
-        c1: value at the start of the segment `(N,)`
-        c2: value at the end of the segment `(N,)`
-        method: the trapezoid rule
-
-    Returns:
-        A boolean array `(N,)`.
-    """
-    with np.errstate(invalid="ignore"):
-        positive = (c1 > 0) & (c2 > 0) & (c1 != c2)
-        if method is AUCMethod.LINEAR:
-            return np.zeros_like(positive)
-        if method is AUCMethod.LINEAR_LOG:
-            return positive & (c2 < c1)
-        return positive
-
-
 def _back_extrapolate(
     tp: np.ndarray,
     cp: np.ndarray,
@@ -214,43 +202,56 @@ def _back_extrapolate(
     return np.where(usable, back, first_value)
 
 
-def _extrapolate_end(
-    t_prev: np.ndarray,
-    c_prev: np.ndarray,
-    t_last: np.ndarray,
-    c_last: np.ndarray,
-    t_end: np.ndarray,
-    options: NCAOptions,
-) -> np.ndarray:
-    """Value at the end of an interval extrapolated from its last segment.
+#: samples of the log-linear regression of an extrapolated trough
+TROUGH_POINTS = 3
 
-    The segment `(t_prev, c_prev)` to `(t_last, c_last)` is continued to
-    `t_end`, logarithmically when the trapezoid rule treats it
-    logarithmically (exact for a mono-exponential decline) and linearly
-    otherwise.
+
+def _extrapolate_end(
+    tp: np.ndarray,
+    cp: np.ndarray,
+    inside: np.ndarray,
+    t_end: np.ndarray,
+    *,
+    max_points: int = TROUGH_POINTS,
+) -> np.ndarray:
+    r"""Value at the end of an interval from the log-linear regression of its last samples.
+
+    The least squares line through $(t_i, \ln C_i)$ of the last `max_points`
+    positive samples of the interval is evaluated at `t_end`, the estimate of a
+    trough which was not observed (Gabrielsson & Weiner 2016, ch. 2.8). The
+    regression is exact for a mono-exponential decline and damps the noise of a
+    single sample, which a two point extrapolation would carry over in full.
 
     Args:
-        t_prev: time of the second to last sample of the interval `(N,)`
-        c_prev: value of the second to last sample `(N,)`
-        t_last: time of the last sample of the interval `(N,)`
-        c_last: value of the last sample `(N,)`
+        tp: packed times `(N, n)`
+        cp: packed values `(N, n)`
+        inside: mask of the samples of the interval `(N, n)`
         t_end: end of the interval `(N,)`
-        options: the options, `auc_method` and `kind` are used
+
+    Keyword Args:
+        max_points: number of samples of the regression at most
 
     Returns:
-        The extrapolated value `(N,)`, `NaN` where the segment is missing.
+        The extrapolated value `(N,)`, `NaN` for a row with fewer than two
+        positive samples in the interval.
     """
+    with np.errstate(invalid="ignore"):
+        positive = inside & (cp > 0)
+    # the last `max_points` positive samples of every row
+    counts = positive.sum(axis=1)
+    from_end = counts[:, None] - np.cumsum(positive, axis=1)
+    selected = positive & (from_end < max_points)
+    n = selected.sum(axis=1).astype(np.float64)
+    t = np.where(selected, tp, 0.0)
+    y = np.where(selected, np.log(np.where(selected, cp, 1.0)), 0.0)
+    sx, sy = t.sum(axis=1), y.sum(axis=1)
+    sxx, sxy = (t * t).sum(axis=1), (t * y).sum(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        frac = (t_end - t_last) / (t_last - t_prev)
-        linear = c_last + frac * (c_last - c_prev)
-        logarithmic = np.exp(np.log(c_last) + frac * (np.log(c_last) - np.log(c_prev)))
-        value = np.where(
-            _use_log(c_prev, c_last, options.auc_method), logarithmic, linear
-        )
-        value = np.where(t_last > t_prev, value, np.nan)
-        if options.kind is Kind.CONCENTRATION:
-            value = np.maximum(value, 0.0)
-    return value
+        denominator = n * sxx - sx * sx
+        slope = (n * sxy - sx * sy) / denominator
+        intercept = (sy - slope * sx) / n
+        value = np.exp(intercept + slope * t_end)
+    return np.where((n >= 2) & (denominator > 0), value, np.nan)
 
 
 def _interval_column(
@@ -263,7 +264,7 @@ def _interval_column(
     ends_at_dose: np.ndarray,
     route: Route | None,
     options: NCAOptions,
-) -> dict[str, np.ndarray]:
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Parameters of one dosing interval of every row.
 
     Args:
@@ -281,22 +282,28 @@ def _interval_column(
         options: the options
 
     Returns:
-        One `(N,)` array per interval variable, without the prefixed shared
-        variables `interval_start`, `interval_end` and `interval_dose`.
+        One `(N,)` array per interval variable, without the shared variables
+        `interval_start`, `interval_end` and `interval_dose`, and the mask of
+        the rows whose trough was extrapolated (`NCAFlag.EXTRAPOLATED_TROUGH`).
     """
     n_rows, n = tp.shape
     nan = np.full(n_rows, np.nan)
     valid = np.arange(n)[None, :] < n_valid[:, None]
+    tolerance = 1e-9 * np.maximum(1.0, np.abs(t_end))
     with np.errstate(invalid="ignore"):
         inside = valid & (tp >= t_start[:, None]) & (tp < t_end[:, None])
-        at_end = valid & (tp == t_end[:, None])
+        at_end = valid & (np.abs(tp - t_end[:, None]) <= tolerance[:, None])
         before = (tp < t_start[:, None]) & valid
     n_inside = inside.sum(axis=1)
     # the samples of the interval are a block of the packed row
     first = np.clip(before.sum(axis=1), 0, n - 1)
     last_idx = np.clip(first + n_inside - 1, 0, n - 1)
-    prev_idx = np.clip(last_idx - 1, 0, n - 1)
     c_last_inside = np.where(n_inside >= 1, _take(cp, last_idx), np.nan)
+    has_sample_at_end = at_end.any(axis=1)
+    with np.errstate(invalid="ignore"):
+        c_sample_at_end = np.where(
+            has_sample_at_end, np.where(at_end, cp, -np.inf).max(axis=1), np.nan
+        )
 
     # the value at the start: interpolated, or back-extrapolated for an
     # intravenous bolus whose interval starts before the first sample
@@ -308,22 +315,23 @@ def _interval_column(
             c_start,
         )
 
-    # the value at the end: the observed or interpolated value, unless the
-    # concentration jumps up at the next bolus, where the sample belongs to the
-    # next interval and the trough is extrapolated from the last segment
+    # the value at the end: the observed or interpolated value, unless a sample
+    # recorded at the next bolus lies above the last sample of the interval and
+    # is therefore a post-dose sample of the next dose; the trough is then the
+    # log-linear regression of the last samples of the interval
     c_end = interpolate_at(tp, cp, n_valid, t_end, options.auc_method)
     with np.errstate(invalid="ignore"):
-        jumped = (route is Route.IV_BOLUS) & ends_at_dose & (c_end > c_last_inside)
-    if np.any(jumped):
-        extrapolated = _extrapolate_end(
-            _take(tp, prev_idx),
-            _take(cp, prev_idx),
-            _take(tp, last_idx),
-            c_last_inside,
-            t_end,
-            options,
+        post_dose = (
+            (route is Route.IV_BOLUS)
+            & ends_at_dose
+            & has_sample_at_end
+            & (c_sample_at_end > c_last_inside)
         )
-        c_end = np.where(jumped, np.where(n_inside >= 2, extrapolated, np.nan), c_end)
+    extrapolated = np.zeros(n_rows, dtype=bool)
+    if np.any(post_dose):
+        trough = _extrapolate_end(tp, cp, inside, t_end)
+        c_end = np.where(post_dose, trough, c_end)
+        extrapolated = post_dose & np.isfinite(trough)
 
     # the interval as its own curve: the samples inside plus both bounds
     tq, cq, nq = pack_valid(np.where(inside, tp, np.nan), np.where(inside, cp, np.nan))
@@ -334,7 +342,10 @@ def _interval_column(
         tq, cq, nq, np.where(np.isfinite(c_end), t_end, np.nan), c_end
     )
     exists = np.isfinite(t_start) & np.isfinite(t_end)
-    complete = exists & np.isfinite(c_end) & (nq >= 2)
+    # an interval without an observation of its own is not analysed: a sample at
+    # its end belongs to the next interval, except in the last interval
+    covering = n_inside + np.where(has_sample_at_end & ~ends_at_dose, 1, 0)
+    complete = exists & np.isfinite(c_end) & (nq >= 2) & (covering >= 1)
     in_row = np.arange(tq.shape[1])[None, :] < nq[:, None]
     with np.errstate(invalid="ignore"):
         imax = np.where(in_row, cq, -np.inf).argmax(axis=1)
@@ -346,10 +357,11 @@ def _interval_column(
     )
     area, _ = auc_aumc(tq, cq, nq, method)
     area = np.where(complete, area, nan)
-    # a sample at the end of the interval is used unless it was a post-dose
-    # sample of the next dose
+    # the samples the interval uses: those inside plus the one at its end,
+    # unless that one was a post-dose sample of the next dose. A sample at a
+    # boundary is used by both neighbouring intervals
     n_points = np.where(
-        exists, n_inside + np.where(at_end.any(axis=1) & ~jumped, 1, 0), nan
+        exists, n_inside + np.where(has_sample_at_end & ~post_dose, 1, 0), nan
     ).astype(np.float64)
     with np.errstate(divide="ignore", invalid="ignore"):
         average = area / (t_end - t_start)
@@ -379,7 +391,7 @@ def _interval_column(
                 if options.effect_threshold is not None
                 else nan.copy()
             )
-    return out
+    return out, extrapolated
 
 
 def compute_intervals(
@@ -391,7 +403,7 @@ def compute_intervals(
     tau: np.ndarray,
     route: Route | None,
     options: NCAOptions,
-) -> dict[str, np.ndarray]:
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Parameters of every dosing interval of every row of a batch.
 
     Interval `k` of a row runs from the dose time `t_k` to the next dose time
@@ -413,7 +425,9 @@ def compute_intervals(
         options: the options
 
     Returns:
-        One `(N, K)` array per interval variable (`interval_variables`).
+        One `(N, K)` array per interval variable (`interval_variables`) and the
+        mask `(N,)` of the rows in which the trough of at least one interval
+        was extrapolated (`NCAFlag.EXTRAPOLATED_TROUGH`).
     """
     t = np.asarray(t, dtype=np.float64)
     c = np.asarray(c, dtype=np.float64)
@@ -439,8 +453,9 @@ def compute_intervals(
     out["interval_end"] = ends
     if amounts is not None:
         out["interval_dose"] = np.where(usable, amounts, np.nan)
+    extrapolated = np.zeros(n_rows, dtype=bool)
     for k in range(n_dose):
-        column = _interval_column(
+        column, extrapolated_column = _interval_column(
             tp,
             cp,
             n_valid,
@@ -452,4 +467,5 @@ def compute_intervals(
         )
         for name, values in column.items():
             out[name][:, k] = values
-    return out
+        extrapolated |= extrapolated_column
+    return out, extrapolated

@@ -106,6 +106,86 @@ def test_steady_state_is_the_last_interval_and_point_parameters_follow_the_last_
         rel=1e-2,
     )
     assert "INCOMPLETE_INTERVAL" not in result.flags()
+    # the samples at the dose times are post-dose values of a bolus, so the
+    # troughs of the intervals are extrapolated
+    assert NCAFlag.EXTRAPOLATED_TROUGH.name in result.flags()
+
+
+def test_bolus_trough_is_regressed_only_when_the_sample_is_post_dose() -> None:
+    # the sample at 11.5 is 2 % low: the regression over the last three samples
+    # of the interval damps the noise to 0.98 ** (4/3) = 0.9734 of the true
+    # trough, where a two point extrapolation would carry 0.98 ** 2 = 0.9604
+    noisy = multiple_dose_curve(TIMES)
+    noisy[np.isclose(TIMES, 11.5)] *= 0.98
+    tc = Timecourse(
+        time=TIMES, value=noisy, time_unit="hr", unit="mg/l", dosing=PROTOCOL
+    )
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    trough = float(result["interval_ctrough"].to_numpy()[0])
+    expected = C0 * np.exp(-K * TAU)
+    assert trough == pytest.approx(expected * 0.98 ** (4 / 3), rel=1e-6)
+    assert trough == pytest.approx(expected, rel=3e-2)
+    assert abs(trough - expected) < abs(expected * 0.98**2 - expected)
+    assert NCAFlag.EXTRAPOLATED_TROUGH.name in result.flags()
+
+
+def test_an_observed_bolus_trough_at_the_dose_time_is_used_as_it_is() -> None:
+    # the sample at every dose time is the pre-dose value, the trough of the
+    # interval which ends there: it is not a post-dose sample and is used
+    pre_dose = multiple_dose_curve(TIMES)
+    for k in range(1, N_DOSES):
+        pre_dose[np.isclose(TIMES, k * TAU)] -= C0
+    tc = Timecourse(
+        time=TIMES, value=pre_dose, time_unit="hr", unit="mg/l", dosing=PROTOCOL
+    )
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    observed = pre_dose[np.isclose(TIMES, TAU)][0]
+    assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(observed)
+    assert NCAFlag.EXTRAPOLATED_TROUGH.name not in result.flags()
+
+
+def test_an_oral_curve_never_extrapolates_the_trough() -> None:
+    t = np.arange(0, 36.5, 0.5)
+    c = np.zeros_like(t)
+    for k in range(3):
+        shifted = t - k * 12.0
+        c += np.where(
+            shifted > 0, 10 * (np.exp(-0.2 * shifted) - np.exp(-shifted)), 0.0
+        )
+    tc = Timecourse(
+        time=t,
+        value=c,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing.regimen(
+            Dose(amount=100, unit="mg", route=Route.ORAL), interval=12, n_doses=3
+        ),
+    )
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    assert NCAFlag.EXTRAPOLATED_TROUGH.name not in result.flags()
+    assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(
+        c[np.isclose(t, 12.0)][0]
+    )
+
+
+def test_an_interval_without_a_sample_of_its_own_is_not_analysed() -> None:
+    protocol = Dosing(
+        amounts=np.array([100.0, 100.0, 100.0]),
+        times=np.array([1.0, 2.0, 12.0]),
+        unit="mg",
+        route=Route.IV_BOLUS,
+    )
+    tc = Timecourse(
+        time=np.array([0.0, 6.0, 12.0, 18.0]),
+        value=np.array([0.0, 5.0, 3.0, 1.0]),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    result = nca_single(tc)
+    assert np.isnan(result["interval_auc"].to_numpy()[0])
+    assert np.isnan(result["interval_cmax"].to_numpy()[0])
+    assert result["interval_n_points"].to_numpy()[0] == 0
 
 
 def test_single_dose_analysis_is_unchanged() -> None:

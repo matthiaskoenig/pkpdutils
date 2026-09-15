@@ -117,6 +117,9 @@ class NCAFlag(IntFlag):
     #: the last dosing interval is not covered by the data; its parameters and
     #: the steady state parameters are NaN
     INCOMPLETE_INTERVAL = 256
+    #: the trough of at least one dosing interval of a bolus was extrapolated
+    #: because the sample at the dose time carries the post-dose value
+    EXTRAPOLATED_TROUGH = 512
 
 
 def decode_flags(value: int) -> list[str]:
