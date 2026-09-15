@@ -1941,6 +1941,26 @@ class Timecourses:
         """Number of timecourses."""
         return self.n_samples
 
+    def __eq__(self, other: object) -> bool:
+        """Compare two batches by their datasets, `NaN` equals `NaN`.
+
+        `xarray.Dataset.identical` compares the variables, the coordinates and
+        their values, the names and every `attrs` of the dataset and of its
+        variables; values are compared with `NaN` equal to `NaN`, so the
+        padding of the ragged grids and of the dosing protocols compares equal.
+
+        Args:
+            other: the object to compare with.
+
+        Returns:
+            Whether `other` is a batch with an identical dataset;
+            `NotImplemented` for any other type, so that python falls back to
+            the identity comparison.
+        """
+        if not isinstance(other, Timecourses):
+            return NotImplemented
+        return bool(self.ds.identical(other.ds))
+
     def _timecourse(self, sample: xr.Dataset, label: Any) -> Timecourse:
         """Build the `Timecourse` of a dataset without sample dimensions.
 
@@ -2090,3 +2110,68 @@ class Timecourses:
             # the rows are in C order of `dim_order`, as are the padded times
             df[TIME_DIM] = self.times.ravel()
         return df[[*dim_order, *names]]
+
+    # --- exchange formats ---------------------------------------------------
+    #
+    # `pkpdutils.io` imports this module, so it is imported inside the methods
+
+    @classmethod
+    def from_events(cls, df: pd.DataFrame, **kwargs: Any) -> "Timecourses":
+        """Read a batch from event records, `pkpdutils.io.read_events`.
+
+        Args:
+            df: the event table, one row per dose or observation
+            **kwargs: the arguments of `pkpdutils.io.read_events`
+
+        Returns:
+            The batch.
+        """
+        from pkpdutils.io import read_events
+
+        return read_events(df, **kwargs)
+
+    def to_events(self, **kwargs: Any) -> pd.DataFrame:
+        """Write the batch as event records, `pkpdutils.io.write_events`.
+
+        Args:
+            **kwargs: the arguments of `pkpdutils.io.write_events`
+
+        Returns:
+            The event table.
+        """
+        from pkpdutils.io import write_events
+
+        return write_events(self, **kwargs)
+
+    @classmethod
+    def from_pknca(
+        cls, conc: pd.DataFrame, dose: pd.DataFrame, **kwargs: Any
+    ) -> "Timecourses":
+        """Read a batch from the two tables of `PKNCA`, `pkpdutils.io.read_pknca`.
+
+        Args:
+            conc: the concentration table
+            dose: the dose table
+            **kwargs: the arguments of `pkpdutils.io.read_pknca`
+
+        Returns:
+            The batch.
+        """
+        from pkpdutils.io import read_pknca
+
+        return read_pknca(conc, dose, **kwargs)
+
+    @classmethod
+    def from_adnca(cls, df: pd.DataFrame, **kwargs: Any) -> "Timecourses":
+        """Read a batch from a CDISC ADaM ADNCA dataset, `pkpdutils.io.read_adnca`.
+
+        Args:
+            df: the ADNCA dataset
+            **kwargs: the arguments of `pkpdutils.io.read_adnca`
+
+        Returns:
+            The batch.
+        """
+        from pkpdutils.io import read_adnca
+
+        return read_adnca(df, **kwargs)

@@ -140,6 +140,40 @@
 > **Model Selection and Multimodel Inference: A Practical Information-Theoretic Approach.**
 > 2nd edition. Springer; 2002.
 
+## Data formats
+
+The exchange formats of `pkpdutils.io`: the event records of NONMEM and Monolix, the two tables of PKNCA and the CDISC ADaM dataset of a non-compartmental analysis.
+
+**NONMEM event records.** The one row per event data format, `EVID`, `MDV`, `AMT`, `RATE`, and the repeated doses of `ADDL`, `II` and `SS`.
+
+> Bauer RJ.
+> **NONMEM Tutorial Part I: Description of Commands and Options, with Simple Examples of Population Analysis.**
+> *CPT: Pharmacometrics & Systems Pharmacology.* 2019;8(8):525-537.
+> [doi:10.1002/psp4.12404](https://doi.org/10.1002/psp4.12404)
+
+**Monolix data format.** The column names of the same format in the MonolixSuite (`AMOUNT`, `OBSERVATION`, `INFUSION DURATION`, `ADDITIONAL DOSES`, `INTERDOSE INTERVAL`, `STEADY STATE`).
+
+> Lixoft.
+> **MonolixSuite documentation: data format.**
+> [monolix.lixoft.com/data-format](https://monolix.lixoft.com/data-format/)
+
+**PKNCA.** The two table layout of the concentrations and the doses of the R package for automatic non-compartmental analysis.
+
+> Denney W, Duvvuri S, Buckeridge C.
+> **Simple, automatic noncompartmental analysis: the PKNCA R package.**
+> *Journal of Pharmacokinetics and Pharmacodynamics.* 2015;42:S65.
+> [cran.r-project.org/package=PKNCA](https://cran.r-project.org/package=PKNCA)
+
+**CDISC ADaM ADNCA.** The analysis dataset of the input data of a non-compartmental analysis (`USUBJID`, `PARAMCD`, `AVAL`, `AFRLT`, `ARRLT`, `DOSEA`, `DTYPE`).
+
+> CDISC.
+> **ADaM Implementation Guide for Non-compartmental Analysis Input Data (ADNCA).**
+> 2024.
+
+> CDISC.
+> **Analysis Data Model (ADaM) Implementation Guide.**
+> [cdisc.org/standards/foundational/adam](https://www.cdisc.org/standards/foundational/adam)
+
 ## Software
 
 **pint, xarray, scipy.** The libraries the package is built on.
