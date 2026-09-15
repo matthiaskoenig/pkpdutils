@@ -212,7 +212,8 @@ def ddi_classification(
     Raises:
         ValueError: if the interval is reversed or a ratio is not positive.
     """
-    thresholds = thresholds or DDIThresholds.fda()
+    if thresholds is None:
+        thresholds = DDIThresholds.fda()
     value = _ratio_value(auc_ratio)
     if ci is None and isinstance(auc_ratio, RatioResult):
         ci = (auc_ratio.ci_low, auc_ratio.ci_high)
@@ -271,7 +272,8 @@ def substrate_sensitivity(
     Raises:
         ValueError: if the ratio is not positive.
     """
-    thresholds = thresholds or DDIThresholds.fda()
+    if thresholds is None:
+        thresholds = DDIThresholds.fda()
     value = _ratio_value(auc_ratio)
     if not value > 0:
         raise ValueError(f"The AUC ratio must be positive, got {value}")

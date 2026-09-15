@@ -77,7 +77,8 @@ def _pair(
         The logarithms of the test and the reference values in matching order.
 
     Raises:
-        ValueError: for summary data, unequal sizes, or labels which do not match.
+        ValueError: for summary data, unequal sizes, labels which do not
+            match, or no pair of finite values.
     """
     if not (test.is_individual and reference.is_individual):
         raise ValueError("A paired ratio needs individual data of both samples")
@@ -92,6 +93,10 @@ def _pair(
         y = y[[order[label] for label in lx.tolist()]]
     elif x.size != y.size:
         raise ValueError(f"paired samples need equal sizes, got {x.size} and {y.size}")
+    if x.size == 0:
+        raise ValueError(
+            f"'{test.name}' and '{reference.name}' have no pair of finite values"
+        )
     return x, y
 
 
@@ -137,8 +142,8 @@ def ratio(
         The ratio.
 
     Raises:
-        ValueError: for a paired ratio on summary data, unequal sizes or
-            labels which do not match.
+        ValueError: for a paired ratio on summary data, unequal sizes,
+            labels which do not match, or no pair of finite values.
     """
     is_paired = _labels_match(test, reference) if paired is None else paired
     alpha = 1.0 - ci_level

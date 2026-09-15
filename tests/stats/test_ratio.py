@@ -81,3 +81,14 @@ def test_summary_data() -> None:
     assert res.to_dict()["gmr"] == res.gmr
     with pytest.raises(ValueError, match="individual"):
         ratio(t, ParameterSample(values=REF), paired=True)
+
+
+def test_paired_needs_finite_pairs() -> None:
+    t = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))
+    r = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))
+    with pytest.raises(ValueError, match="finite"):
+        ratio(t, r)
+    unlabelled_t = ParameterSample(values=np.array([np.nan, np.nan]))
+    unlabelled_r = ParameterSample(values=np.array([np.nan, np.nan]))
+    with pytest.raises(ValueError, match="finite"):
+        ratio(unlabelled_t, unlabelled_r, paired=True)
