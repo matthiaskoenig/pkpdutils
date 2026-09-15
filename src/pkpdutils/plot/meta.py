@@ -7,7 +7,14 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from pkpdutils.plot._common import figure_of, log_scale
+from pkpdutils.plot._common import (
+    annotate_column,
+    annotation_room,
+    estimate_text,
+    figure_of,
+    log_scale,
+    make_room_right,
+)
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.stats.meta import EffectKind, MetaResult
 
@@ -23,6 +30,7 @@ def plot_forest(
     result: MetaResult,
     *,
     exp: bool | None = None,
+    annotate: bool = True,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
@@ -32,11 +40,18 @@ def plot_forest(
     weight. A `LOG_RATIO` analysis is shown as ratios on a logarithmic axis
     (`exp=None` or `True`); the other kinds stay on their scale.
 
+    With `annotate` the rows carry their numbers in a column to the right of
+    the intervals, as a published forest plot does: `estimate [low, high]`
+    and, for a study, the random effects weight in percent; the axis is
+    widened to hold the column.
+
     Args:
         result: the meta-analysis.
 
     Keyword Args:
         exp: exponentiate the effects; `None` does so for `LOG_RATIO`.
+        annotate: write the effect with its interval (and the weight of a
+            study) beside every row.
         ax: axes to draw on, a new figure by default; a caller-supplied `ax`
             keeps its figure's own layout engine, so long tick labels (the
             pooled effect labels) can clip unless the caller sets one
@@ -57,6 +72,7 @@ def plot_forest(
     fig, ax = figure_of(ax)
     n = result.n_studies
     weights = result.random.weights
+    annotations: list[tuple[float, str]] = []
     for i, e in enumerate(result.effects):
         est, low, high = (
             float(transform(v)) for v in (e.estimate, e.ci_low, e.ci_high)
@@ -70,6 +86,9 @@ def plot_forest(
             color=style.data_color,
             zorder=3,
         )
+        if annotate:
+            text = f"{estimate_text(est, low, high)}, {100 * weights[i]:.1f} %"
+            annotations.append((float(i), text))
     for j, pooled in enumerate((result.fixed, result.random)):
         y = n + j
         est, low, high = (
@@ -82,6 +101,8 @@ def plot_forest(
             color=style.pooled_color,
             zorder=3,
         )
+        if annotate:
+            annotations.append((float(y), estimate_text(est, low, high)))
     null = 1.0 if use_exp else 0.0
     ax.axvline(null, color="gray", linewidth=1.0)
     ax.set_yticks(
@@ -99,6 +120,11 @@ def plot_forest(
         ax.set_xlabel("ratio treatment / control")
     else:
         ax.set_xlabel(_LABELS[result.kind])
+    if annotations:
+        # after the scale of the axis is final: setting it autoscales the
+        # view again and would drop the room made here
+        room = annotation_room(ax, [text for _, text in annotations])
+        annotate_column(ax, annotations, make_room_right(ax, room))
     het = result.heterogeneity
     ax.set_title(
         f"Q = {het.q:.2f} (df = {het.df}, p = {het.p_value:.2g}), I² = {het.i2:.1f} %",

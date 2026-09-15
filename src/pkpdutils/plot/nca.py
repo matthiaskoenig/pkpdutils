@@ -1,25 +1,37 @@
 """Diagnostic figures of the non-compartmental analysis."""
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
-from pkpdutils.nca.intervals import INTERVAL_DIM
+from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.plot._common import (
     axes_of,
+    dose_markers,
     figure_of,
+    format_value,
+    group_colors,
     log_scale,
     sample_colors,
     sample_labels,
+    sample_title,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
+
+#: start of the legend label of the terminal regression line of a panel, which
+#: carries the `lambda_z` of that very curve
+LAMBDA_Z_LABEL = "lambda_z = "
+
+#: the label the regression line gets in a legend shared by several panels,
+#: which cannot name one curve's `lambda_z`
+TERMINAL_LABEL = "terminal regression"
 
 
 def _sample_values(
@@ -48,6 +60,7 @@ def draw_nca_panel(
     *,
     log_y: bool = False,
     title: str | None = None,
+    legend: bool = True,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Axes:
@@ -58,6 +71,11 @@ def draw_nca_panel(
     `[0, tlast]`, labelled `AUC(0-tau)`; a single dose result keeps shading
     `[0, tlast]` as `AUC(0-tlast)`.
 
+    The doses of a protocol of several doses are marked by a thin dotted
+    line each and an infusion by the shaded window from the dose time to the
+    end of the infusion, so that the panel shows how long the dose went in
+    (`dose_markers`).
+
     Args:
         timecourse: the curve (times relative to its dose)
         values: parameter magnitudes of the curve
@@ -67,6 +85,8 @@ def draw_nca_panel(
         log_y: logarithmic value axis; a curve without a positive value stays
             linear (logged at debug level)
         title: title, the label of the curve by default
+        legend: draw the legend of the panel; `False` for a figure whose
+            panels share one legend (`plot_nca_grid`)
         ax: axes to draw on, a new figure by default
         style: colors and markers
 
@@ -116,7 +136,7 @@ def draw_nca_panel(
             linestyle="-",
             color=style.fit_color,
             linewidth=style.linewidth,
-            label=f"lambda_z = {lambda_z:.3g}",
+            label=f"{LAMBDA_Z_LABEL}{lambda_z:.3g}",
         )
         used = ok & (t >= t_first) & (t <= tlast) & (c > 0)
         ax.plot(
@@ -154,6 +174,7 @@ def draw_nca_panel(
         markersize=style.markersize,
         label="data",
     )
+    dose_markers(ax, tc.dosing, style=style)
     ax.set_xlabel(f"time [{tc.time_unit}]")
     ax.set_ylabel(f"{tc.substance} [{tc.unit}]")
     if log_y:
@@ -164,8 +185,10 @@ def draw_nca_panel(
     heading = title if title is not None else (tc.label or tc.substance)
     if flags:
         heading = f"{heading} [{', '.join(flags)}]"
-    ax.set_title(heading)
-    if ax.get_legend_handles_labels()[0]:
+    # a panel with several flags has a long title, which the default size
+    # runs over the width of the panel with
+    ax.set_title(heading, fontsize="small")
+    if legend and ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small")
     return ax
 
@@ -181,12 +204,16 @@ def plot_nca(
 ) -> Figure:
     """Linear and logarithmic panel of one curve with its NCA diagnostics.
 
+    Both panels show the same curve and carry the same title; the legend is
+    drawn once, on the linear panel.
+
     Args:
         timecourse: the curve
         result: the result of its analysis (a batch result with `indexers`, or a single result)
 
     Keyword Args:
-        title: title of the panels, the label of the curve by default; the flags are appended
+        title: title of the panels, `name = value` per indexer (the label of
+            the curve without indexers) by default; the flags are appended
         axes: the two axes to draw the linear and the logarithmic panel into,
             a new figure by default
         style: colors and markers
@@ -199,12 +226,21 @@ def plot_nca(
     fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
     ax1, ax2 = grid[0]
     if title is None and indexers:
-        title = "|".join(str(v) for v in indexers.values())
+        title = ", ".join(
+            f"{name} = {format_value(value)}" for name, value in indexers.items()
+        )
     draw_nca_panel(
         timecourse, values, flags, log_y=False, title=title, ax=ax1, style=style
     )
     draw_nca_panel(
-        timecourse, values, flags, log_y=True, title=title, ax=ax2, style=style
+        timecourse,
+        values,
+        flags,
+        log_y=True,
+        title=title,
+        legend=False,
+        ax=ax2,
+        style=style,
     )
     return fig
 
@@ -218,14 +254,21 @@ def plot_nca_grid(
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
-    """One NCA panel per sample of a batch.
+    """One NCA panel per sample of a batch, with one legend for the figure.
+
+    The title of a panel names the sample by its coordinates,
+    `dose = 50 mg, individual = s1`, with the unit of a coordinate which
+    carries one; the `dose` coordinate of a batch takes the dose unit of the
+    batch. The panels all draw the same artists, so the legend is drawn once:
+    on the figure when this function creates it, and into the first panel
+    when the caller supplies `axes`, whose figure keeps its own layout.
 
     Args:
         timecourses: the batch
         result: its result
 
     Keyword Args:
-        ncols: panels per row
+        ncols: panels per row, at most one per sample
         log_y: logarithmic value axes
         axes: the `nrows * ncols` axes to draw the panels into, a new figure by
             default
@@ -236,21 +279,183 @@ def plot_nca_grid(
     """
     curves = list(timecourses)
     n = len(curves)
+    ncols = max(1, min(ncols, n))
     nrows = int(np.ceil(n / ncols))
     fig, grid = axes_of(axes, nrows, ncols, figsize=(4.5 * ncols, 3.5 * nrows))
     flat_axes = grid.ravel()
     indices = list(np.ndindex(*timecourses.sample_shape))
+    units = {"dose": timecourses.dose_unit} if "dose" in timecourses.ds.coords else {}
     for k, (tc, index) in enumerate(zip(curves, indices, strict=True)):
         sample = result.ds.isel(
             dict(zip(timecourses.sample_dims, (int(i) for i in index), strict=True))
         )
         values = {name: float(sample[name].values) for name in result.parameters}
         flags = decode_flags(int(sample["flags"].values))
+        title = sample_title(
+            timecourses.ds, index, timecourses.sample_dims, units=units
+        )
         draw_nca_panel(
-            tc, values, flags, log_y=log_y, title=None, ax=flat_axes[k], style=style
+            tc,
+            values,
+            flags,
+            log_y=log_y,
+            title=title or None,
+            legend=axes is not None and k == 0,
+            ax=flat_axes[k],
+            style=style,
         )
     for ax in flat_axes[n:]:
         ax.set_visible(False)
+    if axes is None:
+        # the union of the panels' artists, since a panel without a terminal
+        # regression or without a C0 draws fewer of them than its neighbours
+        seen: dict[str, Any] = {}
+        for ax in flat_axes[:n]:
+            handles, labels = ax.get_legend_handles_labels()
+            for handle, label in zip(handles, labels, strict=True):
+                shared = TERMINAL_LABEL if label.startswith(LAMBDA_Z_LABEL) else label
+                seen.setdefault(shared, handle)
+        if seen:
+            fig.legend(
+                list(seen.values()),
+                list(seen),
+                loc="outside upper center",
+                ncols=min(len(seen), 6),
+                fontsize="small",
+            )
+    return fig
+
+
+def _mean_spread(
+    values: np.ndarray, statistic: Literal["sd", "se"]
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Mean and spread over the rows of a `(n_samples, n_interval)` block.
+
+    The reduction ignores the non-finite entries of a column (an interval
+    which is incomplete for a subject) and gives `NaN` for a column without
+    one, without the `RuntimeWarning` of `numpy.nanmean` on an empty slice.
+    The spread is the standard deviation \(s\) of the column with
+    \(n - 1\) degrees of freedom, or \(s / \sqrt{n}\) for `"se"`.
+
+    Args:
+        values: the block, one row per sample.
+        statistic: the spread to compute.
+
+    Returns:
+        The mean and the spread per column, `NaN` where they are undefined.
+    """
+    finite = np.isfinite(values)
+    count = finite.sum(axis=0)
+    filled = np.where(finite, values, 0.0)
+    total = filled.sum(axis=0)
+    mean = np.where(count > 0, total / np.maximum(count, 1), np.nan)
+    deviation = np.where(finite, (values - mean) ** 2, 0.0).sum(axis=0)
+    sd = np.where(count > 1, np.sqrt(deviation / np.maximum(count - 1, 1)), np.nan)
+    spread = sd if statistic == "sd" else sd / np.sqrt(np.maximum(count, 1))
+    return mean, spread
+
+
+def plot_troughs(
+    result: NCAResult,
+    *,
+    by: str | None = None,
+    spread: Literal["sd", "se"] | None = "sd",
+    x: Literal["time", "interval"] = "time",
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+) -> Figure:
+    """The trough concentration of every dosing interval, the figure of steady state.
+
+    The trough of an interval (`interval_ctrough`, the value at its end) and,
+    when the analysis reports it, its minimum (`interval_cmin`) against the
+    time the trough was taken (`x="time"`, the end of the interval
+    `interval_end`, which for a regular regimen is the time of the next dose)
+    or against the interval number (`x="interval"`). Steady state is where
+    the troughs stop rising.
+
+    Over a batch the samples are reduced to the mean of every interval with
+    its spread as error bars, per group when `by` names a coordinate; a
+    result of a single curve draws that curve's values.
+
+    Args:
+        result: the result of a multiple dose analysis.
+
+    Keyword Args:
+        by: a sample dimension of the result or a coordinate along one,
+            grouping the samples; one group by default.
+        spread: error bars of the mean, the standard deviation (`"sd"`), the
+            standard error (`"se"`) or none (`None`).
+        x: the x axis, the dose time of the interval or the interval number.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`)
+        style: colors and markers.
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the result has no interval parameters or no
+            `interval_ctrough`, or if `x` is neither `"time"` nor
+            `"interval"`.
+    """
+    if not result.has_intervals or "interval_ctrough" not in result.ds.data_vars:
+        raise ValueError("The result has no 'interval_ctrough' to plot")
+    if x not in ("time", "interval"):
+        raise ValueError(f"'x' must be 'time' or 'interval', got '{x}'")
+    statistic: Literal["sd", "se"] = "sd" if spread is None else spread
+    names = [
+        name
+        for name in ("interval_ctrough", "interval_cmin")
+        if name in result.ds.data_vars
+    ]
+    sample_dims = list(result.sample_dims)
+    n_interval = int(result.ds.sizes[INTERVAL_DIM])
+    if x == "time" and "interval_end" in result.ds.data_vars:
+        ends = result.ds["interval_end"].to_numpy().reshape(-1, n_interval)
+        x_values = _mean_spread(ends, "sd")[0]
+        x_label = f"time [{result.units('interval_end')}]"
+    else:
+        x_values = result.ds[INTERVAL_DIM].to_numpy().astype(float)
+        x_label = INTERVAL_DIM
+    labels = (
+        sample_labels(result.ds, sample_dims, by=by)
+        if by is not None
+        else ["all"] * max(result.ds["interval_ctrough"].size // n_interval, 1)
+    )
+    groups: list[str] = []
+    for label in labels:
+        if label not in groups:
+            groups.append(label)
+    fig, ax = figure_of(ax)
+    colors = group_colors(len(groups), style.cmap)
+    rows = np.asarray(labels)
+    for i, group in enumerate(groups):
+        color: Any = style.data_color if len(groups) == 1 else colors[i]
+        for k, name in enumerate(names):
+            block = result.ds[name].to_numpy().reshape(-1, n_interval)
+            mean, error = _mean_spread(block[rows == group], statistic)
+            short = name.removeprefix(INTERVAL_PREFIX)
+            label = short if by is None else f"{group}, {short}"
+            ax.errorbar(
+                x_values,
+                np.ma.masked_invalid(mean),
+                yerr=None if spread is None else np.ma.masked_invalid(error),
+                marker=style.data_marker if k == 0 else style.terminal_marker,
+                linestyle="-" if k == 0 else "--",
+                markerfacecolor=color if k == 0 else "none",
+                color=color,
+                label=label,
+                linewidth=style.linewidth,
+                markersize=style.markersize,
+                capsize=2,
+            )
+    if x == "interval":
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(f"trough [{result.units('interval_ctrough')}]")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(fontsize="small", title=by, title_fontsize="small")
     return fig
 
 

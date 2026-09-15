@@ -158,3 +158,56 @@ def test_plot_bland_altman() -> None:
     fig_log = plot_bland_altman(monoexp_result(), log_ratio=True)
     assert fig_log.axes[0].get_ylabel().startswith("log ratio")
     matplotlib.pyplot.close("all")
+
+
+def test_plot_fit_labels_the_axes_from_the_names_of_the_front_end() -> None:
+    batch = Timecourses.from_arrays(
+        T,
+        (10 * np.exp(-0.2 * T))[None, :],
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["s1"]},
+        substance="caffeine",
+    )
+    result = fit_timecourses(MonoExp(), batch)
+    fig = plot_fit(result, individual="s1")
+    assert fig.axes[0].get_ylabel() == "caffeine [mg/l]"
+    assert fig.axes[1].get_xlabel() == "time [hr]"
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_fit_falls_back_to_x_and_y_without_the_names() -> None:
+    result = monoexp_result()
+    assert "x_name" not in result.ds.attrs
+    fig = plot_fit(result)
+    assert fig.axes[0].get_ylabel().startswith("y [")
+    assert fig.axes[1].get_xlabel().startswith("x [")
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_dose_proportionality_labels_the_axes_from_the_table_columns() -> None:
+    doses = np.array([25.0, 50.0, 100.0, 200.0])
+    ds = xr.Dataset(
+        {"auc_inf_obs": (("dose",), 2.0 * doses**1.05, {"units": "mg*hr/l"})},
+        coords={"dose": doses},
+    )
+    ds["dose"].attrs["units"] = "mg"
+    result = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
+    fig = plot_dose_proportionality(result)
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "dose [mg]"
+    assert ax.get_ylabel().startswith("auc_inf_obs [")
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_fit_leaves_out_a_dimensionless_unit() -> None:
+    doses = np.array([25.0, 50.0, 100.0, 200.0])
+    ds = xr.Dataset(
+        {"auc": (("dose",), 2.0 * doses**1.05, {"units": "mg*hr/l"})},
+        coords={"dose": doses},  # a coordinate without a unit
+    )
+    result = fit_table(Power(), ds, "dose", "auc", dim="dose")
+    fig = plot_dose_proportionality(result)
+    assert fig.axes[0].get_xlabel() == "dose"
+    matplotlib.pyplot.close(fig)

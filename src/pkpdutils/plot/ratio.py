@@ -8,7 +8,14 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import NullLocator
 
-from pkpdutils.plot._common import figure_of, log_scale
+from pkpdutils.plot._common import (
+    annotate_column,
+    annotation_room,
+    estimate_text,
+    figure_of,
+    log_scale,
+    make_room_right,
+)
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.stats.bioequivalence import BEResult
 from pkpdutils.stats.ddi import DDIThresholds
@@ -43,10 +50,16 @@ def plot_ratio(
     *,
     limits: tuple[float, float] | None = (0.8, 1.25),
     thresholds: DDIThresholds | None = None,
+    annotate: bool = True,
+    labels: Mapping[str, str] | None = None,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
     """Point estimates and intervals of ratios on a logarithmic axis, with limits and thresholds.
+
+    With `annotate` the rows carry their numbers, `gmr [low, high]`, in a
+    column to the right of the intervals, as the table of a bioequivalence
+    report does; the axis is widened to hold the column.
 
     Args:
         ratios: name to ratio, or a bioequivalence result (its parameters).
@@ -55,6 +68,10 @@ def plot_ratio(
         limits: acceptance limits drawn as dashed lines, `None` for none.
         thresholds: interaction thresholds drawn as dotted lines with the
             class names, `None` for none.
+        annotate: write `gmr [low, high]` beside every row.
+        labels: the tick label of a row per name, e.g.
+            `{"auc_inf_obs": "AUC(0-inf)"}`; a name without an entry keeps
+            its own spelling.
         ax: axes to draw on, a new figure by default; a caller-supplied `ax`
             keeps its figure's own layout engine, so long tick labels can
             clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
@@ -74,6 +91,7 @@ def plot_ratio(
     fig, ax = figure_of(ax)
     names = list(entries)
     ys = np.arange(len(names))
+    annotations: list[tuple[float, str]] = []
     for y, name in zip(ys, names, strict=True):
         r = entries[name]
         ax.errorbar(
@@ -86,6 +104,8 @@ def plot_ratio(
             linestyle="none",
             markersize=style.markersize,
         )
+        if annotate:
+            annotations.append((float(y), estimate_text(r.gmr, r.ci_low, r.ci_high)))
     tick_values = {1.0}
     ax.axvline(1.0, color="gray", linewidth=1.0)
     if limits is not None:
@@ -99,7 +119,7 @@ def plot_ratio(
             tick_values.add(limit)
     top, bottom = -0.6, len(names) - 0.4
     log_scale(ax, "x")
-    ax.set_yticks(ys, names)
+    ax.set_yticks(ys, [(labels or {}).get(name, name) for name in names])
     ax.set_ylim(top, bottom)
     ax.invert_yaxis()
     if thresholds is not None:
@@ -131,6 +151,9 @@ def plot_ratio(
     sorted_ticks = sorted(tick_values)
     ax.set_xticks(sorted_ticks, [f"{v:g}" for v in sorted_ticks])
     ax.xaxis.set_minor_locator(NullLocator())
+    if annotations:
+        room = annotation_room(ax, [text for _, text in annotations])
+        annotate_column(ax, annotations, make_room_right(ax, room))
     ax.set_xlabel("ratio test / reference")
     levels = {round(entries[n].ci_level * 100) for n in names}
     ax.set_title(

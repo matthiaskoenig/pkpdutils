@@ -286,3 +286,34 @@ def test_fit_timecourses_rejects_coordinate_named_like_a_parameter() -> None:
     )
     with pytest.raises(ValueError, match="collides"):
         fit_timecourses(MonoExp(), batch)
+
+
+def test_fit_timecourses_names_the_axes_in_attrs() -> None:
+    result = fit_timecourses(MonoExp(), curves())
+    assert result.ds.attrs["x_name"] == "time"
+    assert result.ds.attrs["y_name"] == "x"  # the substance of the batch
+    single = fit_timecourse(MonoExp(), next(iter(curves())))
+    assert single.ds.attrs["x_name"] == "time"
+    assert single.ds.attrs["y_name"] == "x"
+
+
+def test_fit_timecourses_without_a_substance_names_the_value_axis_value() -> None:
+    tc = Timecourse(
+        time=T,
+        value=10.0 * np.exp(-0.25 * T),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    result = fit_timecourse(MonoExp(), tc)
+    assert result.ds.attrs["y_name"] == "value"
+
+
+def test_fit_table_names_the_axes_after_its_columns() -> None:
+    doses = np.array([25.0, 50.0, 100.0, 200.0])
+    ds = xr.Dataset(
+        {"auc": (("dose",), 2.0 * doses**1.05, {"units": "mg*hr/l"})},
+        coords={"dose": doses},
+    )
+    result = fit_table(Power(), ds, "dose", "auc", dim="dose")
+    assert result.ds.attrs["x_name"] == "dose"
+    assert result.ds.attrs["y_name"] == "auc"

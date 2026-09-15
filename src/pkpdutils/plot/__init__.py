@@ -8,6 +8,12 @@ into an existing axes and `axes` to a multi-panel figure (`plot_nca`,
 every one of them carries plain tick labels (`10`, `100`) instead of powers
 of ten. `draw_nca_panel` draws one NCA panel and returns the
 `matplotlib.axes.Axes`, for a figure the caller lays out.
+
+`plot_mean_timecourse` is the group figure of a study report (the mean of
+every group with its spread, the individuals faint behind it, on a linear and
+a semi-logarithmic panel), `plot_timecourse` takes `by` to color the curves by
+group and `facet` for one panel per value of a coordinate, and `plot_troughs`
+shows the trough of every dosing interval, the figure of steady state.
 """
 
 from pkpdutils.plot.fit import (
@@ -22,11 +28,12 @@ from pkpdutils.plot.nca import (
     plot_intervals,
     plot_nca,
     plot_nca_grid,
+    plot_troughs,
 )
 from pkpdutils.plot.parameters import plot_parameters
 from pkpdutils.plot.ratio import plot_ratio
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import plot_timecourse
+from pkpdutils.plot.timecourse import plot_mean_timecourse, plot_timecourse
 
 __all__ = [
     "DEFAULT_STYLE",
@@ -38,9 +45,11 @@ __all__ = [
     "plot_forest",
     "plot_goodness_of_fit",
     "plot_intervals",
+    "plot_mean_timecourse",
     "plot_nca",
     "plot_nca_grid",
     "plot_parameters",
     "plot_ratio",
     "plot_timecourse",
+    "plot_troughs",
 ]

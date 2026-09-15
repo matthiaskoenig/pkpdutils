@@ -12,6 +12,28 @@ from pkpdutils.fit.result import FitResult
 from pkpdutils.result import sample_coordinates
 from pkpdutils.timecourse import Timecourse, Timecourses
 
+#: the placeholder name of a batch which does not name its substance; the
+#: figures then label the value axis `value` instead of `substance`
+_UNNAMED_SUBSTANCE = "substance"
+
+
+def _named(result: FitResult, x_name: str, y_name: str) -> FitResult:
+    """The result with the names of its variables in `attrs`.
+
+    `attrs["x_name"]` and `attrs["y_name"]` name what was fitted against
+    what, so that a figure of the result labels its axes with them
+    (`plot_fit`, `plot_dose_proportionality`) instead of `x` and `y`.
+
+    Args:
+        result: the result of the engine.
+        x_name: name of the independent variable.
+        y_name: name of the dependent variable.
+
+    Returns:
+        The result carrying the two names.
+    """
+    return FitResult(result.ds.assign_attrs(x_name=x_name, y_name=y_name), result.model)
+
 
 def fit_timecourse(
     model: Model, timecourse: Timecourse, *, options: FitOptions | None = None
@@ -54,6 +76,10 @@ def fit_timecourses(
     reported in the raw units of the batch, `x_unit = timecourses.time_unit`
     and `y_unit = timecourses.unit`.
 
+    The result names what was fitted in `attrs["x_name"] = "time"` and
+    `attrs["y_name"]`, the substance of the batch (`"value"` when it does not
+    name one), which the figures of the fit use to label their axes.
+
     Args:
         model: the model (`x` is the time relative to the first dose, `y` the value)
         timecourses: the batch; `sd` is used for `Weighting.INV_SD`
@@ -74,7 +100,7 @@ def fit_timecourses(
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
     rows = fit_rows(model, x, y, sd, options)
     coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
-    return build_result(
+    result = build_result(
         model,
         rows,
         x=x,
@@ -86,6 +112,12 @@ def fit_timecourses(
         coords=coords,
         options=options,
         shape=timecourses.sample_shape,
+    )
+    substance = timecourses.substance
+    return _named(
+        result,
+        "time",
+        "value" if substance == _UNNAMED_SUBSTANCE else substance,
     )
 
 
@@ -138,6 +170,10 @@ def fit_table(
     `NCAResult`. `NaN` in `x` or `y` drops the point, as does any point the
     engine already drops as non-finite.
 
+    The result names what was fitted against what in `attrs["x_name"]` and
+    `attrs["y_name"]` (`x` and `y`), which the figures of the fit use to
+    label their axes.
+
     Args:
         model: the model
         ds: dataset with the variable `y` and the coordinate or variable `x`
@@ -179,7 +215,7 @@ def fit_table(
         sd_arr = sd_da.to_numpy().astype(np.float64).reshape(n_rows, n)
     rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
     coords: dict[str, Any] = {d: ds[d] for d in sample_dims if d in ds.coords}
-    return build_result(
+    result = build_result(
         model,
         rows,
         x=x_arr,
@@ -192,3 +228,4 @@ def fit_table(
         options=options,
         shape=shape,
     )
+    return _named(result, x, y)

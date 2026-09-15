@@ -2,7 +2,9 @@ import matplotlib
 import matplotlib.pyplot
 import numpy as np
 import pytest
+from matplotlib.container import ErrorbarContainer
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 
 from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
 from pkpdutils.nca import AUCMethod, NCAOptions, nca, nca_single
@@ -12,6 +14,7 @@ from pkpdutils.plot import (
     plot_nca,
     plot_nca_grid,
     plot_timecourse,
+    plot_troughs,
 )
 
 matplotlib.use("Agg")
@@ -203,3 +206,166 @@ def test_plot_intervals_raises_for_a_non_interval_name() -> None:
     result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     with pytest.raises(ValueError):
         plot_intervals(result, name="cmax")
+
+
+def trough_batch(n: int = 4) -> Timecourses:
+    """A batch of bolus curves of three dosing intervals, two arms."""
+    curves = [multiple_dose_tc(n_doses=3, c0=10.0 + 2.0 * i) for i in range(n)]
+    batch = Timecourses.from_timecourses(curves, labels=[f"s{i}" for i in range(n)])
+    arms = ["A" if i < n // 2 else "B" for i in range(n)]
+    batch.ds = batch.ds.assign_coords(arm=("individual", arms))
+    return batch
+
+
+def infusion_tc(duration: float = 2.0) -> Timecourse:
+    time = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0])
+    value = np.where(
+        time <= duration,
+        5.0 * (1.0 - np.exp(-0.2 * time)),
+        5.0 * (1.0 - np.exp(-0.2 * duration)) * np.exp(-0.2 * (time - duration)),
+    )
+    return Timecourse(
+        time=time,
+        value=value,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_INFUSION, duration=duration),
+        substance="drug",
+    )
+
+
+def test_draw_nca_panel_draws_an_infusion_as_a_window() -> None:
+    tc = infusion_tc()
+    fig = plot_nca(tc, nca_single(tc))
+    spans = [patch for patch in fig.axes[0].patches if patch.get_label() == "infusion"]
+    assert len(spans) == 1
+    span = spans[0]
+    assert isinstance(span, Rectangle)
+    assert (span.get_x(), span.get_width()) == (0.0, 2.0)
+    # the window sits behind the shaded areas and the data
+    assert span.get_zorder() == 0.0
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_draws_the_legend_once() -> None:
+    tc = oral()
+    fig = plot_nca(tc, nca_single(tc))
+    assert fig.axes[0].get_legend() is not None
+    assert fig.axes[1].get_legend() is None
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_grid_titles_name_the_coordinates_with_units() -> None:
+    time = np.array([0.5, 1.0, 2.0, 4.0, 8.0])
+    doses = np.array([50.0, 100.0])
+    values = np.stack(
+        [np.stack([d / 50.0 * np.exp(-0.2 * time)]) for d in doses]
+    )  # (dose, individual, time)
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("dose", "individual"),
+        coords={"dose": doses, "individual": ["s1"]},
+        dose={"amount": doses[:, None], "unit": "mg"},
+        route=Route.ORAL,
+        substance="caffeine",
+    )
+    fig = plot_nca_grid(batch, nca(batch, options=NCAOptions()), ncols=2)
+    titles = [ax.get_title() for ax in fig.axes if ax.get_visible()]
+    assert titles[0].startswith("dose = 50 mg, individual = s1")
+    assert titles[1].startswith("dose = 100 mg, individual = s1")
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_grid_draws_one_legend_for_the_figure() -> None:
+    batch = Timecourses.from_timecourses([oral(k, str(k)) for k in (1.0, 2.0)])
+    fig = plot_nca_grid(batch, nca(batch, options=NCAOptions()), ncols=2)
+    assert all(ax.get_legend() is None for ax in fig.axes)
+    assert len(fig.legends) == 1
+    labels = [text.get_text() for text in fig.legends[0].get_texts()]
+    # one entry per artist, the regression line of one curve not naming its
+    # own lambda_z in a legend of the whole figure
+    assert "terminal regression" in labels
+    assert len(labels) == len(set(labels))
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_grid_with_given_axes_puts_the_legend_in_the_first_panel() -> None:
+    batch = Timecourses.from_timecourses([oral(k, str(k)) for k in (1.0, 2.0)])
+    fig, axes = matplotlib.pyplot.subplots(ncols=2)
+    assert plot_nca_grid(batch, nca(batch, options=NCAOptions()), axes=axes) is fig
+    assert not fig.legends
+    assert axes[0].get_legend() is not None
+    assert axes[1].get_legend() is None
+    assert fig.get_layout_engine() is None
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_grid_clamps_the_columns_to_the_sample_count() -> None:
+    batch = Timecourses.from_timecourses([oral(1.0, "a")])
+    fig = plot_nca_grid(batch, nca(batch, options=NCAOptions()), ncols=3)
+    assert len(fig.axes) == 1
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_against_the_time_with_groups() -> None:
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_troughs(result, by="arm")
+    assert isinstance(fig, Figure)
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "time [hour]"
+    assert ax.get_ylabel().startswith("trough [")
+    legend = ax.get_legend()
+    assert legend is not None
+    assert legend.get_title().get_text() == "arm"
+    labels = [text.get_text() for text in legend.get_texts()]
+    assert labels == ["A, ctrough", "A, cmin", "B, ctrough", "B, cmin"]
+    # the troughs are the ends of the intervals, not the dose times
+    ctrough = next(bar for bar in ax.containers if bar.get_label() == "A, ctrough")
+    assert isinstance(ctrough, ErrorbarContainer)
+    np.testing.assert_allclose(
+        np.asarray(ctrough.lines[0].get_xdata()), [12.0, 24.0, 36.0]
+    )
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_against_the_interval_number() -> None:
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_troughs(result, x="interval", spread="se")
+    ax = fig.axes[0]
+    assert ax.get_xlabel() == "interval"
+    ctrough = next(bar for bar in ax.containers if bar.get_label() == "ctrough")
+    assert isinstance(ctrough, ErrorbarContainer)
+    np.testing.assert_allclose(
+        np.asarray(ctrough.lines[0].get_xdata()), [1.0, 2.0, 3.0]
+    )
+    fig.canvas.draw()
+    tick_labels = [
+        label.get_text() for label in ax.xaxis.get_ticklabels() if label.get_text()
+    ]
+    assert all("." not in label for label in tick_labels), tick_labels
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_draws_into_the_given_ax_and_without_a_spread() -> None:
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    fig, ax = matplotlib.pyplot.subplots()
+    assert plot_troughs(result, spread=None, ax=ax) is fig
+    assert ax.containers
+    assert fig.get_layout_engine() is None
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_raises_without_intervals_and_for_an_unknown_axis() -> None:
+    tc = oral()
+    with pytest.raises(ValueError):
+        plot_troughs(nca_single(tc))
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    with pytest.raises(ValueError):
+        plot_troughs(result, x="dose")  # ty: ignore[invalid-argument-type]

@@ -22,6 +22,32 @@ from pkpdutils.plot._common import (
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 
 
+def _axis_labels(result: FitResult) -> tuple[str, str]:
+    """The axis labels of a fit, `name [unit]` for `x` and for `y`.
+
+    The names are `attrs["x_name"]` and `attrs["y_name"]`, which the front
+    ends of the fit set from what they were given (`time` and the substance
+    for a timecourse, the column names for a table); a result built without
+    them falls back to `x` and `y`. A variable without a unit is labelled
+    with its name alone, since `[dimensionless]` says nothing about it.
+
+    Args:
+        result: the fit.
+
+    Returns:
+        The label of the x axis and the label of the y axis.
+    """
+
+    def label(name: str, variable: str) -> str:
+        unit = result.units(variable)
+        return f"{name} [{unit}]" if unit and unit != "dimensionless" else name
+
+    return (
+        label(str(result.ds.attrs.get("x_name", "x")), "x_data"),
+        label(str(result.ds.attrs.get("y_name", "y")), "y_data"),
+    )
+
+
 def _parameter_text(result: FitResult, sample: xr.Dataset) -> str:
     """`name = value +- se` per parameter of the model, comma separated.
 
@@ -63,6 +89,10 @@ def plot_fit(
     and a title with the model name, the parameters (`name = value +- se`)
     and the flags of the sample. The lower panel draws the weighted
     residuals against `x` with a zero line.
+
+    The axes are labelled with the names the front end of the fit stored in
+    `attrs["x_name"]` and `attrs["y_name"]` (`time` and the substance for a
+    timecourse, the column names for a table), `x` and `y` without them.
 
     Args:
         result: the fit.
@@ -146,8 +176,9 @@ def plot_fit(
     if flags:
         text = f"{text} [{', '.join(flags)}]"
     ax.set_title(text, fontsize="small")
+    x_label, y_label = _axis_labels(result)
     # the x axis is shared with the residual panel below, which carries the label
-    ax.set_ylabel(f"y [{result.units('y_data')}]")
+    ax.set_ylabel(y_label)
     if log_x:
         log_scale(ax, "x")
     if log_y:
@@ -165,7 +196,7 @@ def plot_fit(
         color=style.data_color,
         markersize=style.markersize,
     )
-    ax_res.set_xlabel(f"x [{result.units('x_data')}]")
+    ax_res.set_xlabel(x_label)
     ax_res.set_ylabel("weighted residual")
     return fig
 
@@ -239,6 +270,10 @@ def plot_dose_proportionality(
     **indexers: Any,
 ) -> Figure:
     """Log-log exposure against dose with the power fit and the acceptance bounds.
+
+    The axes are labelled with the names the front end of the fit stored in
+    `attrs["x_name"]` and `attrs["y_name"]` (the column names for
+    `fit_table`), `x` and `y` without them.
 
     Args:
         result: fit of `Power` (parameters `a`, `b`).
@@ -318,8 +353,9 @@ def plot_dose_proportionality(
         doses = np.unique(x[ok])
         ax.set_xticks(doses, labels=[f"{dose:g}" for dose in doses])
         ax.xaxis.set_minor_locator(NullLocator())
-    ax.set_xlabel(f"x [{result.units('x_data')}]")
-    ax.set_ylabel(f"y [{result.units('y_data')}]")
+    x_label, y_label = _axis_labels(result)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small")
     return fig
