@@ -18,7 +18,12 @@ from numpy.typing import ArrayLike
 from scipy import stats
 from scipy.stats import t as student_t
 
-from pkpdutils.stats.sample import ParameterSample, Scale
+from pkpdutils.stats.sample import (
+    ParameterSample,
+    Scale,
+    _log_positive,
+    paired_values,
+)
 
 
 class TestMethod(StrEnum):
@@ -254,9 +259,10 @@ def _effect_sizes(
         n_b: size of `b`.
 
     Returns:
-        `d` and `g` (`NaN` with fewer than 3 values in total).
+        `d` and `g` (`NaN` if a sample holds a single value, so that the
+        pooled standard deviation is not estimable, or if it is zero).
     """
-    if n_a + n_b < 3:
+    if n_a < 2 or n_b < 2:
         return float("nan"), float("nan")
     pooled = np.sqrt(((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / (n_a + n_b - 2))
     d = float((mean_a - mean_b) / pooled) if pooled > 0 else float("nan")
@@ -290,6 +296,9 @@ def _welch_df(var_a: float, n_a: int, var_b: float, n_b: int) -> float:
 
     \(\nu = (s_a^2/n_a + s_b^2/n_b)^2 / ((s_a^2/n_a)^2/(n_a-1) + (s_b^2/n_b)^2/(n_b-1))\).
 
+    A sample of a single value has no variance to propagate and two samples
+    without variance have no scale, both give `NaN`.
+
     Args:
         var_a: variance of `a`.
         n_a: size of `a`.
@@ -297,10 +306,31 @@ def _welch_df(var_a: float, n_a: int, var_b: float, n_b: int) -> float:
         n_b: size of `b`.
 
     Returns:
-        The degrees of freedom.
+        The degrees of freedom, `NaN` if a sample holds fewer than two
+        values or both variances are zero.
     """
-    va, vb = var_a / n_a, var_b / n_b
-    return float((va + vb) ** 2 / (va**2 / (n_a - 1) + vb**2 / (n_b - 1)))
+    if n_a < 2 or n_b < 2 or (var_a == 0.0 and var_b == 0.0):
+        return float("nan")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        va = np.float64(var_a) / n_a
+        vb = np.float64(var_b) / n_b
+        return float((va + vb) ** 2 / (va**2 / (n_a - 1) + vb**2 / (n_b - 1)))
+
+
+def _t_statistic(center: float, se: float, df: float) -> float:
+    """A t statistic, `NaN` for a degenerate sample.
+
+    Args:
+        center: the estimate.
+        se: its standard error.
+        df: the degrees of freedom of the statistic.
+
+    Returns:
+        `center / se`, `NaN` if `se` is zero or `se` or `df` is not finite.
+    """
+    if se == 0.0 or not np.isfinite(se) or not np.isfinite(df):
+        return float("nan")
+    return float(center / se)
 
 
 def _mean_difference(u: np.ndarray, v: np.ndarray, axis: int) -> np.ndarray:
@@ -326,17 +356,22 @@ def compare(
     otherwise; summary data is compared with the Welch t test from its
     moments. On the log scale the tests run on the logarithms and the effect
     is the ratio of the geometric means with the exponentiated t interval.
-    The paired tests need individual data of equal size (matched by
-    position). The permutation test permutes the group labels (or the signs
-    of the paired differences) of the difference of the means, with
-    `n_perm` resamples (Efron & Tibshirani 1993, ch. 15).
+    The paired tests need individual data of both samples and match it with
+    `paired_values`, by label when both samples carry labels and by position
+    otherwise; a pair with a missing value is dropped. The permutation test
+    permutes the group labels (or the signs of the paired differences) of
+    the difference of the means, with `n_perm` resamples (Efron & Tibshirani
+    1993, ch. 15). A sample of one value or two samples without variance
+    give `NaN` for `statistic`, `p_value`, `df`, the interval and the effect
+    sizes.
 
     Args:
         a: the first sample.
         b: the second sample.
         test: the test.
         scale: scale of the analysis.
-        paired: whether the values of `a` and `b` are paired by position.
+        paired: whether the values of `a` and `b` belong to the same
+            individuals (matched by label, else by position).
         alternative: the alternative hypothesis.
         ci_level: level of the interval of the effect.
         n_perm: number of resamples of the permutation test.
@@ -364,10 +399,14 @@ def compare(
                 f"{method} needs individual data; summary data allows WELCH_T only"
             )
         return _welch_from_moments(a, b, scale, alternative, ci_level)
-    x, y = _values(a, scale), _values(b, scale)
-    n_a, n_b = x.size, y.size
-    if paired and n_a != n_b:
-        raise ValueError(f"paired samples need equal sizes, got {n_a} and {n_b}")
+    if paired:
+        raw_a, raw_b = paired_values(a, b)
+        x = _log_positive(raw_a, a.name) if scale is Scale.LOG else raw_a
+        y = _log_positive(raw_b, b.name) if scale is Scale.LOG else raw_b
+        n_a = n_b = int(x.size)
+    else:
+        x, y = _values(a, scale), _values(b, scale)
+        n_a, n_b = int(x.size), int(y.size)
     mean_a, mean_b = float(x.mean()), float(y.mean())
     sd_a = float(x.std(ddof=1)) if n_a > 1 else float("nan")
     sd_b = float(y.std(ddof=1)) if n_b > 1 else float("nan")
@@ -377,16 +416,20 @@ def compare(
     if method in _T_TESTS:
         if method is TestMethod.PAIRED_T:
             diff = x - y
-            se = float(diff.std(ddof=1) / np.sqrt(n_a))
-            df = float(n_a - 1)
+            se = float(diff.std(ddof=1) / np.sqrt(n_a)) if n_a > 1 else nan
+            df = float(n_a - 1) if n_a > 1 else nan
         elif method is TestMethod.WELCH_T:
             se = float(np.sqrt(sd_a**2 / n_a + sd_b**2 / n_b))
             df = _welch_df(sd_a**2, n_a, sd_b**2, n_b)
-        else:
-            pooled = ((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / (n_a + n_b - 2)
-            se = float(np.sqrt(pooled * (1.0 / n_a + 1.0 / n_b)))
+        elif n_a + n_b > 2:
             df = float(n_a + n_b - 2)
-        statistic = center / se
+            pooled = ((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / df
+            se = float(np.sqrt(pooled * (1.0 / n_a + 1.0 / n_b)))
+        else:
+            se = df = nan
+        if se == 0.0:
+            df = nan
+        statistic = _t_statistic(center, se, df)
         p_value = _p_from_t(statistic, df, alternative)
         low, high = _interval(center, se, df, ci_level, alternative)
         ci = (_back(low, scale), _back(high, scale))
@@ -458,7 +501,7 @@ def _welch_from_moments(
     se = float(np.sqrt(sd_a**2 / n_a + sd_b**2 / n_b))
     df = _welch_df(sd_a**2, n_a, sd_b**2, n_b)
     center = mean_a - mean_b
-    statistic = center / se
+    statistic = _t_statistic(center, se, df)
     low, high = _interval(center, se, df, ci_level, alternative)
     d, g = _effect_sizes(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
     return TestResult(

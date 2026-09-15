@@ -22,6 +22,8 @@ Statistics on pharmacokinetic parameters: comparisons of two groups, geometric m
 
 **Geometric mean ratio.** Paired: \(d_i = \ln t_i - \ln r_i\), \(\ln\mathrm{GMR} = \bar d\), \(\mathrm{se} = s_d/\sqrt{n}\), \(n - 1\) degrees of freedom. Parallel: \(\ln\mathrm{GMR} = \bar{\ln t} - \bar{\ln r}\) with the Welch standard error. The interval of the ratio is \(\exp(\ln\mathrm{GMR} \pm t\,\mathrm{se})\). A paired `ratio` with no pair of finite values raises `ValueError`.
 
+**Pairing and degenerate samples.** Paired analyses (`compare(paired=True)`, `ratio`, `tost`) match the two samples with `paired_values`: by label when both samples carry labels, so the order of the individuals does not matter and an individual only one sample holds is dropped, and by position otherwise, which then needs equal sizes. A pair is dropped when either of its values is missing, which is logged at debug level; the analysis runs on the remaining pairs, so a missing parameter of one subject costs that subject and does not shift the pairing of the others. A sample of a single value and two samples without variance leave the statistic undefined: `statistic`, `p_value`, `df` and the interval come back as `NaN` instead of raising, while the effect itself (the difference or the ratio of the means) stays finite.
+
 **2x2 crossover.** With the log values \(y_{i1}\), \(y_{i2}\) of subject \(i\) in the two periods, the period differences \(d_i = (y_{i2} - y_{i1})/2\) and the totals \(u_i = y_{i1} + y_{i2}\), and the sequences A (test in period 2) and B (test in period 1)[^chow]:
 
 \[\hat F = \bar d_A - \bar d_B, \qquad \hat P = \bar d_A + \bar d_B, \qquad \hat C = \bar u_A - \bar u_B,\]

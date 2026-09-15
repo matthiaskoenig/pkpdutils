@@ -39,9 +39,14 @@ TEST_VALUES = np.exp(log_value(TRUE_LOG_RATIO, PERIOD_TEST))
 REF_VALUES = np.exp(log_value(0.0, PERIOD_REF))
 
 
-def crossover_samples() -> tuple[ParameterSample, ParameterSample]:
+def crossover_samples(
+    missing: int | None = None,
+) -> tuple[ParameterSample, ParameterSample]:
+    test_values = TEST_VALUES.copy()
+    if missing is not None:
+        test_values[missing] = np.nan
     test = ParameterSample(
-        values=TEST_VALUES,
+        values=test_values,
         labels=SUBJECTS,
         coords={"period": PERIOD_TEST, "sequence": SEQUENCE},
         name="auc_inf_obs",
@@ -58,16 +63,20 @@ def crossover_samples() -> tuple[ParameterSample, ParameterSample]:
     return test, reference
 
 
-def ols_crossover() -> tuple[float, float, float]:
-    """Treatment effect, its standard error and the residual variance of the ANOVA with subject, period and treatment effects."""
-    y = np.concatenate([np.log(TEST_VALUES), np.log(REF_VALUES)])
-    treatment = np.concatenate([np.ones(N), np.zeros(N)])
-    period2 = np.concatenate([PERIOD_TEST == 2, PERIOD_REF == 2]).astype(float)
-    subject = np.concatenate([np.eye(N), np.eye(N)])[:, 1:]  # drop one subject dummy
-    x = np.column_stack([np.ones(2 * N), treatment, period2, subject])
+def ols_crossover(subjects: np.ndarray | None = None) -> tuple[float, float, float]:
+    """Treatment effect, its standard error and the residual variance of the ANOVA with subject, period and treatment effects, over the subjects of the mask."""
+    mask = np.ones(N, dtype=bool) if subjects is None else np.asarray(subjects)
+    n = int(mask.sum())
+    y = np.concatenate([np.log(TEST_VALUES[mask]), np.log(REF_VALUES[mask])])
+    treatment = np.concatenate([np.ones(n), np.zeros(n)])
+    period2 = np.concatenate([PERIOD_TEST[mask] == 2, PERIOD_REF[mask] == 2]).astype(
+        float
+    )
+    subject = np.concatenate([np.eye(n), np.eye(n)])[:, 1:]  # drop one subject dummy
+    x = np.column_stack([np.ones(2 * n), treatment, period2, subject])
     beta, *_ = np.linalg.lstsq(x, y, rcond=None)
     residuals = y - x @ beta
-    mse = residuals @ residuals / (2 * N - x.shape[1])
+    mse = residuals @ residuals / (2 * n - x.shape[1])
     cov = mse * np.linalg.inv(x.T @ x)
     return float(beta[1]), float(np.sqrt(cov[1, 1])), float(mse)
 
@@ -89,6 +98,20 @@ def test_crossover_equals_the_anova() -> None:
     # the period effect of 0.2 is detected (p = 7e-4 for this seed), the sequence (carryover) effect is absent (p = 0.68)
     assert res.p_period < 0.01 and res.p_sequence > 0.05
     assert res.n_test == N and res.n_reference == N and res.name == "auc_inf_obs"
+
+
+def test_crossover_with_a_missing_value_keeps_the_design() -> None:
+    test, reference = crossover_samples(missing=0)
+    res = tost(test, reference)
+    assert res.design is Design.CROSSOVER
+    assert res.n_test == N - 1 and res.n_reference == N - 1
+    assert res.df == N - 3
+    mask = np.ones(N, dtype=bool)
+    mask[0] = False
+    effect, se, mse = ols_crossover(mask)
+    assert res.log_ratio == pytest.approx(effect)
+    assert res.se_log == pytest.approx(se)
+    assert res.cv_intra == pytest.approx(np.sqrt(np.expm1(mse)))
 
 
 def test_tost_p_values_and_verdict() -> None:

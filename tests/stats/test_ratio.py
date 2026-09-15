@@ -83,6 +83,31 @@ def test_summary_data() -> None:
         ratio(t, ParameterSample(values=REF), paired=True)
 
 
+def test_paired_drops_only_the_pair_with_a_missing_value() -> None:
+    labels = np.array(["s0", "s1", "s2"])
+    t = ParameterSample(values=np.array([100.0, np.nan, 300.0]), labels=labels)
+    r = ParameterSample(values=np.array([np.nan, 200.0, 300.0]), labels=labels)
+    res = ratio(t, r)
+    assert res.paired
+    assert res.gmr == pytest.approx(1.0) and res.log_ratio == pytest.approx(0.0)
+    assert res.n_test == 1 and res.n_reference == 1
+    assert np.isnan(res.se_log) and np.isnan(res.df)
+    assert np.isnan(res.ci_low) and np.isnan(res.ci_high)
+
+
+def test_unpaired_single_value_gives_nan_statistics() -> None:
+    res = ratio(ParameterSample(values=np.array([100.0])), ParameterSample(values=REF))
+    assert not res.paired and res.n_test == 1
+    assert res.gmr == pytest.approx(100.0 / np.exp(np.log(REF).mean()))
+    assert np.isnan(res.se_log) and np.isnan(res.df)
+    assert np.isnan(res.ci_low) and np.isnan(res.ci_high)
+    summary = ratio(
+        ParameterSample(mean=100.0, sd=20.0, n=1), ParameterSample(values=REF)
+    )
+    assert np.isnan(summary.df) and np.isnan(summary.ci_low)
+    assert np.isfinite(summary.gmr)
+
+
 def test_paired_needs_finite_pairs() -> None:
     t = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))
     r = ParameterSample(values=np.array([np.nan, np.nan]), labels=np.array(["a", "b"]))

@@ -32,7 +32,14 @@ from pkpdutils.stats.meta import (
     random_effects,
 )
 from pkpdutils.stats.ratio import RatioResult, ratio
-from pkpdutils.stats.sample import ParameterSample, Scale, Summary, summarize
+from pkpdutils.stats.sample import (
+    ParameterSample,
+    Scale,
+    Summary,
+    paired_indices,
+    paired_values,
+    summarize,
+)
 from pkpdutils.stats.tests import (
     AdjustMethod,
     Alternative,
@@ -75,6 +82,8 @@ __all__ = [
     "meta_analysis",
     "meta_analysis_by",
     "multiple_comparison",
+    "paired_indices",
+    "paired_values",
     "random_effects",
     "ratio",
     "substrate_sensitivity",

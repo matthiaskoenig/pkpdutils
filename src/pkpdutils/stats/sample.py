@@ -9,6 +9,7 @@ are translated with the moment relations of the log-normal distribution
 (Rowland & Tozer 2011, ch. 8; `lognormal_from_moments`).
 """
 
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -16,6 +17,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.stats import t as student_t
+
+logger = logging.getLogger(__name__)
 
 
 class Scale(StrEnum):
@@ -88,6 +91,26 @@ def moments_from_lognormal(mu: float, sigma: float) -> tuple[float, float]:
     """
     mean = float(np.exp(mu + sigma**2 / 2.0))
     return mean, float(mean * np.sqrt(np.expm1(sigma**2)))
+
+
+def _log_positive(values: np.ndarray, name: str) -> np.ndarray:
+    """The logarithms of an array which must be positive.
+
+    Args:
+        values: the values.
+        name: name of the parameter for the error message.
+
+    Returns:
+        The logarithms.
+
+    Raises:
+        ValueError: if a value is not positive.
+    """
+    if np.any(values <= 0):
+        raise ValueError(
+            f"'{name}' has non-positive values, the log scale needs positive values"
+        )
+    return np.log(values)
 
 
 def _array(value: Any, name: str) -> np.ndarray:
@@ -297,12 +320,7 @@ class ParameterSample:
         Raises:
             ValueError: if a finite value is not positive.
         """
-        values = self.finite_values
-        if np.any(values <= 0):
-            raise ValueError(
-                f"'{self.name}' has non-positive values, the log scale needs positive values"
-            )
-        return np.log(values)
+        return _log_positive(self.finite_values, self.name)
 
     def log_moments(self) -> tuple[float, float]:
         """Mean and standard deviation of the logarithm.
@@ -388,6 +406,98 @@ class ParameterSample:
             The summary.
         """
         return summarize(self, scale=scale, ci_level=ci_level)
+
+
+def paired_indices(
+    a: ParameterSample, b: ParameterSample
+) -> tuple[np.ndarray, np.ndarray]:
+    """The indices of the matched pairs of two samples of individual data.
+
+    When both samples carry labels the pairs are matched by label: a label
+    which only one sample carries is dropped, so a missing individual does
+    not break the pairing. Without labels on both samples (also when only
+    one of them is labelled) the pairs are matched by position and the
+    samples must have the same length. A pair is dropped when either of its
+    two values is not finite; dropped pairs are logged at debug level.
+
+    Args:
+        a: the first sample.
+        b: the second sample.
+
+    Returns:
+        The indices into `a.values` and into `b.values` of the surviving
+        pairs, in the order of `a`.
+
+    Raises:
+        ValueError: for summary data, for labels which are duplicated within
+            a sample or whose sets are disjoint, for unequal sizes without
+            labels, or when no pair of finite values remains.
+    """
+    if not (a.is_individual and b.is_individual):
+        raise ValueError(
+            f"Pairing '{a.name}' and '{b.name}' needs individual data of both samples"
+        )
+    assert a.values is not None and b.values is not None
+    if a.labels is not None and b.labels is not None:
+        labels_a, labels_b = a.labels.tolist(), b.labels.tolist()
+        for sample, labels in ((a, labels_a), (b, labels_b)):
+            if len(set(labels)) != len(labels):
+                raise ValueError(
+                    f"'{sample.name}' has duplicate labels, pairing needs one value per individual"
+                )
+        position = {label: i for i, label in enumerate(labels_b)}
+        shared = [
+            (i, position[label])
+            for i, label in enumerate(labels_a)
+            if label in position
+        ]
+        if not shared:
+            raise ValueError(
+                f"The labels of '{a.name}' and '{b.name}' do not match, pairing needs the same individuals"
+            )
+        index_a = np.array([i for i, _ in shared], dtype=np.intp)
+        index_b = np.array([j for _, j in shared], dtype=np.intp)
+    else:
+        if a.values.size != b.values.size:
+            raise ValueError(
+                f"paired samples need equal sizes, got {a.values.size} and {b.values.size}"
+            )
+        index_a = np.arange(a.values.size, dtype=np.intp)
+        index_b = np.arange(b.values.size, dtype=np.intp)
+    keep = np.isfinite(a.values[index_a]) & np.isfinite(b.values[index_b])
+    dropped = int(keep.size - keep.sum())
+    if dropped:
+        logger.debug(
+            "%d of %d pairs of '%s' and '%s' dropped: missing values",
+            dropped,
+            keep.size,
+            a.name,
+            b.name,
+        )
+    index_a, index_b = index_a[keep], index_b[keep]
+    if index_a.size == 0:
+        raise ValueError(f"'{a.name}' and '{b.name}' have no pair of finite values")
+    return index_a, index_b
+
+
+def paired_values(
+    a: ParameterSample, b: ParameterSample
+) -> tuple[np.ndarray, np.ndarray]:
+    """The raw values of two samples as matched pairs, see `paired_indices`.
+
+    Args:
+        a: the first sample.
+        b: the second sample.
+
+    Returns:
+        The values of `a` and of `b` of the surviving pairs, in matching order.
+
+    Raises:
+        ValueError: as `paired_indices`.
+    """
+    index_a, index_b = paired_indices(a, b)
+    assert a.values is not None and b.values is not None
+    return a.values[index_a], b.values[index_b]
 
 
 def summarize(

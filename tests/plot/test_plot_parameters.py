@@ -59,6 +59,38 @@ def test_plot_parameters_single_group_linear() -> None:
     matplotlib.pyplot.close("all")
 
 
+def _result_with_values(values: np.ndarray) -> ParameterResult:
+    n = values.size
+    ds = xr.Dataset(
+        {
+            "value": (("individual",), values, {"units": "mg/l"}),
+            "flags": (
+                ("individual",),
+                np.zeros(n, dtype=np.int64),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={
+            "individual": [f"s{i}" for i in range(n)],
+            "sex": ("individual", ["F", "M"] * (n // 2)),
+        },
+    )
+    return ParameterResult(ds)
+
+
+def test_plot_parameters_log_ticks_over_several_decades() -> None:
+    values = np.array([1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0])
+    fig = plot_parameters(_result_with_values(values), "value", "individual", log=True)
+    ax = fig.axes[0]
+    fig.canvas.draw()
+    labels = [t.get_text() for t in ax.get_yticklabels(which="both")]
+    non_empty = [label for label in labels if label]
+    assert len(non_empty) <= 12, non_empty
+    assert not any("^" in label for label in non_empty)
+    assert "1000" in non_empty
+    matplotlib.pyplot.close("all")
+
+
 def _result_with_nonpositive_value() -> ParameterResult:
     individual = [f"s{i}" for i in range(4)]
     values = np.array([1.0, 2.0, 3.0, -0.5])

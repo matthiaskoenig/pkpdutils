@@ -9,6 +9,8 @@ from pkpdutils.stats.sample import (
     lognormal_from_geometric,
     lognormal_from_moments,
     moments_from_lognormal,
+    paired_indices,
+    paired_values,
     summarize,
 )
 
@@ -135,6 +137,94 @@ def test_summarize_single_value() -> None:
     summary = summarize([3.0])
     assert summary.n == 1 and summary.mean == 3.0 and np.isnan(summary.sd)
     assert np.isnan(summary.ci_low) and np.isnan(summary.geocv)
+
+
+def test_paired_values_by_label_ignores_the_order() -> None:
+    a = ParameterSample(
+        values=np.array([1.0, 2.0, 3.0]), labels=np.array(["s0", "s1", "s2"])
+    )
+    b = ParameterSample(
+        values=np.array([30.0, 10.0, 20.0]), labels=np.array(["s2", "s0", "s1"])
+    )
+    x, y = paired_values(a, b)
+    assert x.tolist() == [1.0, 2.0, 3.0]
+    assert y.tolist() == [10.0, 20.0, 30.0]
+    index_a, index_b = paired_indices(a, b)
+    assert index_a.tolist() == [0, 1, 2] and index_b.tolist() == [1, 2, 0]
+
+
+def test_paired_values_by_position_without_labels() -> None:
+    a = ParameterSample(values=np.array([1.0, 2.0]))
+    b = ParameterSample(values=np.array([10.0, 20.0]))
+    x, y = paired_values(a, b)
+    assert x.tolist() == [1.0, 2.0] and y.tolist() == [10.0, 20.0]
+    # only one sample is labelled: the pairing is by position as well
+    labelled = ParameterSample(values=np.array([1.0, 2.0]), labels=np.array(["b", "a"]))
+    x2, y2 = paired_values(labelled, b)
+    assert x2.tolist() == [1.0, 2.0] and y2.tolist() == [10.0, 20.0]
+
+
+def test_paired_values_drops_a_pair_with_a_missing_value() -> None:
+    labels = np.array(["s0", "s1", "s2"])
+    a = ParameterSample(values=np.array([100.0, np.nan, 300.0]), labels=labels)
+    b = ParameterSample(values=np.array([np.nan, 200.0, 300.0]), labels=labels)
+    x, y = paired_values(a, b)
+    assert x.tolist() == [300.0] and y.tolist() == [300.0]
+    index_a, index_b = paired_indices(a, b)
+    assert index_a.tolist() == [2] and index_b.tolist() == [2]
+    # without labels the same pairs are dropped, by position
+    x2, y2 = paired_values(
+        ParameterSample(values=a.values), ParameterSample(values=b.values)
+    )
+    assert x2.tolist() == [300.0] and y2.tolist() == [300.0]
+
+
+def test_paired_values_keeps_only_the_shared_labels() -> None:
+    a = ParameterSample(
+        values=np.array([1.0, 2.0, 3.0]), labels=np.array(["s0", "s1", "s2"])
+    )
+    b = ParameterSample(values=np.array([20.0, 30.0]), labels=np.array(["s1", "s2"]))
+    x, y = paired_values(a, b)
+    assert x.tolist() == [2.0, 3.0] and y.tolist() == [20.0, 30.0]
+
+
+def test_paired_values_logs_the_dropped_pairs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    labels = np.array(["s0", "s1"])
+    a = ParameterSample(values=np.array([1.0, np.nan]), labels=labels, name="auc")
+    b = ParameterSample(values=np.array([10.0, 20.0]), labels=labels, name="auc")
+    with caplog.at_level("DEBUG", logger="pkpdutils.stats.sample"):
+        paired_values(a, b)
+    assert "1 of 2 pairs of 'auc' and 'auc' dropped: missing values" in caplog.text
+
+
+def test_paired_values_errors() -> None:
+    a = ParameterSample(values=np.array([1.0, 2.0]), labels=np.array(["s0", "s1"]))
+    disjoint = ParameterSample(values=np.array([1.0, 2.0]), labels=np.array(["x", "y"]))
+    with pytest.raises(ValueError, match="labels"):
+        paired_values(a, disjoint)
+    duplicate = ParameterSample(
+        values=np.array([1.0, 2.0]), labels=np.array(["s0", "s0"]), name="dup"
+    )
+    with pytest.raises(ValueError, match="duplicate labels"):
+        paired_values(a, duplicate)
+    with pytest.raises(ValueError, match="duplicate labels"):
+        paired_values(duplicate, a)
+    with pytest.raises(ValueError, match="equal sizes"):
+        paired_values(
+            ParameterSample(values=np.array([1.0, 2.0])),
+            ParameterSample(values=np.array([1.0])),
+        )
+    with pytest.raises(ValueError, match="no pair of finite values"):
+        paired_values(
+            ParameterSample(values=np.array([1.0, np.nan])),
+            ParameterSample(values=np.array([np.nan, 2.0])),
+        )
+    with pytest.raises(ValueError, match="needs individual data"):
+        paired_values(ParameterSample(mean=1.0, sd=0.1, n=3), a)
+    with pytest.raises(ValueError, match="needs individual data"):
+        paired_values(a, ParameterSample(mean=1.0, sd=0.1, n=3))
 
 
 def test_summarize_non_positive_value_linear_vs_log() -> None:

@@ -32,7 +32,11 @@ def plot_parameters(
 
     Every individual is a jittered point, every group a box plot, and the
     geometric mean (`scale=LOG`) or the arithmetic mean with the t interval
-    of `summarize` at `ci_level` a marker with an error bar.
+    of `summarize` at `ci_level` a marker with an error bar. A group with a
+    non-positive value gets the arithmetic mean marker instead of the
+    geometric one, which is logged at debug level. With `log=True` the
+    non-positive points are left out of the strip, since a logarithmic axis
+    cannot show them.
 
     Args:
         result: the result the parameter is taken from.

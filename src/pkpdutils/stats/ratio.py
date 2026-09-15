@@ -6,7 +6,12 @@ from typing import Any
 import numpy as np
 from scipy.stats import t as student_t
 
-from pkpdutils.stats.sample import ParameterSample, Scale
+from pkpdutils.stats.sample import (
+    ParameterSample,
+    Scale,
+    _log_positive,
+    paired_values,
+)
 from pkpdutils.stats.tests import _welch_df
 
 
@@ -67,7 +72,7 @@ class RatioResult:
 def _pair(
     test: ParameterSample, reference: ParameterSample
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The log values of two paired samples, matched by label when both have labels.
+    """The log values of two paired samples, matched by `paired_values`.
 
     Args:
         test: the test sample.
@@ -78,30 +83,17 @@ def _pair(
 
     Raises:
         ValueError: for summary data, unequal sizes, labels which do not
-            match, or no pair of finite values.
+            match, no pair of finite values, or a non-positive value.
     """
-    if not (test.is_individual and reference.is_individual):
-        raise ValueError("A paired ratio needs individual data of both samples")
-    x, y = test.log_values, reference.log_values
-    lx, ly = test.finite_labels, reference.finite_labels
-    if lx is not None and ly is not None:
-        if set(lx.tolist()) != set(ly.tolist()) or lx.size != ly.size:
-            raise ValueError(
-                f"The labels of '{test.name}' and '{reference.name}' do not match; pairing needs the same individuals"
-            )
-        order = {label: i for i, label in enumerate(ly.tolist())}
-        y = y[[order[label] for label in lx.tolist()]]
-    elif x.size != y.size:
-        raise ValueError(f"paired samples need equal sizes, got {x.size} and {y.size}")
-    if x.size == 0:
-        raise ValueError(
-            f"'{test.name}' and '{reference.name}' have no pair of finite values"
-        )
-    return x, y
+    x, y = paired_values(test, reference)
+    return _log_positive(x, test.name), _log_positive(y, reference.name)
 
 
 def _labels_match(test: ParameterSample, reference: ParameterSample) -> bool:
-    """Whether both samples are individual, labelled and hold the same labels.
+    """Whether both samples are individual, labelled and share an individual.
+
+    Which values are finite does not enter, so a missing value does not turn
+    a paired design into an unpaired one.
 
     Args:
         test: the test sample.
@@ -110,10 +102,12 @@ def _labels_match(test: ParameterSample, reference: ParameterSample) -> bool:
     Returns:
         `True` if the samples can be paired by label.
     """
-    lx, ly = test.finite_labels, reference.finite_labels
+    if not (test.is_individual and reference.is_individual):
+        return False
+    lx, ly = test.labels, reference.labels
     if lx is None or ly is None:
         return False
-    return lx.size == ly.size and set(lx.tolist()) == set(ly.tolist())
+    return bool(set(lx.tolist()) & set(ly.tolist()))
 
 
 def ratio(
@@ -130,13 +124,17 @@ def ratio(
     groups): the Welch t interval of \(\bar{\ln t} - \bar{\ln r}\). The interval of
     the ratio is the exponentiated interval (FDA 2001; Schuirmann 1987).
     Summary data uses the log moments of `ParameterSample.log_moments`.
+    Paired samples are matched with `paired_values`, by label when both
+    samples carry labels and by position otherwise; a pair with a missing
+    value is dropped. A sample of one value or two samples without variance
+    give `NaN` for `se_log`, `df` and the interval, the `gmr` stays finite.
 
     Args:
         test: the test sample.
         reference: the reference sample.
         ci_level: level of the interval, 0.90 by default as in bioequivalence.
         paired: pair the samples (by label when both have labels, else by
-            position); `None` pairs when both samples carry the same labels.
+            position); `None` pairs when both samples share a label.
 
     Returns:
         The ratio.
@@ -153,7 +151,7 @@ def ratio(
         n = d.size
         center = float(d.mean())
         se = float(d.std(ddof=1) / np.sqrt(n)) if n > 1 else float("nan")
-        df = float(n - 1)
+        df = float(n - 1) if n > 1 else float("nan")
         n_test = n_reference = n
     else:
         mu_t, s_t, n_test = test.moments(Scale.LOG)

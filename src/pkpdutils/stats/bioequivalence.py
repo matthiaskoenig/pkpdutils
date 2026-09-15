@@ -21,8 +21,8 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 from pkpdutils.result import ParameterResult
-from pkpdutils.stats.ratio import RatioResult, _labels_match, _pair, ratio
-from pkpdutils.stats.sample import ParameterSample
+from pkpdutils.stats.ratio import RatioResult, _labels_match, ratio
+from pkpdutils.stats.sample import ParameterSample, _log_positive, paired_indices
 
 
 class Design(StrEnum):
@@ -172,7 +172,7 @@ def _detect_design(test: ParameterSample, reference: ParameterSample) -> Design:
 
 def _crossover(
     test: ParameterSample, reference: ParameterSample
-) -> tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, int]:
     r"""The period-difference analysis of a 2x2 crossover on the log scale.
 
     For subject \(i\) with the log values \(y_{i1}, y_{i2}\) of the two periods,
@@ -186,12 +186,16 @@ def _crossover(
     variance of the totals. The residual variance of the ANOVA is
     \(\sigma_e^2 = 2 \sigma_d^2\) (Chow & Liu 2009, ch. 3).
 
+    The subjects are the pairs of `paired_indices`, so a subject with a
+    missing value in either period is left out of the analysis.
+
     Args:
         test: the test sample with `period` and `sequence` coordinates.
         reference: the reference sample with `period` and `sequence` coordinates.
 
     Returns:
-        `log_ratio`, `se_log`, `df`, `sigma_e2`, `p_period`, `p_sequence`.
+        `log_ratio`, `se_log`, `df`, `sigma_e2`, `p_period`, `p_sequence`
+        and the number of subjects of the analysis.
 
     Raises:
         ValueError: if a subject has no two different periods, the periods
@@ -200,19 +204,14 @@ def _crossover(
             order, there are not exactly two sequences with at least two
             subjects each, or both sequences have the test in the same period.
     """
-    x, y = _pair(test, reference)
+    index_t, index_r = paired_indices(test, reference)
     assert test.values is not None and reference.values is not None
-    labels = test.finite_labels
-    assert labels is not None
-    finite_t = np.isfinite(test.values)
-    finite_r = np.isfinite(reference.values)
-    period_t = np.asarray(test.coords["period"])[finite_t]
-    sequence = np.asarray(test.coords["sequence"])[finite_t]
-    ref_labels = reference.finite_labels
-    assert ref_labels is not None
-    order = {label: i for i, label in enumerate(ref_labels.tolist())}
-    idx = [order[label] for label in labels.tolist()]
-    period_r = np.asarray(reference.coords["period"])[finite_r][idx]
+    x = _log_positive(test.values[index_t], test.name)
+    y = _log_positive(reference.values[index_r], reference.name)
+    period_t = np.asarray(test.coords["period"])[index_t]
+    sequence = np.asarray(test.coords["sequence"])[index_t]
+    period_r = np.asarray(reference.coords["period"])[index_r]
+    sequence_r = np.asarray(reference.coords["sequence"])[index_r]
     if set(np.unique(period_t).tolist()) | set(np.unique(period_r).tolist()) != {
         1,
         2,
@@ -220,7 +219,6 @@ def _crossover(
         raise ValueError(
             "A 2x2 crossover needs the periods 1 and 2, test and reference in different periods of every subject"
         )
-    sequence_r = np.asarray(reference.coords["sequence"])[finite_r][idx]
     if not np.array_equal(sequence, sequence_r):
         raise ValueError(
             "A 2x2 crossover needs the same 'sequence' coordinate on the test and the reference sample"
@@ -262,7 +260,7 @@ def _crossover(
     se_u = float(np.sqrt(sigma_u2 * factor))
     p_period = float(2.0 * student_t.sf(abs(period / se), df))
     p_sequence = float(2.0 * student_t.sf(abs(carryover / se_u), df))
-    return effect, se, df, float(2.0 * sigma_d2), p_period, p_sequence
+    return effect, se, df, float(2.0 * sigma_d2), p_period, p_sequence, int(x.size)
 
 
 def tost(
@@ -309,9 +307,11 @@ def tost(
             raise ValueError(
                 "A crossover analysis needs the coordinates 'period' and 'sequence' on both samples"
             )
-        log_ratio, se, df, sigma_e2, p_period, p_sequence = _crossover(test, reference)
+        log_ratio, se, df, sigma_e2, p_period, p_sequence, n_subjects = _crossover(
+            test, reference
+        )
         cv_intra = float(np.sqrt(np.expm1(sigma_e2)))
-        n_test = n_reference = test.size
+        n_test = n_reference = n_subjects
     else:
         r: RatioResult = ratio(
             test, reference, ci_level=ci_level, paired=resolved is Design.PAIRED

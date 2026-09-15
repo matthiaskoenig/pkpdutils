@@ -70,6 +70,47 @@ def test_paired_needs_equal_size() -> None:
         compare(sample(A), sample(B), paired=True)
 
 
+def test_paired_matches_the_labels_not_the_positions() -> None:
+    labels = [f"s{i}" for i in range(12)]
+    a = sample(A_PAIRED, labels)
+    perm = np.random.default_rng(5).permutation(12)
+    b_permuted = sample(B_PAIRED[perm], [labels[i] for i in perm])
+    r = compare(a, b_permuted, paired=True)
+    direct = compare(a, sample(B_PAIRED, labels), paired=True)
+    assert r.p_value == pytest.approx(direct.p_value)
+    assert r.statistic == pytest.approx(direct.statistic)
+    ref = stats.ttest_rel(np.log(A_PAIRED), np.log(B_PAIRED))
+    assert r.statistic == pytest.approx(ref.statistic)
+    assert r.p_value == pytest.approx(ref.pvalue)
+    assert r.n_a == 12 and r.n_b == 12
+
+
+def test_paired_drops_only_the_pair_with_a_missing_value() -> None:
+    labels = ["s0", "s1", "s2", "s3"]
+    a = sample(np.array([100.0, np.nan, 300.0, 400.0]), labels)
+    b = sample(np.array([np.nan, 200.0, 330.0, 450.0]), labels)
+    r = compare(a, b, paired=True)
+    assert r.n_a == 2 and r.n_b == 2 and r.df == 1
+    ref = stats.ttest_rel(np.log([300.0, 400.0]), np.log([330.0, 450.0]))
+    assert r.statistic == pytest.approx(ref.statistic)
+    assert r.p_value == pytest.approx(ref.pvalue)
+
+
+def test_single_value_and_zero_variance_give_nan_statistics() -> None:
+    nan_fields = ("statistic", "p_value", "df", "ci_low", "ci_high")
+    one_value = compare(ParameterSample(values=np.array([1.0])), sample(B))
+    one_summary = compare(ParameterSample(mean=1.0, sd=0.1, n=1), sample(B))
+    constant = compare(
+        sample(np.full(5, 7.0)), sample(np.full(4, 7.0)), scale=Scale.LINEAR
+    )
+    for r in (one_value, one_summary, constant):
+        for field in nan_fields:
+            assert np.isnan(getattr(r, field)), f"{r.test} {field}"
+        assert np.isnan(r.cohen_d) and np.isnan(r.hedges_g)
+        assert np.isfinite(r.effect)
+    assert one_value.n_a == 1 and constant.effect == 0.0
+
+
 def test_one_sided_alternative() -> None:
     r = compare(sample(A), sample(B), alternative=Alternative.LESS)
     ref = stats.ttest_ind(np.log(A), np.log(B), equal_var=False, alternative="less")
