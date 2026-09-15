@@ -51,7 +51,7 @@
 - [ ] **Step 1: Branch and the link artifact**
 
 ```bash
-git switch -c fitting develop
+git switch fitting   # the branch exists and holds this plan
 ```
 In `README.md:30` and `docs/index.md:47` the citation line contains `[Computer software]`, which markdown reads as a link reference. Replace `[Computer software]` by `\[Computer software\]` in both files (`sed -i 's/ \[Computer software\]/ \\[Computer software\\]/' README.md docs/index.md`). Run `uv run zensical build --clean 2>&1 | grep -c "Computer software"` → `0`.
 
