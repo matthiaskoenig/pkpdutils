@@ -25,7 +25,9 @@ E_{\mathrm{max},\mathrm{baseline}} = E_\mathrm{max} - E_0
 from pkpdutils import NCAOptions, nca_single
 from pkpdutils.nca import Kind
 
-result = nca_single(effect_timecourse, NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0))
+result = nca_single(
+    effect_timecourse, NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0)
+)
 q = result.to_quantities()
 q["auec_baseline"], q["time_above"]
 ```

@@ -39,7 +39,9 @@ from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of
 fig = plot_fit(result, log_y=True)  # 0-D result: no indexers
 fig = plot_fit(fits, individual="s2", log_x=True)  # one sample of a batch
 fig = plot_goodness_of_fit(fits, log=True)
-fig = plot_dose_proportionality(power, test=proportionality_test(power, dose_range=(25, 400)))
+fig = plot_dose_proportionality(
+    power, test=proportionality_test(power, dose_range=(25, 400))
+)
 ```
 
 The images are written by `examples/fitting_exponential.py`, `examples/emax.py` and `examples/dose_proportionality.py`.
