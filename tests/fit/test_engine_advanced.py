@@ -3,8 +3,9 @@
 import numpy as np
 import pytest
 
-from pkpdutils.fit import FitOptions, compare_models, fit
-from pkpdutils.fit.models import BiExp, Emax, MonoExp, SigmoidEmax
+from pkpdutils.fit import FitFlag, FitOptions, compare_models, fit
+from pkpdutils.fit.engine import fit_row
+from pkpdutils.fit.models import BiExp, Emax, Linear, MonoExp, SigmoidEmax
 
 T = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
 
@@ -117,3 +118,68 @@ def test_compare_models_with_a_failed_model() -> None:
     comparison = compare_models([Emax(), SigmoidEmax()], c, e)
     assert set(comparison.results) == {"emax", "sigmoid_emax"}
     assert comparison.table["akaike_weight"].sum() == pytest.approx(1.0)
+
+
+def test_bootstrap_residuals_are_centered_and_inflated() -> None:
+    """The bootstrap `slope_se` of a linear fit with known gaussian noise agrees with the Jacobian one.
+
+    Efron & Tibshirani 1993, ch. 9: before resampling, the weighted residuals
+    are centered and inflated by `sqrt(n / (n - k))` so their variance
+    matches the residual variance of the fit (`n = 25` points, `k = 2` free
+    parameters here).
+    """
+    rng = np.random.default_rng(21)
+    x = np.linspace(0.0, 10.0, 25)
+    y = 2.0 + 3.0 * x + rng.normal(0.0, 1.0, size=x.size)
+    jac = fit(Linear(), x, y).to_quantities()
+    boot = fit(
+        Linear(), x, y, options=FitOptions(bootstrap=400, seed=22)
+    ).to_quantities()
+    assert boot["slope_se"].magnitude == pytest.approx(
+        jac["slope_se"].magnitude, rel=0.15
+    )
+
+
+def test_bootstrap_fallback_flag_with_a_single_replicate() -> None:
+    """`bootstrap=1` can never give 2 replicates, so the Jacobian uncertainties are kept and flagged."""
+    y = data(seed=2)
+    jac = fit(MonoExp(), T, y).to_quantities()
+    result = fit(MonoExp(), T, y, options=FitOptions(bootstrap=1, seed=3))
+    q = result.to_quantities()
+    assert q["k_se"].magnitude == jac["k_se"].magnitude
+    assert "BOOTSTRAP_FALLBACK" in result.flags()
+
+
+def test_aic_aicc_bic_count_the_residual_variance_as_a_parameter() -> None:
+    """AIC/AICc/BIC use `K = k + 1` estimated parameters (Burnham & Anderson 2002, sec. 2.2, 6.9.6)."""
+    y = data(seed=0)
+    result = fit(MonoExp(), T, y)
+    q = result.to_quantities()
+    n = int(q["n_points"].magnitude)
+    k = int(q["n_parameters"].magnitude)
+    big_k = k + 1
+    cost = q["cost"].magnitude
+    ln_term = n * np.log(2.0 * cost / n)
+    expected_aic = ln_term + 2 * big_k
+    expected_bic = ln_term + big_k * np.log(n)
+    expected_aicc = expected_aic + 2 * big_k * (big_k + 1) / (n - big_k - 1)
+    assert q["aic"].magnitude == pytest.approx(expected_aic)
+    assert q["bic"].magnitude == pytest.approx(expected_bic)
+    assert q["aicc"].magnitude == pytest.approx(expected_aicc)
+    assert q["n_parameters"].magnitude == k
+
+
+def test_from_scale_overflow_fails_the_start_without_a_warning() -> None:
+    """A start giving a parameter at the `float64` maximum overflows the `log10` round trip.
+
+    `from_scale` must not let this escape as a `RuntimeWarning` under
+    `-W error`: the initial residual evaluation is then not finite and the
+    start fails cleanly (`NOT_CONVERGED`) instead of raising.
+    """
+    value = float(np.finfo(np.float64).max)
+    options = FitOptions(
+        initial={"a1": value, "k1": value, "a2": value, "k2": value}, n_starts=1
+    )
+    y = BiExp().predict(T, np.array([8.0, 2.0, 2.0, 0.2]))
+    row = fit_row(BiExp(), T, y, None, options, np.random.default_rng(0))
+    assert row.flags & int(FitFlag.NOT_CONVERGED)

@@ -10,24 +10,31 @@ statistics (Seber & Wild 1989, ch. 2; Gabrielsson & Weiner 2016, ch. 6):
 - `cov(q) = s² (JᵀJ)⁻¹`, `s² = Σ r² / (n - k)`, in the scaled space `q`
 - `se(p) = se(q) |dp/dq|`, interval `q ± t_{n-k} se(q)` transformed back
 - derived parameters by the delta method with a central difference gradient
-- `R²`, `RMSE` on the unweighted residuals; `AIC`, `AICc`, `BIC` on the weighted ones
+- `R²`, `RMSE` on the unweighted residuals; `AIC`, `AICc`, `BIC` on the weighted
+  ones, with `K = k + 1` estimated parameters (the residual variance is one of
+  them, Burnham & Anderson 2002, sec. 2.2, 6.9.6): `AIC = n ln(Σr²/n) + 2K`,
+  `AICc = AIC + 2K(K+1)/(n-K-1)`, `BIC = n ln(Σr²/n) + K ln n`; the reported
+  `n_parameters` stays `k`, the free model parameters
 
 When `options.bootstrap > 0`, `fit_row` also runs a residual bootstrap (Efron
-& Tibshirani 1993, ch. 9): the weighted residuals of the fit are resampled
-with replacement `B` times, each replicate is refitted from the fitted `p`,
-and the standard errors, the confidence intervals and the correlation matrix
-are the empirical statistics of the replicate parameters, an alternative to
-the Jacobian-based ones above that does not rely on the local linear
-approximation. `fit_rows` distributes the rows over a `ProcessPoolExecutor`
-when `options.n_workers > 1`, with one child seed per row drawn up front so
-serial and pooled runs agree; `pkpdutils.fit.compare` ranks several models on
-the same data by the corrected Akaike information criterion (Burnham &
-Anderson 2002).
+& Tibshirani 1993, ch. 9): the weighted residuals of the fit are centered and
+inflated by `sqrt(n / (n - k))` and resampled with replacement `B` times,
+each replicate is refitted from the fitted `p`, and the standard errors, the
+confidence intervals and the correlation matrix are the empirical statistics
+of the replicate parameters, an alternative to the Jacobian-based ones above
+that does not rely on the local linear approximation; fewer than two
+converged replicates fall back to the Jacobian-based statistics and set
+`FitFlag.BOOTSTRAP_FALLBACK`. `fit_rows` distributes the rows over a
+`ProcessPoolExecutor` when `options.n_workers > 1`, with one child seed per
+row drawn up front so serial and pooled runs agree; `pkpdutils.fit.compare`
+ranks several models on the same data by the corrected Akaike information
+criterion (Burnham & Anderson 2002).
 """
 
 import logging
 import math
 from collections.abc import Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,21 +60,35 @@ class RowFit:
     Attributes:
         p: the fitted parameters on the linear scale
         q: the fitted parameters on the search scale
-        se_p: standard error per parameter (`NaN` for a fixed one)
-        ci_low: lower end of the confidence interval per parameter
-        ci_high: upper end of the confidence interval per parameter
-        cov_q: covariance of the parameters on the search scale
-        correlation: correlation matrix of the parameters
+        se_p: standard error per parameter (`NaN` for a fixed one); the
+            residual bootstrap replicate standard deviation when
+            `options.bootstrap > 0` produced at least 2 converged
+            replicates, else the Jacobian-based one (`FitFlag.
+            BOOTSTRAP_FALLBACK` is set in that case)
+        ci_low: lower end of the confidence interval per parameter (a
+            bootstrap percentile under the same condition as `se_p`)
+        ci_high: upper end of the confidence interval per parameter (a
+            bootstrap percentile under the same condition as `se_p`)
+        cov_q: covariance of the parameters on the search scale; always the
+            Jacobian-based covariance, never replaced by the bootstrap (the
+            bootstrap does not produce a covariance in the search scale, only
+            replicate statistics of the linear-scale parameters)
+        correlation: correlation matrix of the parameters; from the
+            bootstrap replicates under the same condition as `se_p`, else
+            from `cov_q`
         derived: the derived parameters of the model
-        derived_se: standard error per derived parameter (delta method)
+        derived_se: standard error per derived parameter (delta method, or
+            the bootstrap replicate standard deviation, under the same
+            condition as `se_p`)
         derived_ci_low: lower end of the interval per derived parameter
         derived_ci_high: upper end of the interval per derived parameter
         cost: the value of the scipy cost function `0.5 Σ ρ(r²)`
         r2: coefficient of determination of the unweighted residuals
         rmse: root mean squared error of the unweighted residuals
-        aic: Akaike information criterion
-        aicc: Akaike information criterion with the small sample correction
-        bic: Bayesian information criterion
+        aic: Akaike information criterion, `K = k + 1` estimated parameters
+        aicc: Akaike information criterion with the small sample correction,
+            `NaN` when `n - K - 1 <= 0`
+        bic: Bayesian information criterion, `K = k + 1` estimated parameters
         n_points: number of points used in the fit
         n_starts_converged: number of start points which converged
         y_pred: the prediction per point of the row (`NaN` for unused points)
@@ -153,6 +174,17 @@ def to_scale(p: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
 def from_scale(q: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
     """Scaled parameters back to the linear space.
 
+    A wildly out-of-range search point (a bad start, or a step the optimizer
+    proposes before it is rejected) can make `10 ** q` or `exp(q)` overflow;
+    that overflow is evaluated under `numpy.errstate(over="ignore")` and
+    becomes `inf` silently rather than raising a `RuntimeWarning`, which
+    would otherwise escape as an exception under a strict warning filter and
+    is not one of the exceptions the caller expects from a failed start. The
+    resulting non-finite parameter makes the residuals non-finite too, which
+    `scipy.optimize.least_squares` already turns into a `ValueError` the
+    caller catches, so the start fails cleanly instead of the process
+    crashing.
+
     Args:
         q: the parameters on the search scale.
         scales: the scale per parameter.
@@ -161,11 +193,12 @@ def from_scale(q: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
         The parameters on the linear scale.
     """
     p = np.array(q, dtype=np.float64)
-    for i, scale in enumerate(scales):
-        if scale is ParameterScale.LOG10:
-            p[i] = 10.0 ** q[i]
-        elif scale is ParameterScale.LOG:
-            p[i] = np.exp(q[i])
+    with np.errstate(over="ignore"):
+        for i, scale in enumerate(scales):
+            if scale is ParameterScale.LOG10:
+                p[i] = 10.0 ** q[i]
+            elif scale is ParameterScale.LOG:
+                p[i] = np.exp(q[i])
     return p
 
 
@@ -495,17 +528,24 @@ def fit_row(
     nfev = 0
     for q_start in starts:
         try:
-            solution: Any = least_squares(
-                residuals,
-                q_start,
-                bounds=(lq_all[free], uq_all[free]),
-                method="trf",
-                loss=options.loss,
-                max_nfev=options.max_nfev,
-                ftol=options.ftol,
-                xtol=options.xtol,
-                gtol=options.gtol,
-            )
+            # a wild start can make the model overflow to `inf` or `nan`
+            # (`from_scale` already silences its own overflow); scipy turns
+            # a non-finite residual into a `ValueError` it raises itself, so
+            # ignoring the floating-point warning here just lets that failure
+            # path run instead of the warning escaping as an exception under
+            # a strict filter (`pytest -W error`).
+            with np.errstate(over="ignore", invalid="ignore"):
+                solution: Any = least_squares(
+                    residuals,
+                    q_start,
+                    bounds=(lq_all[free], uq_all[free]),
+                    method="trf",
+                    loss=options.loss,
+                    max_nfev=options.max_nfev,
+                    ftol=options.ftol,
+                    xtol=options.xtol,
+                    gtol=options.gtol,
+                )
         except (ValueError, np.linalg.LinAlgError) as err:
             logger.debug("start failed: %s", err)
             continue
@@ -602,32 +642,52 @@ def fit_row(
     r2 = 1.0 - float(np.sum(e**2)) / tss if tss > 0 else math.nan
     rmse = math.sqrt(float(np.sum(e**2)) / n)
     ln_term = n * math.log(rss_w / n) if rss_w > 0 else -math.inf
-    aic = ln_term + 2 * k
-    aicc = aic + 2 * k * (k + 1) / (n - k - 1) if n - k - 1 > 0 else math.nan
-    bic = ln_term + k * math.log(n)
+    # AIC/AICc/BIC count the residual variance as an estimated parameter,
+    # `K = k + 1` (Burnham & Anderson 2002, sec. 2.2, 6.9.6); `n_parameters`
+    # of the result stays `k`, the free model parameters.
+    big_k = k + 1
+    aic = ln_term + 2 * big_k
+    aicc = (
+        aic + 2 * big_k * (big_k + 1) / (n - big_k - 1)
+        if n - big_k - 1 > 0
+        else math.nan
+    )
+    bic = ln_term + big_k * math.log(n)
     full_pred = np.full(x.size, np.nan)
     full_res = np.full(x.size, np.nan)
     full_pred[ok] = y_pred
     full_res[ok] = r
     # residual bootstrap (Efron & Tibshirani 1993, ch. 9): the weighted
-    # residuals of the fit are resampled with replacement and the model is
-    # refitted from the fitted `p`, single start, the same bounds and scale;
-    # the standard errors, the intervals and the correlation matrix are then
-    # the empirical statistics of the replicate parameters, an alternative to
-    # the Jacobian-based ones above that does not rely on the local linear
-    # approximation of the covariance. A replicate whose refit fails or does
-    # not converge is skipped; the phases of a sum of exponentials are
-    # reordered exactly as the reported fit was (never when a parameter is
-    # pinned by `options.fixed` or `options.bounds`), so every replicate is
-    # compared under the same parameter labelling as `p`.
+    # residuals of the fit are centered and inflated by `sqrt(n / (n - k))`
+    # so their variance matches the residual variance of the fit rather than
+    # the smaller variance of the raw residuals (ch. 9, eq. 9.10), then
+    # resampled with replacement, and the model is refitted from the fitted
+    # `p`, single start, the same bounds and scale; the standard errors, the
+    # intervals and the correlation matrix are then the empirical statistics
+    # of the replicate parameters, an alternative to the Jacobian-based ones
+    # above that does not rely on the local linear approximation of the
+    # covariance. A replicate whose refit fails or does not converge is
+    # skipped; the phases of a sum of exponentials are reordered exactly as
+    # the reported fit was (never when a parameter is pinned by
+    # `options.fixed` or `options.bounds`), so every replicate is compared
+    # under the same parameter labelling as `p`. Fewer than two converged
+    # replicates cannot estimate an uncertainty, so the Jacobian-based
+    # statistics are kept and `FitFlag.BOOTSTRAP_FALLBACK` is set.
     n_boot = 0
     if options.bootstrap > 0:
+        # center and inflate the weighted residuals so their empirical
+        # variance matches the residual variance of the fit, `s^2 = rss_w /
+        # (n - k)`, rather than the (smaller) variance of the raw residuals,
+        # `rss_w / n` (Efron & Tibshirani 1993, ch. 9, eq. 9.10): `r_adj =
+        # (r - mean(r)) * sqrt(n / (n - k))`. `n - k >= 1` here, the row
+        # already returned `TOO_FEW_POINTS` otherwise.
+        r_adj = (r - r.mean()) * math.sqrt(n / (n - k))
         q_free = q_all[free]
         rows_p: list[np.ndarray] = []
         rows_q: list[np.ndarray] = []
         rows_d: list[dict[str, float]] = []
         for _ in range(options.bootstrap):
-            r_star = rng.choice(r, size=r.size, replace=True)
+            r_star = rng.choice(r_adj, size=r_adj.size, replace=True)
             y_star = y_pred + r_star * sqrt_var
 
             def residuals_star(
@@ -637,17 +697,18 @@ def fit_row(
                 return (y_star - model.predict(xs, full_p(qf))) / sqrt_var
 
             try:
-                sol_star: Any = least_squares(
-                    residuals_star,
-                    q_free,
-                    bounds=(lq_all[free], uq_all[free]),
-                    method="trf",
-                    loss=options.loss,
-                    max_nfev=options.max_nfev,
-                    ftol=options.ftol,
-                    xtol=options.xtol,
-                    gtol=options.gtol,
-                )
+                with np.errstate(over="ignore", invalid="ignore"):
+                    sol_star: Any = least_squares(
+                        residuals_star,
+                        q_free,
+                        bounds=(lq_all[free], uq_all[free]),
+                        method="trf",
+                        loss=options.loss,
+                        max_nfev=options.max_nfev,
+                        ftol=options.ftol,
+                        xtol=options.xtol,
+                        gtol=options.gtol,
+                    )
             except (ValueError, np.linalg.LinAlgError) as err:
                 logger.debug("bootstrap replicate failed: %s", err)
                 continue
@@ -661,16 +722,23 @@ def fit_row(
             rows_q.append(to_scale(p_star, scales))
             rows_d.append(model.derived(p_star))
         n_boot = len(rows_p)
-        if n_boot >= 2:
+        if n_boot < 2:
+            # too few replicates converged to estimate the uncertainty from;
+            # the Jacobian-based se_p/ci_low/ci_high/correlation computed
+            # above are kept and the caller is told so through the flag.
+            flags |= int(FitFlag.BOOTSTRAP_FALLBACK)
+        else:
             arr_p = np.stack(rows_p)
             arr_q = np.stack(rows_q)
             alpha = 1.0 - options.ci_level
-            se_p = np.where(free, arr_p.std(axis=0, ddof=1), np.nan)
+            # nan-tolerant: a replicate can be finite in its own parameters
+            # but give a non-finite derived quantity (e.g. thalf for k ~ 0)
+            se_p = np.where(free, np.nanstd(arr_p, axis=0, ddof=1), np.nan)
             ci_low = np.where(
-                free, np.percentile(arr_p, 100 * alpha / 2, axis=0), np.nan
+                free, np.nanpercentile(arr_p, 100 * alpha / 2, axis=0), np.nan
             )
             ci_high = np.where(
-                free, np.percentile(arr_p, 100 * (1 - alpha / 2), axis=0), np.nan
+                free, np.nanpercentile(arr_p, 100 * (1 - alpha / 2), axis=0), np.nan
             )
             with np.errstate(invalid="ignore", divide="ignore"):
                 corr_b = np.corrcoef(arr_q[:, free], rowvar=False)
@@ -678,9 +746,11 @@ def fit_row(
             corr[np.ix_(free, free)] = np.atleast_2d(corr_b)
             for name in derived:
                 values = np.array([d[name] for d in rows_d], dtype=np.float64)
-                derived_se[name] = float(values.std(ddof=1))
-                derived_lo[name] = float(np.percentile(values, 100 * alpha / 2))
-                derived_hi[name] = float(np.percentile(values, 100 * (1 - alpha / 2)))
+                derived_se[name] = float(np.nanstd(values, ddof=1))
+                derived_lo[name] = float(np.nanpercentile(values, 100 * alpha / 2))
+                derived_hi[name] = float(
+                    np.nanpercentile(values, 100 * (1 - alpha / 2))
+                )
     return RowFit(
         p=p,
         q=q_all,
@@ -756,8 +826,6 @@ def fit_rows(
         for i in range(y.shape[0])
     ]
     if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
-        from concurrent.futures import ProcessPoolExecutor
-
         with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
             return list(pool.map(_fit_row_job, jobs))
     return [_fit_row_job(job) for job in jobs]

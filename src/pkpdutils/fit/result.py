@@ -30,13 +30,26 @@ class FitResult(ParameterResult):
     fitted on a log scale, so asymmetric around the estimate), while the
     interval of a derived parameter is the delta method interval
     `d +- t se(d)` and is always symmetric around `d`, even for a strongly
-    non-linear function of the parameters such as a half-life. When the fit
-    was run with `FitOptions.bootstrap > 0` (Efron & Tibshirani 1993, ch. 9),
-    `p_se` and the derived standard errors are instead the standard deviation
-    of the residual bootstrap replicates and the intervals are their
-    percentiles at `ci_level`, so they need not be symmetric around the
-    estimate. Discrete derived parameters (`discrete_parameters`, e.g.
-    `flip_flop`) carry no uncertainty variables at all.
+    non-linear function of the parameters such as a half-life. `aic`, `aicc`
+    and `bic` count the residual variance as an estimated parameter,
+    `K = k + 1` (Burnham & Anderson 2002, sec. 2.2, 6.9.6), while
+    `n_parameters` stays `k`, the free model parameters; `aicc` is `NaN`
+    when `n - K - 1 <= 0`.
+
+    When the fit was run with `FitOptions.bootstrap > 0` (Efron & Tibshirani
+    1993, ch. 9), `p_se` and the derived standard errors are the standard
+    deviation of the `n_bootstrap` converged residual bootstrap replicates
+    and the intervals are their percentiles at `ci_level`, so they need not
+    be symmetric around the estimate; the correlation matrix is likewise
+    from the replicates. Non-converged replicates are skipped, so a low
+    `n_bootstrap` relative to `attrs["bootstrap"]` (the requested count)
+    signals an unstable fit. Fewer than 2 converged replicates cannot
+    estimate an uncertainty at all: `p_se`, the intervals and the
+    correlation then fall back to the Jacobian-based ones and
+    `FitFlag.BOOTSTRAP_FALLBACK` is set in `flags`. The parameter covariance
+    `cov_q` of `RowFit` (not part of this dataset) is always Jacobian-based,
+    bootstrap or not. Discrete derived parameters (`discrete_parameters`,
+    e.g. `flip_flop`) carry no uncertainty variables at all.
     """
 
     flag_type: ClassVar[type[FitFlag]] = FitFlag

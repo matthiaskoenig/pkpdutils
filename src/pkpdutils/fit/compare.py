@@ -4,9 +4,11 @@
 by AICc (Burnham & Anderson 2002, ch. 2): `Delta_i = AICc_i - min_j AICc_j`
 and the Akaike weight `w_i = exp(-Delta_i / 2) / sum_j exp(-Delta_j / 2)`, the
 probability that model `i` is the best of the set given the candidates
-considered. A model whose AICc is `NaN` (too few points for its number of
-parameters, `n - k - 1 <= 0`) gets weight 0 and is never picked as `best`;
-when every model of a sample is `NaN`, `best` is the empty string.
+considered. AICc counts the residual variance as an estimated parameter,
+`K = k + 1` (Burnham & Anderson 2002, sec. 2.2, 6.9.6); a model whose AICc is
+`NaN` (too few points for its number of parameters, `n - K - 1 <= 0`) gets
+weight 0 and is never picked as `best`; when every model of a sample is
+`NaN`, `best` is the empty string.
 """
 
 from collections.abc import Sequence
