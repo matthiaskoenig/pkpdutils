@@ -30,7 +30,7 @@ class Scale(StrEnum):
 def lognormal_from_moments(mean: float, sd: float) -> tuple[float, float]:
     r"""Log-scale moments of a log-normal distribution with the given mean and standard deviation.
 
-    \\(\\sigma^2 = \\ln(1 + \\mathrm{sd}^2 / \\mathrm{mean}^2)\\), \\(\\mu = \\ln \\mathrm{mean} - \\sigma^2 / 2\\).
+    \(\sigma^2 = \ln(1 + \mathrm{sd}^2 / \mathrm{mean}^2)\), \(\mu = \ln \mathrm{mean} - \sigma^2 / 2\).
 
     Args:
         mean: arithmetic mean, positive.
@@ -55,11 +55,11 @@ def lognormal_from_moments(mean: float, sd: float) -> tuple[float, float]:
 def lognormal_from_geometric(geomean: float, geocv: float) -> tuple[float, float]:
     r"""Log-scale moments from a geometric mean and a geometric coefficient of variation.
 
-    \\(\\mu = \\ln \\mathrm{geomean}\\), \\(\\sigma = \\sqrt{\\ln(1 + \\mathrm{geocv}^2)}\\).
+    \(\mu = \ln \mathrm{geomean}\), \(\sigma = \sqrt{\ln(1 + \mathrm{geocv}^2)}\).
 
     Args:
         geomean: geometric mean, positive.
-        geocv: geometric coefficient of variation \\(\\sqrt{e^{\\sigma^2} - 1}\\), non-negative.
+        geocv: geometric coefficient of variation \(\sqrt{e^{\sigma^2} - 1}\), non-negative.
 
     Returns:
         `mu` and `sigma`.
@@ -77,7 +77,7 @@ def lognormal_from_geometric(geomean: float, geocv: float) -> tuple[float, float
 def moments_from_lognormal(mu: float, sigma: float) -> tuple[float, float]:
     r"""Arithmetic mean and standard deviation of a log-normal distribution.
 
-    \\(\\mathrm{mean} = e^{\\mu + \\sigma^2/2}\\), \\(\\mathrm{sd} = \\mathrm{mean}\\sqrt{e^{\\sigma^2} - 1}\\).
+    \(\mathrm{mean} = e^{\mu + \sigma^2/2}\), \(\mathrm{sd} = \mathrm{mean}\sqrt{e^{\sigma^2} - 1}\).
 
     Args:
         mu: mean of the logarithm.
@@ -119,8 +119,8 @@ class Summary:
         sd: standard deviation (`ddof=1`)
         se: standard error of the mean, `sd / sqrt(n)`
         cv: coefficient of variation, `sd / mean`
-        geomean: geometric mean \\(e^{\\mu}\\)
-        geocv: geometric coefficient of variation \\(\\sqrt{e^{\\sigma^2} - 1}\\)
+        geomean: geometric mean \(e^{\mu}\)
+        geocv: geometric coefficient of variation \(\sqrt{e^{\sigma^2} - 1}\)
         median: median (`NaN` for summary data)
         q25: first quartile (`NaN` for summary data)
         q75: third quartile (`NaN` for summary data)
@@ -245,13 +245,13 @@ class ParameterSample:
             return
         if self.n is None:
             raise ValueError(
-                "Summary data needs 'n'; give 'values or 'mean', 'sd' and 'n'"
+                "Summary data needs 'n'; give 'values' or 'mean', 'sd' and 'n'"
             )
         has_moments = self.mean is not None and self.sd is not None
         has_geometric = self.geomean is not None and self.geocv is not None
         if not (has_moments or has_geometric):
             raise ValueError(
-                "Summary data needs 'mean' and 'sd' or 'geomean' and 'geocv'; give 'values or these"
+                "Summary data needs 'mean' and 'sd' or 'geomean' and 'geocv'; give 'values' or these"
             )
         if self.n < 1:
             raise ValueError(f"'n' must be at least 1, got {self.n}")
@@ -402,9 +402,11 @@ def summarize(
 
     The arithmetic statistics, the geometric mean and the geometric CV, the
     quantiles of individual data, and a t interval: of the mean on the
-    `LINEAR` scale, \\(\\bar x \\pm t_{1-\\alpha/2, n-1}\\,\\mathrm{sd}/\\sqrt{n}\\), and of the
-    geometric mean on the `LOG` scale, \\(\\exp(\\mu \\pm t_{1-\\alpha/2, n-1}\\,\\sigma/\\sqrt{n})\\).
-    The interval and the spread are `NaN` with a single value.
+    `LINEAR` scale, \(\bar x \pm t_{1-\alpha/2, n-1}\,\mathrm{sd}/\sqrt{n}\), and of the
+    geometric mean on the `LOG` scale, \(\exp(\mu \pm t_{1-\alpha/2, n-1}\,\sigma/\sqrt{n})\).
+    The interval and the spread are `NaN` with a single value. On `LOG` a
+    non-positive value raises `ValueError`; on `LINEAR` it is tolerated and
+    `geomean`/`geocv` come back as `NaN` instead.
 
     Args:
         values: a sample, or individual values (`NaN` skipped).
@@ -425,8 +427,14 @@ def summarize(
     )
     n = sample.size
     mean, sd = sample.linear_moments()
-    mu, sigma = sample.log_moments()
     nan = float("nan")
+    if scale is Scale.LINEAR:
+        try:
+            mu, sigma = sample.log_moments()
+        except ValueError:
+            mu, sigma = nan, nan
+    else:
+        mu, sigma = sample.log_moments()
     se = sd / np.sqrt(n) if n > 1 else nan
     if sample.is_individual:
         v = sample.finite_values

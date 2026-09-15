@@ -68,7 +68,7 @@ def test_summary_sample_moments() -> None:
 
 
 def test_sample_validation() -> None:
-    with pytest.raises(ValueError, match="values or"):
+    with pytest.raises(ValueError, match="'values' or"):
         ParameterSample()
     with pytest.raises(ValueError, match="n"):
         ParameterSample(mean=1.0, sd=0.1)
@@ -135,3 +135,13 @@ def test_summarize_single_value() -> None:
     summary = summarize([3.0])
     assert summary.n == 1 and summary.mean == 3.0 and np.isnan(summary.sd)
     assert np.isnan(summary.ci_low) and np.isnan(summary.geocv)
+
+
+def test_summarize_non_positive_value_linear_vs_log() -> None:
+    non_positive = np.array([-1.0, 2.0, 3.0])
+    summary = summarize(non_positive, scale=Scale.LINEAR)
+    assert summary.mean == pytest.approx(4.0 / 3.0)
+    assert np.isnan(summary.geomean) and np.isnan(summary.geocv)
+    assert np.isfinite(summary.ci_low) and np.isfinite(summary.ci_high)
+    with pytest.raises(ValueError, match="positive"):
+        summarize(non_positive)
