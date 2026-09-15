@@ -18,6 +18,9 @@ class PlotStyle:
         linewidth: width of lines
         markersize: size of markers
         cmap: colormap of the samples of a batch
+        limit_color: color of acceptance limits and interaction thresholds
+        pooled_color: color of pooled effects
+        summary_color: color of means and intervals drawn over individual points
     """
 
     data_color: str = "black"
@@ -30,6 +33,9 @@ class PlotStyle:
     linewidth: float = 1.5
     markersize: float = 5.0
     cmap: str = "viridis"
+    limit_color: str = "tab:red"
+    pooled_color: str = "tab:orange"
+    summary_color: str = "tab:blue"
 
 
 #: the default style
