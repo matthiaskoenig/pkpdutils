@@ -325,7 +325,7 @@ def test_automatic_workers_match_serial_on_a_large_batch() -> None:
     batch = bolus_batch(30_000)
     options = NCAOptions(auc_method=AUCMethod.LOG)
     assert resolve_workers(options.n_workers, batch.n_samples) == max(
-        1, min(os.cpu_count() or 1, 8)
+        1, min(os.process_cpu_count() or 1, 8)
     )
     serial = nca(batch, options.model_copy(update={"n_workers": 1}))
     assert_same_result(nca(batch, options), serial)

@@ -24,6 +24,15 @@ taken as given. `split_rows` cuts the rows into about one contiguous slice
 per worker, bounded from below so that a worker gets enough work to pay for
 itself and from above so that the memory of the vectorized core stays bounded
 (`NCAOptions.chunk_rows`).
+
+The two pools live side by side in one process, which is safe between calls
+but not while both run: with the `fork` start method (the default of python
+3.13 on Linux, not of 3.14) the worker of a process pool is forked from a
+parent whose NCA threads may hold a lock at that moment, and the child then
+inherits the locked lock and can block forever. A script that fits in
+processes while another thread analyses in threads should therefore run on a
+`forkserver` or `spawn` start method, which is the default everywhere else,
+or serialize the two phases.
 """
 
 import atexit
@@ -38,6 +47,10 @@ logger = logging.getLogger(__name__)
 #: the kinds of executor this module hands out
 ExecutorKind = Literal["thread", "process"]
 
+#: rows from which the automatic `n_workers` of the NCA uses the thread pool,
+#: the measured break-even of the vectorized core against the pool
+NCA_WORKER_THRESHOLD = 20_000
+
 #: the live executors, keyed by kind and number of workers
 _EXECUTORS: dict[tuple[str, int], Executor] = {}
 
@@ -46,14 +59,43 @@ _EXECUTORS: dict[tuple[str, int], Executor] = {}
 _LOCK = threading.Lock()
 
 
+def _is_dead(pool: Executor) -> bool:
+    """Whether an executor can no longer run work.
+
+    A `ProcessPoolExecutor` whose worker died (`BrokenProcessPool`) and a
+    `ThreadPoolExecutor` whose initializer raised are marked broken and reject
+    every later submission; a pool that was shut down does the same. A cached
+    pool in that state is replaced rather than handed out again.
+
+    Args:
+        pool: the executor.
+
+    Returns:
+        Whether it is broken or shut down.
+    """
+    return bool(
+        getattr(pool, "_broken", False)
+        or getattr(pool, "_shutdown", False)
+        or getattr(pool, "_shutdown_thread", False)
+    )
+
+
 def executor(kind: ExecutorKind, n_workers: int) -> Executor:
     """The shared executor of a kind and size, created on first use.
 
     The executor is cached and reused for the life of the process and closed
     by an `atexit` handler (`shutdown_executors`), so the start-up of a
-    process pool is paid once and not once per call. A process executor uses
-    the default start method of the platform; with `forkserver` or `spawn`
-    the caller must run under an `if __name__ == "__main__":` guard.
+    process pool is paid once and not once per call. A cached pool that is
+    broken or shut down is dropped and replaced, so that one dead worker does
+    not fail every later call of the process. A process executor uses the
+    default start method of the platform; with `forkserver` or `spawn` the
+    caller must run under an `if __name__ == "__main__":` guard.
+
+    The pools are not re-entrant: work running in a worker of a pool must not
+    submit to that same pool and wait for the result, which deadlocks once
+    every worker waits (calling `pkpdutils.nca.nca` from a chunk of an NCA
+    that is already running in the shared thread pool, for instance). The
+    analyses of the package never do.
 
     Args:
         kind: `"thread"` for a `ThreadPoolExecutor`, `"process"` for a
@@ -62,12 +104,16 @@ def executor(kind: ExecutorKind, n_workers: int) -> Executor:
 
     Returns:
         The executor; two calls with the same kind and size return the same
-        object.
+        object while it is usable.
     """
     size = max(1, int(n_workers))
     key = (str(kind), size)
     with _LOCK:
-        pool = _EXECUTORS.get(key)
+        pool = _EXECUTORS.pop(key, None)
+        if pool is not None and _is_dead(pool):
+            logger.debug("the shared %s executor of %d workers died", kind, size)
+            pool.shutdown(wait=False)
+            pool = None
         if pool is None:
             pool = (
                 ThreadPoolExecutor(max_workers=size, thread_name_prefix="pkpdutils")
@@ -75,8 +121,27 @@ def executor(kind: ExecutorKind, n_workers: int) -> Executor:
                 else ProcessPoolExecutor(max_workers=size)
             )
             logger.debug("created the shared %s executor of %d workers", kind, size)
-            _EXECUTORS[key] = pool
+        _EXECUTORS[key] = pool
         return pool
+
+
+def evict(kind: ExecutorKind, n_workers: int) -> None:
+    """Drop the shared executor of a kind and size and shut it down.
+
+    The caller of a pool that failed (a worker process that died takes the
+    whole `ProcessPoolExecutor` with it) evicts it before it retries: the next
+    `executor` call then builds a fresh pool. Evicting an executor that is not
+    cached does nothing.
+
+    Args:
+        kind: the kind of the executor.
+        n_workers: the number of workers it was created with.
+    """
+    size = max(1, int(n_workers))
+    with _LOCK:
+        pool = _EXECUTORS.pop((str(kind), size), None)
+    if pool is not None:
+        pool.shutdown(wait=False)
 
 
 def shutdown_executors() -> None:
@@ -116,15 +181,18 @@ def resolve_workers(
     n_workers: int | None,
     n_rows: int,
     *,
-    threshold: int = 20_000,
+    threshold: int = NCA_WORKER_THRESHOLD,
     max_workers: int = 8,
 ) -> int:
     """The number of workers of a run over `n_rows` rows.
 
     `None` is the automatic default: a run below `threshold` rows is serial,
     since the pool costs more than it saves, and a larger one uses one worker
-    per core up to `max_workers` (the scaling of the shared-memory core
-    flattens there). An explicit `n_workers` is taken as given, `1` being the
+    per usable core up to `max_workers` (the scaling of the shared-memory core
+    flattens there). The cores are counted with `os.process_cpu_count`, which
+    honours the CPU affinity of the process, a cgroup quota and
+    `PYTHON_CPU_COUNT`, so a process pinned to two cores of a cluster node
+    uses two workers. An explicit `n_workers` is taken as given, `1` being the
     serial run.
 
     Args:
@@ -142,7 +210,7 @@ def resolve_workers(
         return max(1, int(n_workers))
     if n_rows < threshold:
         return 1
-    return max(1, min(os.cpu_count() or 1, max_workers))
+    return max(1, min(os.process_cpu_count() or 1, max_workers))
 
 
 def split_rows(

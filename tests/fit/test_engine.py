@@ -1,12 +1,16 @@
 """Tests of the fitting engine and the fit result."""
 
+from concurrent.futures.process import BrokenProcessPool
+from typing import Any
+
 import numpy as np
 import pytest
 from scipy.stats import t as student_t
 
-from pkpdutils.fit import FitOptions, FitResult, ParameterScale, Weighting, fit
+from pkpdutils.fit import FitOptions, FitResult, ParameterScale, Weighting, engine, fit
 from pkpdutils.fit.engine import (
     fit_row,
+    fit_rows,
     from_scale,
     scale_derivative,
     to_scale,
@@ -14,6 +18,7 @@ from pkpdutils.fit.engine import (
 )
 from pkpdutils.fit.model import Model, ModelParameter
 from pkpdutils.fit.models import Bateman, BiExp, Emax, Linear, MonoExp
+from pkpdutils.parallel import ExecutorKind
 from pkpdutils.units import ureg
 
 T = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
@@ -165,6 +170,41 @@ def test_pooled_fit_matches_serial() -> None:
         np.testing.assert_allclose(
             pooled[name].values, serial[name].values, equal_nan=True, err_msg=name
         )
+
+
+def test_pooled_fit_retries_a_broken_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A worker that dies breaks the shared pool; the batch is fitted in a fresh one."""
+    rng = np.random.default_rng(5)
+    y = np.stack([noisy_monoexp(rng)[1] for _ in range(4)])
+    x = np.broadcast_to(T, y.shape).copy()
+    options = FitOptions(seed=3, n_workers=2)
+    serial = fit_rows(
+        MonoExp(), x, y, None, options.model_copy(update={"n_workers": 1})
+    )
+
+    class BrokenPool:
+        def map(self, fn: Any, rows: Any, chunksize: int = 1) -> Any:
+            raise BrokenProcessPool("a worker of the pool died")
+
+    real = engine.executor
+    calls: list[tuple[str, int]] = []
+
+    def fake_executor(kind: ExecutorKind, n_workers: int) -> Any:
+        calls.append((kind, n_workers))
+        if len(calls) == 1:
+            return BrokenPool()
+        return real(kind, n_workers)
+
+    evicted: list[tuple[str, int]] = []
+    monkeypatch.setattr(engine, "executor", fake_executor)
+    monkeypatch.setattr(
+        engine, "evict", lambda kind, n_workers: evicted.append((kind, n_workers))
+    )
+    rows = fit_rows(MonoExp(), x, y, None, options)
+    assert calls == [("process", 2), ("process", 2)]
+    assert evicted == [("process", 2)]
+    for got, want in zip(rows, serial, strict=True):
+        np.testing.assert_allclose(got.p, want.p)
 
 
 def test_batch_rows_dims_and_nan_padding() -> None:

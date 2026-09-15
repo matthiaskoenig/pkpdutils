@@ -171,10 +171,10 @@ The two analyses use different workers, because their rows cost different things
 
 | analysis | workers | automatic from | why |
 |---|---|---|---|
-| `nca` (`run_rows`) | threads | 20 000 rows | the core is vectorized numpy and releases the GIL; no pickling and no copy of the batch, and the pool starts in half a millisecond |
-| `fit` (`fit_rows`) | processes | 2 000 rows | a row is a python-heavy `scipy.optimize.least_squares` search, which only a process escapes the GIL for; the threshold is the measured break-even of the first pooled call, whose workers import the package, against the serial run |
+| `nca` (`run_rows`) | threads | 20 000 rows (`NCA_WORKER_THRESHOLD`) | the core is vectorized numpy and releases the GIL; no pickling and no copy of the batch, and the pool starts in half a millisecond |
+| `fit` (`fit_rows`) | processes | 2 000 rows (`FIT_WORKER_THRESHOLD`) | a row is a python-heavy `scipy.optimize.least_squares` search, which only a process escapes the GIL for; the threshold is the measured break-even of the first pooled call, whose workers import the package, against the serial run |
 
-A pooled fit needs the `if __name__ == "__main__":` guard of `multiprocessing`; the threads of the NCA do not. Neither pool is used when the caller asks for `n_workers=1`.
+A pooled fit needs the `if __name__ == "__main__":` guard of `multiprocessing`; the threads of the NCA do not. Neither pool is used when the caller asks for `n_workers=1`. A pool that broke - a worker process killed by the operating system - is dropped and replaced by the next `executor` call, and `fit_rows` retries the batch once in the fresh pool; the pools are not re-entrant, so work running in a worker must never submit to the pool it runs in.
 
 ## Examples
 

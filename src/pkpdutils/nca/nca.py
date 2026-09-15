@@ -46,7 +46,12 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
-from pkpdutils.parallel import executor, resolve_workers, split_rows
+from pkpdutils.parallel import (
+    NCA_WORKER_THRESHOLD,
+    executor,
+    resolve_workers,
+    split_rows,
+)
 from pkpdutils.result import base_name, check_coordinate_collision, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
@@ -728,11 +733,14 @@ def run_rows(
 
     `options.n_workers` decides how many workers run them
     (`pkpdutils.parallel.resolve_workers`): `None` is automatic and stays in
-    the calling thread below 20 000 rows, `1` is serial and any other number
-    is taken as given. The chunks of a parallel run are mapped in order over
+    the calling thread below `pkpdutils.parallel.NCA_WORKER_THRESHOLD` rows,
+    `1` is serial and any other number is taken as given. The chunks of a parallel run are mapped in order over
     the shared thread pool (`pkpdutils.parallel.executor`), since the core is
     vectorized numpy and releases the GIL for most of its time: the chunks are
-    neither pickled nor copied and the pool starts in half a millisecond.
+    neither pickled nor copied and the pool starts in half a millisecond. The
+    temporaries of the core then live for as many chunks as run at once, so a
+    run holds up to `min(n_workers, len(chunks)) * options.chunk_rows` rows of
+    them instead of `chunk_rows`.
 
     The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
     padded with `NaN`. A row whose protocol holds more than one dose, and every
@@ -758,7 +766,9 @@ def run_rows(
         per-interval parameter of a multiple dose batch (`K` dosing intervals).
     """
     n_rows = t.shape[0]
-    n_workers = resolve_workers(options.n_workers, n_rows)
+    n_workers = resolve_workers(
+        options.n_workers, n_rows, threshold=NCA_WORKER_THRESHOLD
+    )
     # about one chunk per worker, none longer than `chunk_rows`, which bounds
     # the memory of the vectorized core; an empty batch keeps its one empty
     # chunk, so that the result carries the variables of the analysis
@@ -779,7 +789,7 @@ def run_rows(
     ]
     if n_workers > 1 and len(jobs) > 1:
         logger.debug(
-            "NCA: %d chunks of %d rows over %d threads", len(jobs), n_rows, n_workers
+            "NCA: %d rows in %d chunks over %d threads", n_rows, len(jobs), n_workers
         )
         parts = list(executor("thread", n_workers).map(_compute_chunk, jobs))
     else:

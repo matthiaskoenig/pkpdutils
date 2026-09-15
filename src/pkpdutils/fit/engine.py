@@ -37,6 +37,7 @@ import logging
 import math
 import warnings
 from collections.abc import Sequence
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,7 +50,7 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
-from pkpdutils.parallel import executor, resolve_workers
+from pkpdutils.parallel import evict, executor, resolve_workers
 from pkpdutils.result import base_name, check_coordinate_collision, nan_percentile
 
 logger = logging.getLogger(__name__)
@@ -914,8 +915,11 @@ def fit_rows(
     `scipy.optimize.least_squares` search, so a parallel run maps the rows
     over the shared process pool (`pkpdutils.parallel.executor`) in batches of
     about a quarter of the rows of a worker, which keeps the number of tasks
-    (and with them the pickling of the model and the options) small. A pooled
-    call must run under an `if __name__ == "__main__":` guard, since python's
+    (and with them the pickling of the model and the options) small. A worker
+    that dies takes the pool with it (`BrokenProcessPool`): the pool is then
+    evicted and the batch is fitted once more in a fresh one, with a warning.
+    A pooled call must run under an `if __name__ == "__main__":` guard, since
+    python's
     `spawn` and `forkserver` process start methods (the default on macOS and
     Windows, and on Linux from python 3.14) re-import the module without
     re-running it.
@@ -949,8 +953,21 @@ def fit_rows(
             n_workers,
             chunksize,
         )
-        pool = executor("process", n_workers)
-        return list(pool.map(job, rows, chunksize=chunksize))
+        try:
+            pool = executor("process", n_workers)
+            return list(pool.map(job, rows, chunksize=chunksize))
+        except BrokenProcessPool:
+            # a worker died (killed by the operating system, or by a crash in
+            # a native extension); the pool is shared, so it is dropped before
+            # the batch is fitted once more in a fresh one
+            logger.warning(
+                "fit: a worker of the shared process pool died, retrying the "
+                "%d rows in a new pool",
+                n_rows,
+            )
+            evict("process", n_workers)
+            pool = executor("process", n_workers)
+            return list(pool.map(job, rows, chunksize=chunksize))
     return [job(row) for row in rows]
 
 
