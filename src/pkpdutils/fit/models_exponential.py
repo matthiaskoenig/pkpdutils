@@ -204,10 +204,31 @@ class _SumOfExponentials(Model):
         """Curve stripping."""
         return _strip(x, y, self.phases)
 
-    def sort_parameters(self, p: np.ndarray) -> np.ndarray:
-        """Order the phases by decreasing rate constant (the engine calls this after a fit)."""
+    def parameter_order(self, p: np.ndarray) -> np.ndarray:
+        """Permutation of the parameter vector that orders the phases by decreasing rate.
+
+        Args:
+            p: phases as `[a1, k1, a2, k2, ...]`, any order.
+
+        Returns:
+            The indices of `p` which order the phases by decreasing rate
+            constant (the engine permutes the parameters, the covariance and
+            the Jacobian with it after a fit).
+        """
         pairs = p.reshape(-1, 2)
-        return pairs[np.argsort(-pairs[:, 1], kind="stable")].reshape(-1)
+        order = np.argsort(-pairs[:, 1], kind="stable")
+        return np.concatenate([[2 * i, 2 * i + 1] for i in order]).astype(np.intp)
+
+    def sort_parameters(self, p: np.ndarray) -> np.ndarray:
+        """Order the phases by decreasing rate constant (the engine calls this after a fit).
+
+        Args:
+            p: phases as `[a1, k1, a2, k2, ...]`, any order.
+
+        Returns:
+            The parameter vector with the phases ordered by decreasing rate.
+        """
+        return p[self.parameter_order(p)]
 
 
 class BiExp(_SumOfExponentials):
