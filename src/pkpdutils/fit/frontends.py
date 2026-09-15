@@ -62,6 +62,31 @@ def fit_timecourses(
     )
 
 
+def _check_broadcastable(
+    da: xr.DataArray, y_da: xr.DataArray, name: str, y_name: str
+) -> None:
+    """Reject a variable with a dimension `y` does not have.
+
+    Such a dimension would silently survive the broadcast against `y_da` and
+    inflate the row count of the fit with a dimension the caller never
+    intended as a sample dimension.
+
+    Args:
+        da: the variable to check (`x` or `sd`).
+        y_da: the dependent variable, already transposed to its own order.
+        name: name of `da` in the dataset, for the message.
+        y_name: name of `y` in the dataset, for the message.
+
+    Raises:
+        ValueError: if `da` has a dimension `y_da` does not have.
+    """
+    extra = {str(d) for d in da.dims} - {str(d) for d in y_da.dims}
+    if extra:
+        raise ValueError(
+            f"'{name}' has the dimension '{sorted(extra)[0]}' that '{y_name}' does not have"
+        )
+
+
 def fit_table(
     model: Model,
     ds: xr.Dataset,
@@ -77,8 +102,11 @@ def fit_table(
     `x` may be a coordinate or a variable of `ds`; it is broadcast to the
     dimensions of `y` (e.g. a `dose` coordinate against an `auc_inf_obs`
     variable that also carries an `individual` dimension). The units are read
-    from `attrs["units"]` of `x` and `y` (`"dimensionless"` when absent), so
-    this works directly on the dataset of another result, e.g.
+    from `attrs["units"]` of `x` and `y`, `"dimensionless"` when absent (a
+    coordinate such as the `dose` of an `NCAResult.ds` need not carry units;
+    a model whose parameter units depend on `[x]` then reports that
+    parameter without the `x` part of its unit). This works directly on the
+    dataset of another result, e.g.
     `fit_table(Power(), result.ds, "dose", "auc_inf_obs", dim="dose")` on an
     `NCAResult`. `NaN` in `x` or `y` drops the point, as does any point the
     engine already drops as non-finite.
@@ -96,13 +124,21 @@ def fit_table(
         The result over the remaining dimensions of `y` (0-D when `y` has only `dim`).
 
     Raises:
-        ValueError: if `y` has no dimension `dim`.
+        ValueError: if `y` has no dimension `dim`, or if `x` (or `sd`) has a
+            dimension `y` does not have.
     """
     options = options or FitOptions()
     if dim not in ds[y].dims:
         raise ValueError(f"'{y}' has no dimension '{dim}'")
     y_da = ds[y].transpose(..., dim)
-    x_da = xr.broadcast(ds[x], y_da)[0].transpose(..., dim)
+    _check_broadcastable(ds[x], y_da, x, y)
+    # broadcasting can reorder the dimensions (the union of both arguments'
+    # dimensions, in first-seen order), so the result is transposed back to
+    # `y_da`'s own dimension order rather than merely moving `dim` to the
+    # end; otherwise a sample dimension whose order differs between `x` and
+    # `y` (e.g. `x` over `("b", "a", dim)` against `y` over `("a", "b", dim)`)
+    # reshapes into rows that pair the wrong `x` with the wrong `y`.
+    x_da = xr.broadcast(ds[x], y_da)[0].transpose(*y_da.dims)
     sample_dims = tuple(str(d) for d in y_da.dims if d != dim)
     shape = tuple(int(y_da.sizes[d]) for d in sample_dims)
     n = int(y_da.sizes[dim])
@@ -111,7 +147,8 @@ def fit_table(
     y_arr = y_da.to_numpy().astype(np.float64).reshape(n_rows, n)
     sd_arr = None
     if sd is not None:
-        sd_da = xr.broadcast(ds[sd], y_da)[0].transpose(..., dim)
+        _check_broadcastable(ds[sd], y_da, sd, y)
+        sd_da = xr.broadcast(ds[sd], y_da)[0].transpose(*y_da.dims)
         sd_arr = sd_da.to_numpy().astype(np.float64).reshape(n_rows, n)
     rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
     coords: dict[str, Any] = {d: ds[d] for d in sample_dims if d in ds.coords}

@@ -43,13 +43,15 @@ def proportionality_test(
 
     Raises:
         ValueError: if the result has no exponent `b` with a confidence
-            interval, or `dose_range` is not `0 < low < high`.
+            interval, or `dose_range` or `criterion` is not `0 < low < high`.
     """
     if "b" not in result or "b_ci_low" not in result or "b_ci_high" not in result:
         raise ValueError("The result has no exponent 'b' with a confidence interval")
     low, high = dose_range
     if not (high > low > 0):
         raise ValueError(f"'dose_range' must be 0 < low < high, got {dose_range}")
+    if not (criterion[1] > criterion[0] > 0):
+        raise ValueError(f"'criterion' must be 0 < low < high, got {criterion}")
     ratio = high / low
     bound_low = 1.0 + math.log(criterion[0]) / math.log(ratio)
     bound_high = 1.0 + math.log(criterion[1]) / math.log(ratio)

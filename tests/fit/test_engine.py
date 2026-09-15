@@ -371,3 +371,12 @@ def test_fit_validates_the_sample_dimensions_before_fitting() -> None:
     ys = np.zeros((2, T.size))
     with pytest.raises(ValueError, match="one sample dimension"):
         fit(MonoExp(), T, ys, dims=("a", "b"))
+
+
+def test_fit_rejects_a_sample_dimension_that_collides_with_a_result_variable() -> None:
+    """A sample dimension named like a parameter or a reserved dimension is rejected."""
+    _, y = noisy_monoexp(np.random.default_rng(15))
+    with pytest.raises(ValueError, match="collides"):
+        fit(MonoExp(), T, y[None, :], dims=("k",))
+    with pytest.raises(ValueError, match="collides"):
+        fit(MonoExp(), T, y[None, :], dims=("parameter",))

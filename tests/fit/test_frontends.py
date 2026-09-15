@@ -52,17 +52,18 @@ def test_fit_timecourses_two_sample_dims() -> None:
     time = T
     values = np.stack(
         [np.stack([10 * np.exp(-k * time) * d for k in (0.2, 0.4)]) for d in (1.0, 2.0)]
-    )  # (dose, k, time)
+    )  # (dose, rate, time)
     tcs = Timecourses.from_arrays(
         time,
         values,
         time_unit="hr",
         unit="mg/l",
-        dims=("dose", "k"),
-        coords={"dose": [1.0, 2.0], "k": [0.2, 0.4]},
+        dims=("dose", "rate"),
+        coords={"dose": [1.0, 2.0], "rate": [0.2, 0.4]},
     )
     result = fit_timecourses(MonoExp(), tcs)
-    assert result.sample_dims == ("dose", "k")
+    assert result.sample_dims == ("dose", "rate")
+    assert "k" in result.ds.data_vars
     np.testing.assert_allclose(result["k"].values, [[0.2, 0.4], [0.2, 0.4]], rtol=1e-4)
     np.testing.assert_allclose(result["a"].values, [[10, 10], [20, 20]], rtol=1e-4)
 
@@ -109,6 +110,61 @@ def test_fit_table_dose_proportionality() -> None:
         1 + np.log(1.25) / np.log(r)
     )
     assert bool(test["proportional"].values) or bool(test["inconclusive"].values)
+
+
+def test_fit_table_row_pairing_independent_of_dim_order() -> None:
+    """`x` and `y` are paired by sample, not by the dimension order left over from broadcasting."""
+    cohort = ["p", "q"]
+    subject = ["r", "s", "t"]
+    doses = np.array([1.0, 2.0, 4.0])
+    a_true = np.array([[11.0, 12.0, 13.0], [21.0, 22.0, 23.0]])  # (cohort, subject)
+    scale = np.array(
+        [[100.0, 110.0, 120.0], [210.0, 220.0, 230.0]]
+    )  # (cohort, subject)
+    x_true = scale[:, :, None] * doses[None, None, :]  # (cohort, subject, dose)
+    y_true = a_true[:, :, None] * x_true  # power law with exponent 1
+    ds = xr.Dataset(
+        {
+            "y": (("cohort", "subject", "dose"), y_true),
+            "x": (("subject", "cohort", "dose"), np.transpose(x_true, (1, 0, 2))),
+        },
+        coords={"cohort": cohort, "subject": subject, "dose": doses},
+    )
+    result = fit_table(
+        Power(), ds, "x", "y", dim="dose", options=FitOptions(fixed={"b": 1.0})
+    )
+    assert result.sample_dims == ("cohort", "subject")
+    np.testing.assert_allclose(result["a"].values, a_true, rtol=1e-6)
+    np.testing.assert_allclose(result["x_data"].values, x_true, rtol=1e-6)
+
+
+def test_fit_table_extra_dimension_raises() -> None:
+    doses = np.array([1.0, 2.0, 4.0])
+    ds = xr.Dataset(
+        {
+            "y": (("dose",), 2.0 * doses),
+            "x": (("dose", "extra"), np.stack([doses, doses * 2], axis=-1)),
+            "sd": (("dose", "extra"), np.ones((3, 2))),
+        },
+        coords={"dose": doses},
+    )
+    with pytest.raises(ValueError, match="extra"):
+        fit_table(Power(), ds, "x", "y", dim="dose")
+    with pytest.raises(ValueError, match="extra"):
+        fit_table(Power(), ds, "dose", "y", dim="dose", sd="sd")
+
+
+def test_proportionality_test_invalid_criterion_raises() -> None:
+    doses = np.array([10.0, 20.0, 50.0, 100.0])
+    result = fit_table(
+        Power(),
+        xr.Dataset({"auc": (("dose",), 2.0 * doses)}, coords={"dose": doses}),
+        "dose",
+        "auc",
+        dim="dose",
+    )
+    with pytest.raises(ValueError, match="criterion"):
+        proportionality_test(result, dose_range=(10.0, 100.0), criterion=(1.25, 0.8))
 
 
 def test_proportionality_test_detects_nonproportional() -> None:

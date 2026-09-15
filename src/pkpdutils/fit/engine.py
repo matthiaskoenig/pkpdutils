@@ -901,7 +901,9 @@ def fit(
         The result over the sample dimensions (none for a 1-D `y`).
 
     Raises:
-        ValueError: for 2-D data with more than one sample dimension.
+        ValueError: for 2-D data with more than one sample dimension, or if
+            the sample dimension name collides with a variable the result
+            writes or a reserved dimension (see `build_result`).
     """
     options = options or FitOptions()
     x_arr, y_arr, sd_arr, single = _as_rows(x, y, sd)
@@ -937,6 +939,74 @@ def _cv(se: float, value: float) -> float:
     """
     with np.errstate(divide="ignore", invalid="ignore"):
         return float(100.0 * np.float64(se) / np.abs(np.float64(value)))
+
+
+#: dimension names `build_result` reserves for the parameter and point axes,
+#: regardless of the model
+_RESERVED_DIMS: frozenset[str] = frozenset({"point", "parameter", "parameter_"})
+
+
+def _check_no_dimension_collision(model: Model, dims: tuple[str, ...]) -> None:
+    """Reject a sample dimension whose name collides with a variable `build_result` writes.
+
+    A sample dimension cannot share its name with a data variable of the
+    result (e.g. a scan dimension "k" fitted with a model that also has a
+    rate constant "k") or with one of the reserved dimensions `parameter`,
+    `parameter_` and `point`: xarray cannot hold two different variables
+    under the same name, so the name must be one or the other.
+
+    Args:
+        model: the model, for its parameter and derived names.
+        dims: the sample dimension names.
+
+    Raises:
+        ValueError: if a name in `dims` collides with a written variable or a reserved dimension.
+    """
+    written = {
+        "cost",
+        "r2",
+        "rmse",
+        "aic",
+        "aicc",
+        "bic",
+        "n_points",
+        "n_parameters",
+        "n_starts_converged",
+        "n_bootstrap",
+        "x_data",
+        "y_data",
+        "y_pred",
+        "residuals",
+        "correlation",
+        "flags",
+    }
+    for parameter in model.parameters:
+        written.update(
+            {
+                parameter.name,
+                f"{parameter.name}_se",
+                f"{parameter.name}_ci_low",
+                f"{parameter.name}_ci_high",
+                f"{parameter.name}_cv",
+            }
+        )
+    for derived_name in model.derived_units:
+        written.add(derived_name)
+        if derived_name not in FitResult.discrete_parameters:
+            written.update(
+                {
+                    f"{derived_name}_se",
+                    f"{derived_name}_ci_low",
+                    f"{derived_name}_ci_high",
+                    f"{derived_name}_cv",
+                }
+            )
+    for d in dims:
+        if d in written or d in _RESERVED_DIMS:
+            raise ValueError(
+                f"the sample dimension '{d}' collides with the result variable "
+                f"'{d}'; rename the dimension"
+            )
 
 
 def build_result(
@@ -982,6 +1052,10 @@ def build_result(
 
     Returns:
         The `FitResult`.
+
+    Raises:
+        ValueError: if a name in `dims` collides with a variable the result
+            writes or a reserved dimension (`_check_no_dimension_collision`).
     """
     n_rows, n_points = y.shape
     sample_shape: tuple[int, ...] = (
@@ -989,6 +1063,7 @@ def build_result(
     )
     names = model.parameter_names
     k = len(names)
+    _check_no_dimension_collision(model, dims)
 
     def units_of(expr: str) -> str:
         """The unit of a unit expression in the units of the data."""
@@ -1071,13 +1146,8 @@ def build_result(
         np.array([r.flags for r in rows], dtype=np.int64).reshape(sample_shape),
         {"units": "dimensionless"},
     )
-    # a sample dimension can share its name with a parameter or a derived
-    # quantity of the model (e.g. a scan dimension "k" fitted with a model
-    # that also has a rate constant "k"); the fitted variable then takes
-    # the name, so the coordinate of that dimension is dropped rather than
-    # conflicting with it.
     all_coords: dict[str, Any] = {
-        **{name: value for name, value in coords.items() if name not in data_vars},
+        **coords,
         "parameter": list(names),
         "parameter_": list(names),
     }
