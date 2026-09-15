@@ -11,8 +11,8 @@ authors:
   - family-names: "Grzegorzewski"
     given-names: "Jan"
 version: "1.0.0"
-date-released: "2020-08-24"
-doi: "10.5281/zenodo.3997539"
+date-released: "2026-09-15"
+doi: "10.5281/zenodo.22772056"
 license: MIT
 repository-code: "https://github.com/matthiaskoenig/pkpdutils"
 url: "https://matthiaskoenig.github.io/pkpdutils"
