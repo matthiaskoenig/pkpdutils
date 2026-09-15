@@ -301,14 +301,21 @@ def _build_batch(
 
 
 def _dose_times(
-    time: float, *, addl: float, interval: float, steady_state: bool, ss_doses: int
+    time: float,
+    *,
+    addl: float,
+    interval: float,
+    steady_state: bool,
+    ss_doses: int,
+    subject: Any,
 ) -> list[float]:
     """The times of a dose record, expanded by `ADDL` and `SS`.
 
     `ADDL` gives `addl` further doses at `time + k * interval`; a steady state
     record (`SS == 1`) stands for a dosing history, represented by `ss_doses`
-    preceding doses at `time - k * interval` (Bauer 2019). Both need a
-    positive interdose interval `II`.
+    preceding doses at `time - k * interval` (Bauer 2019). Both need a positive
+    interdose interval `II`: a record which asks for repeated doses without one
+    is an incomplete table, not a single dose, and raises.
 
     Args:
         time: time of the record.
@@ -316,15 +323,27 @@ def _dose_times(
         interval: interdose interval `II`, `NaN` or 0 for none.
         steady_state: whether the record is marked as a steady state dose.
         ss_doses: number of preceding doses a steady state record stands for.
+        subject: the subject of the record, for the error message.
 
     Returns:
         The dose times, ascending.
+
+    Raises:
+        ValueError: if the record has `ADDL > 0` or `SS == 1` without a
+            positive interdose interval.
     """
     has_interval = np.isfinite(interval) and interval > 0
+    repeated = steady_state or (np.isfinite(addl) and addl > 0)
+    if repeated and not has_interval:
+        raise ValueError(
+            f"'ADDL'/'SS' need a positive 'II': subject '{subject}' has the "
+            f"dose record at time {time} with ADDL {addl}, SS "
+            f"{int(steady_state)} and II {interval}"
+        )
     times = [time]
-    if steady_state and has_interval:
+    if steady_state:
         times = [time - k * interval for k in range(ss_doses, 0, -1)] + times
-    if has_interval and np.isfinite(addl) and addl > 0:
+    if np.isfinite(addl) and addl > 0:
         times = times + [time + k * interval for k in range(1, int(addl) + 1)]
     return times
 
@@ -358,14 +377,20 @@ def read_events(
     4 (without an `EVID` column when `AMT > 0`), an observation when `EVID` is
     0 (or there is no `EVID` column), `MDV` is 0 (or there is no `MDV` column)
     and `DV` is not missing. Rows with `EVID` 2 (other type event) or 3 (reset)
-    are dropped and counted in a warning (Bauer 2019).
+    are dropped and counted in a warning (Bauer 2019). The two rules are read
+    independently, so without an `EVID` column a row with `AMT > 0` and a
+    value in `DV` is both a dose and an observation: a table which records a
+    dose and a sample in one row needs no `EVID` column, a table which does not
+    needs one.
 
     The duration of an infusion is `TINF` (Monolix) when it is positive, else
     `AMT / RATE` for a positive `RATE`; modelled rates (`RATE -1`, `RATE -2`)
     are not data and raise. A dose record with `ADDL` and `II` stands for
     `ADDL` further doses at the interdose interval, a record with `SS == 1`
     for a dosing history of `ss_doses` preceding doses at the interdose
-    interval, and the batch is marked with `attrs["steady_state_marker"]`.
+    interval, and the batch is marked with `attrs["steady_state_marker"]`;
+    `ADDL > 0` or `SS == 1` without a positive `II` is an incomplete table and
+    raises.
 
     The Monolix column names `AMOUNT`, `OBSERVATION`, `INFUSION DURATION`,
     `INFUSION RATE`, `ADDITIONAL DOSES`, `INTERDOSE INTERVAL` and `STEADY
@@ -397,7 +422,8 @@ def read_events(
         covariates: columns to keep as coordinates along `dim`; by default
             every column which is neither an event column nor a compartment or
             occasion column (`EVENT_IGNORED`) and which is constant within
-            every subject
+            every subject, the columns which vary within a subject being
+            logged and skipped (a column named here raises instead)
 
     Returns:
         The batch, the subjects in the order of their first appearance and
@@ -405,9 +431,10 @@ def read_events(
 
     Raises:
         ValueError: if a required column (`id`, `time`, `dv`) is missing, if a
-            rate is negative (a modelled rate), if a requested covariate is not
-            a column or not constant within a subject, or if the doses of the
-            subjects do not share one unit.
+            rate is negative (a modelled rate), if a dose record asks for
+            repeated doses without a positive `II`, if a requested covariate is
+            not a column or not constant within a subject, or if the doses of
+            the subjects do not share one unit.
     """
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
@@ -472,7 +499,7 @@ def read_events(
     sample_times: list[np.ndarray] = []
     sample_values: list[np.ndarray] = []
     protocols: list[Dosing | None] = []
-    for rows in subjects.values():
+    for label, rows in subjects.items():
         dose_rows = [i for i in rows if bool(is_dose[i])]
         dose_times: list[float] = []
         dose_amounts: list[float] = []
@@ -486,6 +513,7 @@ def read_events(
                 interval=float(ii_values[i]),
                 steady_state=steady_state,
                 ss_doses=ss_doses,
+                subject=label,
             )
             dose_times.extend(expanded)
             dose_amounts.extend([float(amounts[i])] * len(expanded))
@@ -535,8 +563,13 @@ def read_events(
             if name in known:
                 continue
             constant = _constant_per_subject(df, c_id, name, labels)
-            if constant is not None:
-                coordinates[name] = constant
+            if constant is None:
+                logger.warning(
+                    "column %s varies within a subject and is not a coordinate",
+                    name,
+                )
+                continue
+            coordinates[name] = constant
     else:
         for name in covariates:
             column = _column(lookup, name, required=True)

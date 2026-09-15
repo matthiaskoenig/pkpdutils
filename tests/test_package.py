@@ -14,6 +14,14 @@ def test_exports() -> None:
     assert Dose and DosingRegimen and Timecourse and Timecourses and Q_ and ureg
 
 
+def test_io_module_is_reachable() -> None:
+    # `pkpdutils.io` is a module, not a set of top level names
+    assert callable(pkpdutils.io.read_events)
+    assert callable(pkpdutils.io.write_events)
+    assert callable(pkpdutils.io.read_pknca) and callable(pkpdutils.io.read_adnca)
+    assert "read_events" not in pkpdutils.__all__
+
+
 def test_nca_exports() -> None:
     from pkpdutils import NCAOptions, NCAResult, TerminalPhase, nca, nca_single
 

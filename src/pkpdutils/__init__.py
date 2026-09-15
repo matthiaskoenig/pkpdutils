@@ -6,9 +6,12 @@ shared registry `ureg`, see `pkpdutils.units`. The analyses are
 `pkpdutils.nca` (non-compartmental analysis) and `pkpdutils.fit` (curve
 fitting), both returning a `pkpdutils.result.ParameterResult`. `pkpdutils.stats`
 holds the statistics on parameters (tests, ratios, bioequivalence,
-drug-drug interactions, meta-analysis).
+drug-drug interactions, meta-analysis). `pkpdutils.io` reads and writes the
+exchange formats of the field (event records, PKNCA tables, CDISC ADNCA).
 """
 
+# the re-export makes `pkpdutils.io` reachable after `import pkpdutils`
+from pkpdutils import io as io
 from pkpdutils.fit import (
     FitOptions,
     FitResult,

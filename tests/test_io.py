@@ -79,6 +79,55 @@ def test_read_events_drops_other_events_and_selects_covariates() -> None:
     assert batch.sel(individual=1).time.tolist() == [1, 4, 12, 37, 48]
 
 
+def test_read_events_repeated_doses_need_an_interval() -> None:
+    df = events()
+    df.loc[df["ID"] == 1, "II"] = 0  # ADDL 3 without an interdose interval
+    with pytest.raises(ValueError, match=r"'ADDL'/'SS' need a positive 'II'"):
+        read_events(df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL)
+    df = events()
+    df["ADDL"] = 0
+    df = df.drop(columns=["II"])  # SS 1 of subject 3 without an interval column
+    with pytest.raises(ValueError, match="subject '3'") as excinfo:
+        read_events(df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL)
+    assert "'ADDL'/'SS' need a positive 'II'" in str(excinfo.value)
+
+
+def test_read_events_warns_about_a_varying_column(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    df = events()
+    df["OCCASION"] = np.arange(len(df))  # not constant within a subject
+    with caplog.at_level("WARNING", logger="pkpdutils.io"):
+        batch = read_events(
+            df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL
+        )
+    assert "OCCASION" not in batch.ds.coords
+    assert "OCCASION varies within a subject" in caplog.text
+    assert "WT" in batch.ds.coords
+
+
+def test_read_events_monolix_spelled_out_aliases() -> None:
+    df = pd.DataFrame(
+        {
+            "ID": np.array([1, 1, 1]),
+            "TIME": np.array([0.0, 1.0, 4.0]),
+            "OBSERVATION": np.array([np.nan, 4.0, 2.0]),
+            "AMOUNT": np.array([100.0, np.nan, np.nan]),
+            "INFUSION DURATION": np.array([0.5, np.nan, np.nan]),
+            "ADDITIONAL DOSES": np.array([1.0, np.nan, np.nan]),
+            "INTERDOSE INTERVAL": np.array([12.0, np.nan, np.nan]),
+            "STEADY STATE": np.array([0.0, np.nan, np.nan]),
+        }
+    )
+    batch = read_events(
+        df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.IV_INFUSION
+    )
+    d = batch.dosing_of(individual=1)
+    assert d is not None and d.times.tolist() == [0.0, 12.0]
+    assert d.durations is not None and d.durations.tolist() == [0.5, 0.5]
+    assert batch.sel(individual=1).value.tolist() == [4.0, 2.0]
+
+
 def test_read_events_rate_and_errors() -> None:
     df = pd.DataFrame(
         {
@@ -174,6 +223,24 @@ def test_read_pknca_subject_without_doses() -> None:
     assert batch.dosing_of(individual=1) is None
     assert batch.dosing_of(individual=2) is not None
     assert batch.sel(individual=1).dosing is None
+
+
+def test_read_pknca_infusion_duration() -> None:
+    conc = pd.read_csv(DATA / "pknca_conc.csv")
+    dose = pd.read_csv(DATA / "pknca_dose.csv").assign(duration=0.5)
+    batch = read_pknca(
+        conc,
+        dose,
+        time_unit="hr",
+        unit="mg/l",
+        dose_unit="mg",
+        route=Route.IV_INFUSION,
+        duration_col="duration",
+    )
+    assert batch.route is Route.IV_INFUSION
+    d = batch.dosing_of(individual=2)
+    assert d is not None and d.durations is not None
+    assert d.durations.tolist() == [0.5, 0.5]
 
 
 def test_read_adnca_analyte_route_and_units() -> None:

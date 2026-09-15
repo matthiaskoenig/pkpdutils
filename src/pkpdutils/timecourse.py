@@ -1961,6 +1961,10 @@ class Timecourses:
             return NotImplemented
         return bool(self.ds.identical(other.ds))
 
+    #: a batch is a mutable wrapper of its dataset, so it is not hashable
+    #: (python would set this implicitly, it is spelled out to say so)
+    __hash__ = None
+
     def _timecourse(self, sample: xr.Dataset, label: Any) -> Timecourse:
         """Build the `Timecourse` of a dataset without sample dimensions.
 
