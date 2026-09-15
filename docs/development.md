@@ -11,6 +11,8 @@ Two branches are permanent:
 
 Work happens on short lived branches off `develop`, which GitHub deletes after the merge. Releases are tagged on `develop`, see [Release](#release).
 
+`main` was reset once to the 1.0.0 release commit, because the history of the `pkdb-analysis` releases was not an ancestor of the rewritten `develop`, and the classic branch protection of `main` from that time (which required the codecov checks) was removed in favour of the rulesets; since then every release fast-forwards it.
+
 ## Pull requests
 
 Neither branch accepts a direct push, every change goes through a pull request against `develop`. This includes the maintainer, there is no bypass.
