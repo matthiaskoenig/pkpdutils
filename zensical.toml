@@ -24,6 +24,8 @@ nav = [
     { "Timecourses" = "timecourses.md" },
     { "Non-compartmental analysis" = "nca.md" },
     { "Uncertainty" = "uncertainty.md" },
+    { "Curve fitting" = "fitting.md" },
+    { "Pharmacodynamics" = "pd.md" },
     { "Plotting" = "plotting.md" },
     { "Glossary" = "glossary.md" },
   ] },
@@ -33,6 +35,7 @@ nav = [
     { "pkpdutils" = [
       { "units" = "api/units.md" },
       { "timecourse" = "api/timecourse.md" },
+      { "result" = "api/result.md" },
       { "console" = "api/console.md" },
       { "log" = "api/log.md" },
     ] },
@@ -44,6 +47,12 @@ nav = [
       { "terminal" = "api/nca.terminal.md" },
       { "steady_state" = "api/nca.steady_state.md" },
       { "uncertainty" = "api/nca.uncertainty.md" },
+    ] },
+    { "pkpdutils.fit" = [
+      { "fit" = "api/fit.md" },
+      { "models" = "api/fit.models.md" },
+      { "compare" = "api/fit.compare.md" },
+      { "proportionality" = "api/fit.proportionality.md" },
     ] },
     { "pkpdutils.plot" = [
       { "plot" = "api/plot.md" },

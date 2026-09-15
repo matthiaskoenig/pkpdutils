@@ -11,3 +11,7 @@
 ## plot.nca
 
 ::: pkpdutils.plot.nca
+
+## plot.fit
+
+::: pkpdutils.plot.fit

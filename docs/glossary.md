@@ -37,3 +37,16 @@ The names used for the variables of the result datasets, with their symbols and 
 | `x_median`, `x_q25`, `x_q75`, `x_n` | | median, quartiles and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
 | `n` | | number of subjects (group data) or of samples along the reduced dimension (summary) | – | [Uncertainty](uncertainty.md) |
 | `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |
+| `p_se` | | standard error of a fitted parameter `p`, from the Jacobian or the residual bootstrap | unit of `p` | [Curve fitting](fitting.md) |
+| `p_ci_low`, `p_ci_high` | | confidence interval of a fitted parameter `p` at `ci_level` | unit of `p` | [Curve fitting](fitting.md) |
+| `p_cv` | | relative standard error of a fitted parameter, \(100\,\mathrm{se}(p) / \lvert p \rvert\) | % | [Curve fitting](fitting.md) |
+| `cost` | | the objective of the fit at the optimum, \(\tfrac12 \sum \rho(r^2)\) | – | [Curve fitting](fitting.md) |
+| `r2`, `rmse` | \(R^2\), \(\mathrm{RMSE}\) | goodness of fit on the unweighted residuals | –, value | [Curve fitting](fitting.md) |
+| `aic`, `aicc`, `bic` | | information criteria of the fit, with \(K = k + 1\) estimated parameters | – | [Curve fitting](fitting.md) |
+| `n_points`, `n_parameters` | \(n\), \(k\) | points used in the fit and free model parameters | – | [Curve fitting](fitting.md) |
+| `n_starts_converged`, `n_bootstrap` | | starts which converged and converged bootstrap replicates | – | [Curve fitting](fitting.md) |
+| `x_data`, `y_data`, `sd_data` | | the data of the fit, per point | unit of `x`, of `y` | [Curve fitting](fitting.md) |
+| `y_pred`, `residuals` | | prediction and weighted residual, per point | unit of `y`, – | [Curve fitting](fitting.md) |
+| `correlation` | | correlation matrix of the fitted parameters | – | [Curve fitting](fitting.md) |
+| `akaike_weight` | \(w_i\) | probability that a model is the best of the compared set | – | [Curve fitting](fitting.md) |
+| `bound_low`, `bound_high` | | acceptance bounds of the exponent in the dose proportionality criterion | – | [Curve fitting](fitting.md) |

@@ -29,6 +29,21 @@ fig = plot_nca_grid(batch, result, ncols=4)
 
 The image is written by `examples/nca_single.py`; copy it to `docs/images/` after a change of the figure.
 
+## Fits
+
+`plot_fit` draws one sample of a [fit](fitting.md): the data with error bars when the fit had standard deviations, the fitted curve on a fine grid, the model name, the parameters as `name = value +- se` and the flags in the title, and the weighted residuals against \(x\) in a second panel below. `plot_goodness_of_fit` plots the predicted against the observed values of every sample with the identity line and the \(R^2\) per sample, and `plot_dose_proportionality` shows the exposure against the dose on log-log axes with the power fit, the acceptance wedge of the criterion and the verdict in the title.
+
+```python
+from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of_fit
+
+fig = plot_fit(result, log_y=True)  # 0-D result: no indexers
+fig = plot_fit(fits, individual="s2", log_x=True)  # one sample of a batch
+fig = plot_goodness_of_fit(fits, log=True)
+fig = plot_dose_proportionality(power, test=proportionality_test(power, dose_range=(25, 400)))
+```
+
+The images are written by `examples/fitting_exponential.py`, `examples/emax.py` and `examples/dose_proportionality.py`.
+
 ## Style
 
 ```python
