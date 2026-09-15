@@ -43,8 +43,7 @@ if __name__ == "__main__":
         Timecourses.from_timecourses([tc]),
         FitOptions(weighting=Weighting.INV_SD, n_starts=5, bootstrap=200, seed=1),
     )
-    console.print(result.to_dataframe().T)
-    console.print("flags:", result.flags(individual="oral"))
+    console.print(result.to_dataframe().T)  # the last row holds the decoded flags
     plot_fit(result, individual="oral", log_y=True).savefig(
         "fitting_exponential.png", dpi=120
     )

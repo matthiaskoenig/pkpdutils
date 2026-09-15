@@ -4,7 +4,7 @@ A pharmacodynamic timecourse measures an effect over time, a concentration-effec
 
 ## Effect timecourses
 
-`NCAOptions(kind=Kind.EFFECT)` switches the analysis to effect parameters: the baseline `e0` (the first value), the observed maximum `emax_obs` and its time `temax`, the area under the effect curve `auec_last` (linear trapezoids, any sign), the baseline corrected `auec_baseline` and `emax_baseline`, and, with `effect_threshold`, the time the linearly interpolated curve spends above the threshold, `time_above`. No terminal phase and no dose parameters are computed, and no value is dropped for being below a limit of quantification. Group effect curves with `sd`/`se` get the same uncertainty variables as concentrations ([Uncertainty](uncertainty.md)); their bootstrap draws are not clipped at 0, because an effect is legitimately negative, for the same reason log-normal draws are rejected.
+`NCAOptions(kind=Kind.EFFECT)` switches the analysis to effect parameters: the baseline `e0` (the first value), the observed maximum `emax_obs` and its time `temax`, the area under the effect curve `auec_last` (linear trapezoids, any sign) to the time of the last valid point `tlast`, the baseline corrected `auec_baseline` and `emax_baseline`, and, with `effect_threshold`, the time the linearly interpolated curve spends above the threshold, `time_above`. No terminal phase and no dose parameters are computed, and no value is dropped for being below a limit of quantification. Group effect curves with `sd`/`se` get the same uncertainty variables as concentrations ([Uncertainty](uncertainty.md)); their bootstrap draws are not clipped at 0, because an effect is legitimately negative, for the same reason log-normal draws are rejected.
 
 \[
 \mathrm{AUEC} = \int_0^{t_\mathrm{last}} E(t)\,dt, \qquad
@@ -16,6 +16,7 @@ E_{\mathrm{max},\mathrm{baseline}} = E_\mathrm{max} - E_0
 | --- | --- | --- | --- |
 | `e0` | \(E_0 = E(t_1)\) | value | baseline, the first value of the curve |
 | `emax_obs`, `temax` | \(E_\mathrm{max}\) | value, time | largest observed effect and its time |
+| `tlast` | \(t_\mathrm{last}\) | time | time of the last valid point (any sign, unlike the last positive value of a concentration curve) |
 | `auec_last` | \(\mathrm{AUEC}\) | value·time | area under the effect curve to the last point |
 | `auec_baseline` | \(\mathrm{AUEC}_\mathrm{baseline}\) | value·time | area of the baseline corrected curve |
 | `emax_baseline` | \(E_\mathrm{max} - E_0\) | value | largest effect above the baseline |

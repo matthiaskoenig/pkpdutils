@@ -6,7 +6,7 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 
 **Model.** A `Model` is a function \(y = f(x; p)\) with named parameters, bounds and an initial guess from the data. Every parameter states whether it is positive; positive parameters are searched on the logarithmic scale, which keeps them positive and makes the search insensitive to their magnitude (`FitOptions.parameter_scale`, `log10` by default). Bounds, start values and every reported number stay on the linear scale. The model library has three families: exponentials for concentration timecourses (`MonoExp`, `BiExp`, `TriExp`, `Bateman` with an optional lag time), the Emax family for concentration-effect data (`Emax`, `SigmoidEmax`, `Imax`, `SigmoidImax`), and `Linear`, `LogLinear`, `Power` and `Allometric` for a parameter against a dose or a covariate. The initial guesses are analytical: a log-linear regression of the terminal points, curve stripping for a sum of exponentials, the half-way crossing for an `ec50`, a log-log regression for a power model.
 
-**Weighting.** Concentrations span orders of magnitude and their error grows with their size, so an unweighted fit is dominated by the high points. `Weighting` names the variance model of the residuals: constant (`NONE`, the default), proportional to \(y\) (`INV_Y`), proportional to \(y^2\) (constant CV, `INV_Y2`) or the reported standard deviations (`INV_SD`). Residuals are divided by the standard deviation of that model before the sum of squares. Under `INV_SD` a point without a finite positive standard deviation carries no weight and is dropped from the fit, so `n_points` can be smaller than the number of observed points.
+**Weighting.** Concentrations span orders of magnitude and their error grows with their size, so an unweighted fit is dominated by the high points. `Weighting` names the variance model of the residuals: constant (`NONE`, the default), proportional to \(\lvert y \rvert\) (`INV_Y`), proportional to \(y^2\) (constant CV, `INV_Y2`) or the reported standard deviations (`INV_SD`). Residuals are divided by the standard deviation of that model before the sum of squares. The two \(y\) based models use the absolute value, so a negative value (an effect) weighs like its positive counterpart, and a point whose value is zero or not finite would have no variance at all: it is given the smallest \(\lvert y \rvert\) of the row instead (1 when the row has no non-zero value), which keeps the weight of such a point finite and large without dividing by zero. Under `INV_SD` a point without a finite positive standard deviation carries no weight and is dropped from the fit, so `n_points` can be smaller than the number of observed points.
 
 **Uncertainty of the parameters.** The standard errors come from the Jacobian of the residuals at the optimum, a first order (Wald) approximation [^seber]. They are computed in the search space and transformed with \(|dp/dq|\), and the confidence intervals use the t distribution with \(n - k\) degrees of freedom on the search scale and are transformed back, so the interval of a parameter fitted on the log scale is asymmetric around the estimate. Derived parameters (half-lives, areas, \(\mathrm{EC}_{90}\), \(t_\mathrm{max}\)) get their uncertainty from the delta method with a numerical gradient; their interval is \(d \pm t\,\mathrm{se}(d)\) and therefore always symmetric, even for a strongly non-linear function of the parameters such as a half-life. The covariance is the least-squares covariance and is exact only for `loss="linear"`; under a robust loss (`soft_l1`, `huber`, `cauchy`, `arctan`) it is an approximation.
 
@@ -29,8 +29,10 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 Weighted residuals and the objective, with the scipy cost \(\mathrm{cost} = \tfrac12 \sum_i \rho(r_i^2)\) (\(\rho(z) = z\) for `loss="linear"`):
 
 \[
-r_i = \frac{y_i - f(x_i; p)}{\sqrt{v_i}}, \qquad v_i \in \{1,\ y_i,\ y_i^2,\ \mathrm{sd}_i^2\}, \qquad \min_p\ \tfrac12 \sum_i \rho(r_i^2)
+r_i = \frac{y_i - f(x_i; p)}{\sqrt{v_i}}, \qquad v_i \in \{1,\ \tilde y_i,\ \tilde y_i^2,\ \mathrm{sd}_i^2\}, \qquad \min_p\ \tfrac12 \sum_i \rho(r_i^2)
 \]
+
+with \(\tilde y_i = \lvert y_i \rvert\) for a finite non-zero value and \(\tilde y_i = \min_{j:\, y_j \ne 0} \lvert y_j \rvert\) (1 when the row has no such value) for a zero or non-finite one.
 
 Covariance in the search space \(q\) (\(q_j = \log_{10} p_j\) for a positive parameter, \(q_j = p_j\) otherwise), standard errors and intervals of the \(k\) free parameters:
 
@@ -115,7 +117,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `correlation` | \(\mathrm{cov}(q)_{ij} / (\mathrm{se}(q_i)\mathrm{se}(q_j))\) | - | correlation matrix over `(parameter, parameter_)` |
 | `flags` | | - | `FitFlag` bits, see above |
 
-Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. `rmse` and the weighted residuals are the two variables whose `attrs["units"]` is `dimensionless` although they are not: `rmse` carries the unit of `y`, and a weighted residual is dimensionless only under `INV_SD`. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
+Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. Four kinds of variable carry `attrs["units"] = "dimensionless"` without being dimensionless: `rmse` carries the unit of `y`, a weighted residual is dimensionless only under `INV_SD` (it is the residual divided by the square root of the variance model otherwise), `cost` is the sum of the squared weighted residuals and carries \([y]^2\) under `NONE`, and the `_cv` variables are percentages. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
 
 ## API
 
@@ -156,6 +158,8 @@ fits["k1"]  # DataArray over the sample dims of the batch
 fits.to_dataframe()  # one row per sample, flags decoded
 fits.summarize("individual")  # mean, sd, se, interval over the individuals
 ```
+
+`fit_timecourses` passes the `sd` of the batch to the engine and nothing else, so `Weighting.INV_SD` on a batch that carries `se` and `n` but no `sd` raises `ValueError: Weighting.INV_SD needs 'sd'` rather than deriving the standard deviation; give the batch an `sd` (or use another weighting) in that case.
 
 A parameter against a dose or a covariate is fitted along one dimension of any dataset, the result of another analysis included:
 
