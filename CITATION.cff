@@ -10,7 +10,7 @@ authors:
     affiliation: "Humboldt-University Berlin, Faculty of Life Science, Institute for Biology, Berlin; University Lübeck; University Hospital Schleswig-Holstein, Campus Lübeck, First Department of Medicine, Germany"
   - family-names: "Grzegorzewski"
     given-names: "Jan"
-version: "1.0.0.dev0"
+version: "1.0.0"
 date-released: "2020-08-24"
 doi: "10.5281/zenodo.3997539"
 license: MIT
