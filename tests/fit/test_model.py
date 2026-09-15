@@ -46,14 +46,26 @@ def test_model_predict_and_derived() -> None:
 
 
 def test_parameter_unit_expression() -> None:
-    unit, factor = parameter_unit_expression("[y]/[x]", x_unit="hr", y_unit="mg/l")
-    assert unit == "milligram / hour / liter"
-    assert factor == pytest.approx(1.0)
-    unit, factor = parameter_unit_expression("1/[x]", x_unit="min", y_unit="mg/l")
-    assert unit == "1 / minute"
     assert (
-        parameter_unit_expression("dimensionless", x_unit="hr", y_unit="mg/l")[0]
+        parameter_unit_expression("[y]/[x]", x_unit="hr", y_unit="mg/l")
+        == "milligram / hour / liter"
+    )
+    assert (
+        parameter_unit_expression("1/[x]", x_unit="min", y_unit="mg/l") == "1 / minute"
+    )
+    assert (
+        parameter_unit_expression("dimensionless", x_unit="hr", y_unit="mg/l")
         == "dimensionless"
     )
-    unit, factor = parameter_unit_expression("[y]*[x]", x_unit="hr", y_unit="ng/ml")
-    assert unit == "hour * nanogram / milliliter"
+    assert (
+        parameter_unit_expression("[y]*[x]", x_unit="hr", y_unit="ng/ml")
+        == "hour * nanogram / milliliter"
+    )
+
+
+def test_parameter_unit_expression_does_not_normalize() -> None:
+    assert parameter_unit_expression("[y]", x_unit="hr", y_unit="ml") == "milliliter"
+    assert (
+        parameter_unit_expression("[y]/[x]", x_unit="hr", y_unit="ml")
+        == "milliliter / hour"
+    )

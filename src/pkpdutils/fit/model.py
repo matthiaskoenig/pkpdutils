@@ -14,7 +14,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from pkpdutils.units import Q_, normalize_clearance, normalize_volume, ureg
+from pkpdutils.units import ureg
 
 
 @dataclass(frozen=True)
@@ -142,10 +142,14 @@ class Model(ABC):
         return f"{type(self).__name__}({self.name}, {', '.join(self.parameter_names)})"
 
 
-def parameter_unit_expression(
-    unit_expr: str, *, x_unit: str, y_unit: str
-) -> tuple[str, float]:
+def parameter_unit_expression(unit_expr: str, *, x_unit: str, y_unit: str) -> str:
     """Unit of a parameter from its expression and the units of the data.
+
+    The unit is the raw combination of the units of the data, without any
+    normalization: a fit reports its parameters in the units the data was
+    given in (`a` of a monoexponential fit of milliliters is in milliliter,
+    its `auc` in milliliter hour), so the parameters and the predicted curve
+    always live on the same scale.
 
     Args:
         unit_expr: expression with `[x]` and `[y]`, e.g. `"[y]/[x]"`
@@ -153,10 +157,7 @@ def parameter_unit_expression(
         y_unit: unit of the dependent variable
 
     Returns:
-        The canonical unit string (volumes in liter, clearances in liter per
-        hour, like the NCA) and the factor from the raw to the canonical unit.
+        The unit string of the parameter.
     """
     raw = unit_expr.replace("[x]", f"({x_unit})").replace("[y]", f"({y_unit})")
-    quantity = Q_(1.0, ureg.parse_units(raw))
-    converted = normalize_clearance(normalize_volume(quantity))
-    return str(converted.units), float(converted.magnitude)
+    return str(ureg.parse_units(raw))

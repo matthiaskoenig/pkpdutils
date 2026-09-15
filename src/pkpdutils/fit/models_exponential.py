@@ -207,13 +207,19 @@ class _SumOfExponentials(Model):
     def parameter_order(self, p: np.ndarray) -> np.ndarray:
         """Permutation of the parameter vector that orders the phases by decreasing rate.
 
+        The engine permutes the parameters, the bounds, the scales, the
+        covariance and the columns of the Jacobian with it after a fit. It
+        skips the permutation when `FitOptions.fixed` or `FitOptions.bounds`
+        names one of the phase parameters: the labels are then the user's and
+        the phases are reported as labelled, even if they are not ordered by
+        decreasing rate.
+
         Args:
             p: phases as `[a1, k1, a2, k2, ...]`, any order.
 
         Returns:
             The indices of `p` which order the phases by decreasing rate
-            constant (the engine permutes the parameters, the covariance and
-            the Jacobian with it after a fit).
+            constant.
         """
         pairs = p.reshape(-1, 2)
         order = np.argsort(-pairs[:, 1], kind="stable")

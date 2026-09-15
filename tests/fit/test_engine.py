@@ -13,30 +13,44 @@ from pkpdutils.fit.engine import (
     variance_of,
 )
 from pkpdutils.fit.models import Bateman, BiExp, Emax, Linear, MonoExp
+from pkpdutils.units import ureg
 
 T = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
-RNG = np.random.default_rng(0)
+BIEXP_TRUTH = np.array([8.0, 2.0, 2.0, 0.2])
 
 
 def noisy_monoexp(
+    rng: np.random.Generator,
     a: float = 10.0,
     k: float = 0.3,
     cv: float = 0.05,
-    rng: np.random.Generator = RNG,
 ) -> tuple[np.ndarray, np.ndarray]:
     """A monoexponential curve and a log-normally perturbed copy of it.
 
     Args:
+        rng: random generator of the noise
         a: value at `x = 0`
         k: rate constant
         cv: coefficient of variation of the noise
-        rng: random generator of the noise
 
     Returns:
         The exact curve and the noisy curve at `T`.
     """
     y = a * np.exp(-k * T)
     return y, y * rng.lognormal(0.0, cv, size=T.size)
+
+
+def noisy_biexp(rng: np.random.Generator, cv: float = 0.02) -> np.ndarray:
+    """A biexponential curve with the phases 2 and 0.2, log-normally perturbed.
+
+    Args:
+        rng: random generator of the noise
+        cv: coefficient of variation of the noise
+
+    Returns:
+        The noisy curve at `T`.
+    """
+    return BiExp().predict(T, BIEXP_TRUTH) * rng.lognormal(0.0, cv, T.size)
 
 
 def test_scale_helpers() -> None:
@@ -68,7 +82,7 @@ def test_variance_of() -> None:
 
 def test_monoexp_recovery_and_statistics() -> None:
     """A monoexponential fit recovers the parameters and reports the statistics."""
-    _, y = noisy_monoexp()
+    _, y = noisy_monoexp(np.random.default_rng(0))
     result = fit(MonoExp(), T, y, x_unit="hr", y_unit="mg/l")
     assert isinstance(result, FitResult)
     assert result.sample_dims == ()
@@ -110,7 +124,7 @@ def test_monoexp_recovery_and_statistics() -> None:
 
 def test_exact_data_gives_tiny_uncertainty_and_t_interval() -> None:
     """Almost exact data gives a tiny standard error and a symmetric t interval."""
-    truth, _ = noisy_monoexp()
+    truth, _ = noisy_monoexp(np.random.default_rng(1))
     result = fit(
         MonoExp(),
         T,
@@ -127,7 +141,7 @@ def test_exact_data_gives_tiny_uncertainty_and_t_interval() -> None:
 
 def test_log_scale_interval_is_asymmetric() -> None:
     """On the log scale the interval is symmetric in the logarithm."""
-    _, y = noisy_monoexp(cv=0.2)
+    _, y = noisy_monoexp(np.random.default_rng(2), cv=0.2)
     q = fit(MonoExp(), T, y).to_quantities()
     k, low, high = q["k"].magnitude, q["k_ci_low"].magnitude, q["k_ci_high"].magnitude
     assert np.log(k / low) == pytest.approx(np.log(high / k), rel=1e-6)
@@ -137,7 +151,7 @@ def test_batch_rows_dims_and_nan_padding() -> None:
     """Many rows with sample dimensions, coordinates and NaN padded points."""
     ys = np.stack(
         [
-            noisy_monoexp(k=k, rng=np.random.default_rng(i))[1]
+            noisy_monoexp(np.random.default_rng(i), k=k)[1]
             for i, k in enumerate((0.2, 0.3, 0.5))
         ]
     )
@@ -171,7 +185,7 @@ def test_batch_rows_dims_and_nan_padding() -> None:
 
 def test_weighting_inv_sd_and_fixed_and_bounds() -> None:
     """The `sd` weighting, a fixed parameter and a bound override."""
-    _, y = noisy_monoexp()
+    _, y = noisy_monoexp(np.random.default_rng(6))
     sd = 0.05 * y
     weighted = fit(
         MonoExp(), T, y, sd=sd, options=FitOptions(weighting=Weighting.INV_SD)
@@ -212,9 +226,7 @@ def test_bateman_flip_flop_flag_and_derived() -> None:
 
 def test_biexp_phase_ordering() -> None:
     """The phases of a sum of exponentials are ordered by decreasing rate."""
-    y = BiExp().predict(T, np.array([8.0, 2.0, 2.0, 0.2])) * np.random.default_rng(
-        4
-    ).lognormal(0, 0.02, T.size)
+    y = noisy_biexp(np.random.default_rng(4))
     result = fit(
         BiExp(),
         T,
@@ -237,7 +249,122 @@ def test_linear_scale_for_non_positive_parameters() -> None:
 
 def test_fit_row_returns_rowfit() -> None:
     """`fit_row` returns the arrays of one row."""
-    _, y = noisy_monoexp()
+    _, y = noisy_monoexp(np.random.default_rng(7))
     row = fit_row(MonoExp(), T, y, None, FitOptions(), np.random.default_rng(0))
     assert row.p.shape == (2,) and row.cov_q.shape == (2, 2) and row.flags == 0
     assert row.y_pred.shape == T.shape and row.n_starts_converged == 1
+
+
+def test_fixed_phase_parameter_keeps_its_label() -> None:
+    """A fixed phase parameter is not moved by the phase ordering."""
+    y = noisy_biexp(np.random.default_rng(8))
+    result = fit(
+        BiExp(),
+        T,
+        y,
+        options=FitOptions(
+            fixed={"k1": 0.2}, initial={"a1": 2.0, "a2": 8.0, "k2": 2.0}
+        ),
+    )
+    q = result.to_quantities()
+    assert q["k1"].magnitude == 0.2
+    assert np.isnan(q["k1_se"].magnitude)
+    assert np.isfinite(q["k2_se"].magnitude) and q["k2_se"].magnitude > 0
+    assert q["k2"].magnitude == pytest.approx(2.0, rel=0.1)
+
+
+def test_bounded_phase_parameter_flags_its_own_bound() -> None:
+    """A bounded phase parameter keeps its label and its `AT_BOUND` flag."""
+    y = noisy_biexp(np.random.default_rng(9))
+    result = fit(
+        BiExp(),
+        T,
+        y,
+        options=FitOptions(
+            bounds={"k1": (0.05, 0.19)},
+            initial={"a1": 2.0, "k1": 0.1, "a2": 8.0, "k2": 2.0},
+        ),
+    )
+    q = result.to_quantities()
+    assert q["k1"].magnitude == pytest.approx(0.19, rel=1e-3)
+    assert "AT_BOUND" in result.flags()
+
+
+def test_phase_permutation_keeps_the_uncertainties_aligned() -> None:
+    """A fit started with swapped phases matches one started in the right order."""
+    y = noisy_biexp(np.random.default_rng(10))
+    swapped = fit(
+        BiExp(),
+        T,
+        y,
+        options=FitOptions(initial={"a1": 2.0, "k1": 0.2, "a2": 8.0, "k2": 2.0}),
+    )
+    direct = fit(
+        BiExp(),
+        T,
+        y,
+        options=FitOptions(initial={"a1": 8.0, "k1": 2.0, "a2": 2.0, "k2": 0.2}),
+    )
+    assert float(swapped["k1"].values) > float(swapped["k2"].values)
+    for name in ("a1", "k1", "a2", "k2"):
+        assert float(swapped[name].values) == pytest.approx(
+            float(direct[name].values), rel=1e-4
+        )
+        assert float(swapped[f"{name}_se"].values) == pytest.approx(
+            float(direct[f"{name}_se"].values), rel=1e-3
+        )
+    np.testing.assert_allclose(
+        swapped["correlation"].values, direct["correlation"].values, atol=1e-4
+    )
+
+
+def test_parameters_keep_the_raw_units_of_the_data() -> None:
+    """Fit parameters are reported in the units of `x` and `y`, unnormalized."""
+    _, y = noisy_monoexp(np.random.default_rng(11))
+    result = fit(MonoExp(), T, y, x_unit="hr", y_unit="ml")
+    np.testing.assert_allclose(result.predict(T), result["y_pred"].values, rtol=1e-12)
+    assert result.units("a") == "milliliter"
+    assert ureg(result.units("auc")) == ureg("ml*hr")
+
+
+def test_cv_is_not_a_parameter() -> None:
+    """The `_cv` variables are uncertainties, not parameters of their own."""
+    ys = np.stack(
+        [
+            noisy_monoexp(np.random.default_rng(i), k=k)[1]
+            for i, k in ((12, 0.2), (13, 0.4))
+        ]
+    )
+    result = fit(MonoExp(), T, ys, dims=("individual",))
+    assert [name for name in result.parameters if name.endswith("_cv")] == []
+    assert "k_cv" in result.derived_variables
+    summary = result.summarize("individual")
+    assert "k_cv_sd" not in summary and "k_sd" in summary
+
+
+def test_at_bound_at_a_zero_lower_bound() -> None:
+    """A rate driven to its lower bound of zero is flagged, although that bound is -inf on the log scale."""
+    result = fit(
+        MonoExp(), T, np.full(T.size, 5.0), options=FitOptions(initial={"k": 0.1})
+    )
+    assert float(result["k"].values) < 1e-6
+    assert "AT_BOUND" in result.flags()
+
+
+def test_discrete_derived_parameters_carry_no_uncertainty() -> None:
+    """An indicator such as `flip_flop` has no `_se`, `_ci_low`, `_ci_high`, `_cv`."""
+    y = Bateman().predict(T, np.array([10.0, 0.2, 0.6])) * np.random.default_rng(
+        14
+    ).lognormal(0.0, 0.02, T.size)
+    result = fit(Bateman(), T, y)
+    assert "flip_flop" in result
+    for suffix in ("_se", "_ci_low", "_ci_high", "_cv"):
+        assert f"flip_flop{suffix}" not in result
+    assert "tmax_se" in result
+
+
+def test_fit_validates_the_sample_dimensions_before_fitting() -> None:
+    """Several sample dimensions are rejected before any row is fitted."""
+    ys = np.zeros((2, T.size))
+    with pytest.raises(ValueError, match="one sample dimension"):
+        fit(MonoExp(), T, ys, dims=("a", "b"))

@@ -73,7 +73,10 @@ class FitOptions(BaseModel):
     Attributes:
         parameter_scale: space of the search for positive parameters
         weighting: variance model of the residuals
-        loss: loss function of `scipy.optimize.least_squares`
+        loss: loss function of `scipy.optimize.least_squares`; the covariance,
+            the standard errors and the confidence intervals of a fit are the
+            least-squares quantities and are exact only for `"linear"`, for a
+            robust loss they are approximations
         n_starts: number of start points (Latin hypercube in the start box)
         seed: seed of the start point sampling and the bootstrap
         n_workers: worker processes for many samples or starts, `None` for the calling process
@@ -88,7 +91,12 @@ class FitOptions(BaseModel):
         initial: start values overriding the model's guess, per parameter
         start_spread: half width of the start box around the initial guess, as a
             factor for log scale parameters and as a multiple of the guess for linear ones
-        at_bound_tolerance: relative distance to a bound that sets `AT_BOUND`
+        at_bound_tolerance: distance to a bound that sets `AT_BOUND`. A
+            parameter `p` which started at `p0` rests on a bound `b` when
+            `|p - b| <= at_bound_tolerance * (|b| + max(|p0|, 1e-300))`, so
+            the distance is relative to the bound and to the start value. The
+            start value is needed for a lower bound of 0, which is `-inf` in a
+            log search space and can never be reached exactly.
     """
 
     model_config = ConfigDict(frozen=True)

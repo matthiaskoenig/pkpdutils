@@ -21,6 +21,16 @@ class FitResult(ParameterResult):
     `y_data`, `y_pred`, `residuals` over `point`); the correlation matrix over
     `(parameter, parameter_)`; and the integer `flags` (`FitFlag`). The model
     object is kept for `predict`.
+
+    The parameters are reported in the raw units of the data, so they are on
+    the same scale as `y_data` and `y_pred`. The interval of a parameter is
+    symmetric in its search space (symmetric in the logarithm for a parameter
+    fitted on a log scale, so asymmetric around the estimate), while the
+    interval of a derived parameter is the delta method interval
+    `d +- t se(d)` and is always symmetric around `d`, even for a strongly
+    non-linear function of the parameters such as a half-life. Discrete
+    derived parameters (`discrete_parameters`, e.g. `flip_flop`) carry no
+    uncertainty variables at all.
     """
 
     flag_type: ClassVar[type[FitFlag]] = FitFlag

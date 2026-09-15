@@ -201,6 +201,18 @@ def bounds_in_scale(
 def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray, bool]:
     """`s² (JᵀJ)⁻¹` with `s² = 2 cost / (n - k)`.
 
+    This is the least-squares covariance and it is exact only for
+    `loss="linear"`; for a robust loss (`soft_l1`, `huber`, `cauchy`,
+    `arctan`) scipy returns the Jacobian and the cost of the transformed
+    problem, so the covariance, the standard errors and the intervals derived
+    from it are approximations.
+
+    A numerically singular `JᵀJ` is reported as singular, and so is an
+    inverse with a negative variance on the diagonal (the covariance is then
+    not positive semidefinite, the standard errors are meaningless); the
+    values are returned unchanged and the caller clips the variances at zero
+    so that the standard errors stay finite.
+
     Args:
         jac: the Jacobian of the residuals in the scaled space, `(n, k)`.
         cost: the scipy cost `0.5 Σ r²`.
@@ -208,7 +220,8 @@ def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray
         k: number of free parameters.
 
     Returns:
-        The covariance of the free parameters and whether `JᵀJ` was singular.
+        The covariance of the free parameters and whether it is unusable
+        (singular `JᵀJ` or a negative variance).
     """
     if n <= k:
         return np.full((k, k), np.nan), True
@@ -219,7 +232,8 @@ def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray
         return np.full((k, k), np.nan), True
     if not np.all(np.isfinite(inv)):
         return np.full((k, k), np.nan), True
-    return inv * (2.0 * cost / (n - k)), False
+    cov = inv * (2.0 * cost / (n - k))
+    return cov, bool(np.any(np.diag(cov) < 0.0))
 
 
 def _problem(
@@ -396,6 +410,16 @@ def fit_row(
 ) -> RowFit:
     """Fit one row from one or several start points and compute its statistics.
 
+    A model which defines `parameter_order` (the sums of exponentials) has its
+    parameters permuted after the fit, together with every positional array
+    (the free mask, the bounds, the scales, the fixed values, the start
+    vector and the columns of the Jacobian), so the standard errors, the
+    intervals, the correlation matrix and the `AT_BOUND` flag describe the
+    parameter they are labelled with. The permutation is skipped when
+    `options.fixed` or `options.bounds` names a parameter of the model: the
+    user pinned that label, so the phases keep the labelling of the options
+    even when they are then not ordered by decreasing rate.
+
     Args:
         model: the model
         x: independent variable `(n,)`
@@ -485,21 +509,26 @@ def fit_row(
     solution, converged = best
     flags = 0 if converged else int(FitFlag.NOT_CONVERGED)
 
-    q_free = np.array(solution.x, dtype=np.float64)
     jac = np.asarray(solution.jac, dtype=np.float64)
-    p = full_p(q_free)
-    # reorder the phases of a sum of exponentials
+    p = full_p(np.array(solution.x, dtype=np.float64))
+    # reorder the phases of a sum of exponentials, with every positional array
     order_fn = getattr(model, "parameter_order", None)
-    if order_fn is not None:
+    pinned = (set(options.fixed) | set(options.bounds)) & set(names)
+    if order_fn is not None and not pinned:
         order = np.asarray(order_fn(p))
         if not np.array_equal(order, np.arange(k_all)):
-            p = p[order]
             free_order = [
                 int(np.flatnonzero(np.flatnonzero(free) == i)[0])
                 for i in order
                 if free[i]
             ]
             jac = jac[:, free_order]
+            p = p[order]
+            p0 = p0[order]
+            free = free[order]
+            lower, upper = lower[order], upper[order]
+            scales = [scales[i] for i in order]
+            fixed_values = fixed_values[order]
     cov_free, singular = covariance(jac, float(solution.cost), n, k)
     if singular:
         flags |= int(FitFlag.SINGULAR)
@@ -518,15 +547,13 @@ def fit_row(
     with np.errstate(invalid="ignore", divide="ignore"):
         corr_free = cov_free / np.outer(se_q, se_q)
     corr[np.ix_(free, free)] = corr_free
-    # parameters resting on a bound
+    # parameters resting on a bound, measured relative to their start value so
+    # that a lower bound of 0 (which is -inf on the log scale) is detected too
+    tol = options.at_bound_tolerance
     for i in np.flatnonzero(free):
+        atol = tol * max(abs(float(p0[i])), 1e-300)
         for bound in (lower[i], upper[i]):
-            if np.isfinite(bound) and np.isclose(
-                p[i],
-                bound,
-                rtol=options.at_bound_tolerance,
-                atol=options.at_bound_tolerance * 1e-12,
-            ):
+            if np.isfinite(bound) and np.isclose(p[i], bound, rtol=tol, atol=atol):
                 flags |= int(FitFlag.AT_BOUND)
     # derived parameters with the delta method
     derived = model.derived(p)
@@ -702,12 +729,12 @@ def fit(
     """
     options = options or FitOptions()
     x_arr, y_arr, sd_arr, single = _as_rows(x, y, sd)
-    rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
     sample_dims: tuple[str, ...] = () if single else tuple(dims or ("sample",))
     if not single and len(sample_dims) != 1:
         raise ValueError(
             "2-D data has exactly one sample dimension; use fit_timecourses or fit_table for more"
         )
+    rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
     return build_result(
         model,
         rows,
@@ -752,6 +779,18 @@ def build_result(
 ) -> FitResult:
     """Assemble the result dataset of the fitted rows.
 
+    The parameters, their uncertainties and the derived parameters are
+    reported in the raw units of `x` and `y` (`parameter_unit_expression`), so
+    they are on the same scale as `y_data` and `y_pred`. `residuals` holds the
+    weighted residuals `(y - f) / sqrt(var)`, which are dimensionless only
+    under `Weighting.INV_SD` and otherwise carry the unit of `y` divided by
+    the square root of the variance model; `rmse` is the root mean square of
+    the unweighted residuals `y - f` and carries the unit of `y`. Both are
+    reported as `dimensionless`, like the other goodness-of-fit statistics.
+    Derived parameters listed in `FitResult.discrete_parameters` (indicators
+    such as `flip_flop`) are written without `_se`, `_ci_low`, `_ci_high` and
+    `_cv`.
+
     Args:
         model: the model
         rows: one `RowFit` per row
@@ -775,8 +814,8 @@ def build_result(
     names = model.parameter_names
     k = len(names)
 
-    def units_of(expr: str) -> tuple[str, float]:
-        """The unit and the conversion factor of a unit expression."""
+    def units_of(expr: str) -> str:
+        """The unit of a unit expression in the units of the data."""
         return parameter_unit_expression(expr, x_unit=x_unit, y_unit=y_unit)
 
     data_vars: dict[str, Any] = {}
@@ -790,32 +829,31 @@ def build_result(
         )
 
     for j, parameter in enumerate(model.parameters):
-        unit, factor = units_of(parameter.unit_expr)
-        scalar(parameter.name, [r.p[j] * factor for r in rows], unit)
-        scalar(f"{parameter.name}_se", [r.se_p[j] * factor for r in rows], unit)
-        scalar(f"{parameter.name}_ci_low", [r.ci_low[j] * factor for r in rows], unit)
-        scalar(f"{parameter.name}_ci_high", [r.ci_high[j] * factor for r in rows], unit)
+        unit = units_of(parameter.unit_expr)
+        scalar(parameter.name, [r.p[j] for r in rows], unit)
+        scalar(f"{parameter.name}_se", [r.se_p[j] for r in rows], unit)
+        scalar(f"{parameter.name}_ci_low", [r.ci_low[j] for r in rows], unit)
+        scalar(f"{parameter.name}_ci_high", [r.ci_high[j] for r in rows], unit)
         scalar(
             f"{parameter.name}_cv",
             [_cv(r.se_p[j], r.p[j]) for r in rows],
             "dimensionless",
         )
     for name, expr in model.derived_units.items():
-        unit, factor = units_of(expr)
-        scalar(name, [r.derived.get(name, math.nan) * factor for r in rows], unit)
-        scalar(
-            f"{name}_se",
-            [r.derived_se.get(name, math.nan) * factor for r in rows],
-            unit,
-        )
+        unit = units_of(expr)
+        scalar(name, [r.derived.get(name, math.nan) for r in rows], unit)
+        if name in FitResult.discrete_parameters:
+            # an indicator such as `flip_flop` carries no uncertainty
+            continue
+        scalar(f"{name}_se", [r.derived_se.get(name, math.nan) for r in rows], unit)
         scalar(
             f"{name}_ci_low",
-            [r.derived_ci_low.get(name, math.nan) * factor for r in rows],
+            [r.derived_ci_low.get(name, math.nan) for r in rows],
             unit,
         )
         scalar(
             f"{name}_ci_high",
-            [r.derived_ci_high.get(name, math.nan) * factor for r in rows],
+            [r.derived_ci_high.get(name, math.nan) for r in rows],
             unit,
         )
         scalar(

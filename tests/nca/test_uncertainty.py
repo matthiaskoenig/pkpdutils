@@ -62,6 +62,8 @@ def test_base_name() -> None:
     assert base_name("auc_last_se") == "auc_last"
     assert base_name("auc_inf_obs_ci_high") == "auc_inf_obs"
     assert base_name("cl_f_geocv") == "cl_f"
+    assert base_name("auc_geocv") == "auc"
+    assert base_name("k_cv") == "k"
     assert base_name("auc_last") is None
     assert base_name("flags") is None
 

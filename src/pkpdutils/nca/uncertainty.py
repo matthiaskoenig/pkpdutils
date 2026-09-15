@@ -127,7 +127,8 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
-#: suffixes of the uncertainty variables of a parameter
+#: suffixes of the uncertainty variables of a parameter (`_cv` is the
+#: coefficient of variation of a fitted parameter, `pkpdutils.fit`)
 UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
     "_sd",
     "_se",
@@ -136,7 +137,10 @@ UNCERTAINTY_SUFFIXES: tuple[str, ...] = (
     "_pi_low",
     "_pi_high",
     "_geomean",
+    # `_geocv` before `_cv`: `base_name` returns on the first match, so the
+    # shorter suffix would turn `auc_geocv` into `auc_geo`
     "_geocv",
+    "_cv",
 )
 
 #: suffixes of the summary variables of a parameter (`NCAResult.summarize`)
