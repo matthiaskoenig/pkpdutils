@@ -134,6 +134,19 @@ def test_fit_table_dose_proportionality() -> None:
     assert float(test.slope) == pytest.approx(float(pooled["b"]))
     assert test.dose_range == (25.0, 200.0) and test.criterion == (0.8, 1.25)
     assert bool(test.proportional) or bool(test.inconclusive)
+    # a batch result keeps the sample dimension, `sel` picks one sample
+    per_individual = proportionality_test(result, dose_range=(25.0, 200.0))
+    assert per_individual.slope.dims == ("individual",)
+    one = per_individual.sel(individual="b")
+    assert one.slope.ndim == 0
+    assert float(one.slope) == pytest.approx(float(result["b"].sel(individual="b")))
+    assert one.bounds == per_individual.bounds
+    assert one.dose_range == (25.0, 200.0)
+    assert isinstance(one.to_dict()["proportional"], bool)
+    assert per_individual.to_dict()["slope"] == pytest.approx(
+        result["b"].to_numpy().tolist()
+    )
+    assert per_individual.sel() is per_individual
 
 
 def test_fit_table_row_pairing_independent_of_dim_order() -> None:

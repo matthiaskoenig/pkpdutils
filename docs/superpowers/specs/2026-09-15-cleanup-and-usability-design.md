@@ -65,7 +65,7 @@ New:
 
 ## Breaking changes (for the release notes of the next minor)
 
-- `options` is keyword-only in `nca`, `nca_single`, `partial_auc`, `superposition`.
+- `options` is keyword-only in `nca`, `nca_single`, `partial_auc`, `superposition`; `t_end` of `superposition` is keyword-only with it, since it follows `options` in the signature.
 - `FitResult` `p_cv` is a fraction (was a percentage).
 - `plot_*`: `ax`/`axes` and `style` keyword-only, `log` replaced by `log_x`/`log_y`; `plot_dose_proportionality` takes a `ProportionalityResult`; `proportionality_test` returns a `ProportionalityResult`.
 - `read_events`, `read_pknca`, `read_adnca`: column keywords renamed to `*_col`; `groups` of `read_pknca` renamed `covariates`.

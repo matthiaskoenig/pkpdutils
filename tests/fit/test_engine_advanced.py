@@ -132,6 +132,8 @@ def test_compare_models_of_a_timecourse_and_a_batch() -> None:
     assert on_batch.best.dims == ("individual",)
     with pytest.raises(ValueError, match="must not be given"):
         compare_models([MonoExp()], tc, y)
+    with pytest.raises(ValueError, match="x_unit"):
+        compare_models([MonoExp()], tc, x_unit="dimensionless")
     with pytest.raises(ValueError, match="'y' is required"):
         compare_models([MonoExp()], T)
 

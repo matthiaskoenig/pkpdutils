@@ -2,6 +2,8 @@
 
 import importlib
 import inspect
+import subprocess
+import sys
 from typing import Any
 
 import numpy as np
@@ -106,6 +108,23 @@ def test_io_and_plot_are_reachable_after_importing_the_package() -> None:
     assert fresh.io.read_events is not None
     assert fresh.plot.plot_timecourse is not None
     assert {"io", "plot"} <= set(pkpdutils.__all__)
+    missing = "nothing"
+    with pytest.raises(AttributeError, match="no attribute 'nothing'"):
+        getattr(fresh, missing)
+
+
+def test_importing_the_package_does_not_import_matplotlib() -> None:
+    """`plot` is imported on first use, so a script which draws nothing skips matplotlib."""
+    script = (
+        "import sys, pkpdutils;"
+        "print('matplotlib.pyplot' in sys.modules);"
+        "print(pkpdutils.plot.plot_timecourse is not None);"
+        "print('matplotlib.pyplot' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.split() == ["False", "True", "True"]
 
 
 def test_the_stats_helpers_are_exported() -> None:
@@ -222,17 +241,28 @@ def test_every_figure_draws_into_the_axes_it_is_given() -> None:
     """`ax` draws one panel, `axes` the panels of a multi-panel figure."""
     import matplotlib.pyplot as plt
 
-    from pkpdutils import Power, fit_table, proportionality_test
+    from pkpdutils import (
+        ParameterSample,
+        Power,
+        fit_table,
+        meta_analysis,
+        proportionality_test,
+        ratio,
+    )
     from pkpdutils.plot import (
         plot_bland_altman,
         plot_dose_proportionality,
         plot_fit,
+        plot_forest,
         plot_goodness_of_fit,
         plot_intervals,
         plot_nca,
         plot_nca_grid,
+        plot_parameters,
+        plot_ratio,
         plot_timecourse,
     )
+    from pkpdutils.stats import Study
 
     tc = curve()
     batch = tc.to_batch()
@@ -276,4 +306,42 @@ def test_every_figure_draws_into_the_axes_it_is_given() -> None:
     )
     intervals = nca_single(multi)
     assert plot_intervals(intervals, "interval_auc", ax=ax) is single
+    plt.close("all")
+    # the figures of the parameters and of the statistics
+    curves = [
+        tc.model_copy(
+            update={"value": tc.value * scale, "label": label},
+        )
+        for scale, label in ((1.0, "a"), (1.2, "b"), (0.8, "c"))
+    ]
+    group = Timecourses.from_timecourses(curves)
+    group.ds.coords["sex"] = ("individual", ["m", "f", "m"])
+    parameters = nca(group)
+    labels = np.array(["a", "b", "c"])
+    test_sample = ParameterSample(values=np.array([12.0, 14.0, 11.0]), labels=labels)
+    reference_sample = ParameterSample(
+        values=np.array([10.0, 12.0, 10.5]), labels=labels
+    )
+    meta = meta_analysis(
+        [
+            Study(
+                label=f"study {i}",
+                control=ParameterSample(mean=1.2, sd=0.4, n=10),
+                treatment=ParameterSample(mean=1.6 + 0.1 * i, sd=0.5, n=10),
+            )
+            for i in range(3)
+        ]
+    )
+    stats_figure, stats_grid = plt.subplots(nrows=1, ncols=3)
+    assert (
+        plot_parameters(
+            parameters, "auc_inf_obs", "individual", by="sex", ax=stats_grid[0]
+        )
+        is stats_figure
+    )
+    assert (
+        plot_ratio({"auc": ratio(test_sample, reference_sample)}, ax=stats_grid[1])
+        is stats_figure
+    )
+    assert plot_forest(meta, ax=stats_grid[2]) is stats_figure
     plt.close("all")

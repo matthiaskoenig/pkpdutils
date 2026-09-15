@@ -75,7 +75,9 @@ def plot_fit(
         title: title, the model name by default; the parameters and the
             flags are appended.
         axes: the two axes to draw the fit and the residual panel into, a new
-            figure by default.
+            figure by default; a caller-supplied pair is used as it is, so it
+            gives up the `height_ratios=[3, 1]` and the shared x axis of the
+            default panels unless the caller sets them itself.
         style: colors and markers.
         **indexers: coordinate label per sample dimension, none for a 0-D result.
 

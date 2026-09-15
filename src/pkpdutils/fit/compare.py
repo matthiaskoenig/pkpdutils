@@ -51,8 +51,8 @@ def compare_models(
     *,
     sd: Any | None = None,
     options: FitOptions | None = None,
-    x_unit: str = "dimensionless",
-    y_unit: str = "dimensionless",
+    x_unit: str | None = None,
+    y_unit: str | None = None,
     dims: Sequence[str] | None = None,
     coords: dict[str, Any] | None = None,
 ) -> ModelComparison:
@@ -79,8 +79,8 @@ def compare_models(
     Keyword Args:
         sd: standard deviations, as for `fit`.
         options: fit options shared by every model.
-        x_unit: unit of `x`.
-        y_unit: unit of `y`.
+        x_unit: unit of `x`, `"dimensionless"` when it is not given.
+        y_unit: unit of `y`, `"dimensionless"` when it is not given.
         dims: sample dimension names for a 2-D `y`.
         coords: coordinates of the sample dimensions.
 
@@ -102,13 +102,13 @@ def compare_models(
             for name, value in (
                 ("y", y),
                 ("sd", sd),
+                ("x_unit", x_unit),
+                ("y_unit", y_unit),
                 ("dims", dims),
                 ("coords", coords),
             )
             if value is not None
         ]
-        if x_unit != "dimensionless" or y_unit != "dimensionless":
-            given.append("x_unit/y_unit")
         if given:
             raise ValueError(
                 f"A {type(x).__name__} carries the data and the units: "
@@ -132,8 +132,8 @@ def compare_models(
                 y,
                 sd=sd,
                 options=options,
-                x_unit=x_unit,
-                y_unit=y_unit,
+                x_unit="dimensionless" if x_unit is None else x_unit,
+                y_unit="dimensionless" if y_unit is None else y_unit,
                 dims=dims,
                 coords=coords,
             )
