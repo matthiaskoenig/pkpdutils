@@ -8,6 +8,7 @@ between-study variance \(\tau^2\) to every weight. The heterogeneity
 statistics \(Q\), \(I^2\) and \(H^2\) follow Higgins & Thompson (2002).
 """
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -15,10 +16,18 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
 from scipy.stats import chi2, norm
 
-from pkpdutils.stats.sample import ParameterSample, Scale
-from pkpdutils.stats.tests import hedges_correction
+from pkpdutils.stats.sample import (
+    ParameterSample,
+    Scale,
+    coerce,
+    cohen_d,
+    hedges_correction,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class EffectKind(StrEnum):
@@ -100,8 +109,23 @@ class Heterogeneity:
     h2: float
     tau2: float
 
+    def to_dict(self) -> dict[str, Any]:
+        """The fields as a dictionary.
 
-@dataclass(frozen=True)
+        Returns:
+            Field name to value.
+        """
+        return {
+            "q": self.q,
+            "df": self.df,
+            "p_value": self.p_value,
+            "i2": self.i2,
+            "h2": self.h2,
+            "tau2": self.tau2,
+        }
+
+
+@dataclass(frozen=True, eq=False)
 class PooledEffect:
     r"""Pooled effect of a meta-analysis.
 
@@ -128,6 +152,45 @@ class PooledEffect:
     weights: np.ndarray
     model: str
     tau2: float
+
+    def __eq__(self, other: object) -> bool:
+        """Whether two pooled effects have the same fields.
+
+        The generated equality of a dataclass compares the `weights` arrays
+        with `==`, whose truth value is ambiguous; they are compared with
+        `np.array_equal` instead.
+
+        Args:
+            other: the object to compare with.
+
+        Returns:
+            Whether `other` is a pooled effect with the same fields;
+            `NotImplemented` for any other type, so that python falls back
+            to the identity comparison.
+        """
+        if not isinstance(other, PooledEffect):
+            return NotImplemented
+        return (
+            self.estimate,
+            self.se,
+            self.ci_low,
+            self.ci_high,
+            self.ci_level,
+            self.z,
+            self.p_value,
+            self.model,
+            self.tau2,
+        ) == (
+            other.estimate,
+            other.se,
+            other.ci_low,
+            other.ci_high,
+            other.ci_level,
+            other.z,
+            other.p_value,
+            other.model,
+            other.tau2,
+        ) and np.array_equal(self.weights, other.weights)
 
     def to_dict(self) -> dict[str, Any]:
         """The scalar fields as a dictionary.
@@ -164,6 +227,19 @@ class Study:
     treatment: ParameterSample
     category: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """The label, the category and the sizes of the two samples.
+
+        Returns:
+            Field name to value.
+        """
+        return {
+            "label": self.label,
+            "category": self.category,
+            "n_control": self.control.size,
+            "n_treatment": self.treatment.size,
+        }
+
 
 @dataclass(frozen=True)
 class MetaResult:
@@ -194,6 +270,25 @@ class MetaResult:
     def n_studies(self) -> int:
         """Number of studies."""
         return len(self.effects)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The kind, the labels and the pooled results as nested dictionaries.
+
+        The per study effects are `to_dataframe`.
+
+        Returns:
+            `kind`, `n_studies`, `labels`, `ci_level` and the dictionaries
+            of `fixed`, `random` and `heterogeneity`.
+        """
+        return {
+            "kind": str(self.kind),
+            "n_studies": self.n_studies,
+            "labels": self.labels,
+            "ci_level": self.ci_level,
+            "fixed": self.fixed.to_dict(),
+            "random": self.random.to_dict(),
+            "heterogeneity": self.heterogeneity.to_dict(),
+        }
 
     def to_dataframe(self) -> pd.DataFrame:
         """One row per study with its effect, interval, sizes and weights.
@@ -273,7 +368,7 @@ def _effect(
 def effect_size(
     control: ParameterSample,
     treatment: ParameterSample,
-    kind: EffectKind = EffectKind.HEDGES_G,
+    kind: EffectKind | str = EffectKind.HEDGES_G,
     *,
     ci_level: float = 0.95,
     label: str = "",
@@ -286,36 +381,50 @@ def effect_size(
     \(\bar x_T - \bar x_C\) with \(s_T^2 / n_T + s_C^2 / n_C\). Log ratio:
     \(\mu_T - \mu_C\) of the log moments with \(\sigma_T^2 / n_T + \sigma_C^2 / n_C\).
 
+    A group of a single value and two groups without variance leave the
+    standardized difference undefined: `estimate` and `variance` are `NaN`,
+    and pooling such an effect raises instead of dropping it silently.
+
     Args:
         control: the control sample.
         treatment: the treatment sample.
-        kind: the kind of effect.
+        kind: the kind of effect, as the member or as its string.
         ci_level: level of the interval.
         label: label of the study.
 
     Returns:
         The effect size.
+
+    Raises:
+        ValueError: if `kind` is not an `EffectKind`.
     """
+    kind = coerce(kind, EffectKind)
     scale = Scale.LOG if kind is EffectKind.LOG_RATIO else Scale.LINEAR
     m_c, s_c, n_c = control.moments(scale)
     m_t, s_t, n_t = treatment.moments(scale)
     if kind is EffectKind.HEDGES_G:
+        d, g = cohen_d(m_t, s_t, n_t, m_c, s_c, n_c)
+        if not np.isfinite(d):
+            logger.debug(
+                "study '%s' has no pooled standard deviation, its effect is NaN", label
+            )
+            nan = float("nan")
+            return _effect(nan, nan, kind, n_c, n_t, label, ci_level)
         total = n_c + n_t
-        pooled = np.sqrt(((n_c - 1) * s_c**2 + (n_t - 1) * s_t**2) / (total - 2))
-        d = (m_t - m_c) / pooled
         var_d = total / (n_c * n_t) + d**2 / (2.0 * total)
         j = hedges_correction(total)
-        return _effect(d * j, var_d * j**2, kind, n_c, n_t, label, ci_level)
+        return _effect(g, var_d * j**2, kind, n_c, n_t, label, ci_level)
     return _effect(
         m_t - m_c, s_t**2 / n_t + s_c**2 / n_c, kind, n_c, n_t, label, ci_level
     )
 
 
 def effects_from_arrays(
-    estimates: Any,
-    variances: Any,
+    estimates: ArrayLike,
+    variances: ArrayLike,
     labels: Sequence[str] | None = None,
-    kind: EffectKind = EffectKind.LOG_RATIO,
+    kind: EffectKind | str = EffectKind.HEDGES_G,
+    *,
     ci_level: float = 0.95,
 ) -> list[EffectSize]:
     """Effect sizes from estimates and variances computed elsewhere.
@@ -324,15 +433,16 @@ def effects_from_arrays(
         estimates: the effects.
         variances: their variances.
         labels: labels of the studies, the positions by default.
-        kind: the kind of effect.
+        kind: the kind of effect, as the member or as its string.
         ci_level: level of the intervals.
 
     Returns:
         The effect sizes (`n_control` and `n_treatment` are 0).
 
     Raises:
-        ValueError: if the lengths differ.
+        ValueError: if `kind` is not an `EffectKind` or the lengths differ.
     """
+    kind = coerce(kind, EffectKind)
     est = np.asarray(estimates, dtype=np.float64).ravel()
     var = np.asarray(variances, dtype=np.float64).ravel()
     if est.size != var.size:
@@ -347,7 +457,12 @@ def effects_from_arrays(
 
 
 def _arrays(effects: Sequence[EffectSize]) -> tuple[np.ndarray, np.ndarray]:
-    """The estimates and the variances of the effects.
+    """The estimates and the variances of the effects, validated.
+
+    The inverse variance weights need a positive variance of every study; a
+    study without one (a single subject, or a group without variance) would
+    otherwise get an infinite weight, or a weight of zero which drops it
+    from the pooling without a word.
 
     Args:
         effects: the effect sizes.
@@ -356,10 +471,17 @@ def _arrays(effects: Sequence[EffectSize]) -> tuple[np.ndarray, np.ndarray]:
         The estimates and the variances.
 
     Raises:
-        ValueError: without effects.
+        ValueError: without effects, or if a study has a variance which is
+            not positive and finite, naming the study.
     """
     if not effects:
         raise ValueError("A meta-analysis needs at least one study")
+    for e in effects:
+        if not (np.isfinite(e.variance) and e.variance > 0):
+            raise ValueError(
+                f"Study '{e.label}' has the variance {e.variance}, "
+                "the inverse variance pooling needs a positive variance of every study"
+            )
     return (
         np.array([e.estimate for e in effects], dtype=np.float64),
         np.array([e.variance for e in effects], dtype=np.float64),
@@ -410,6 +532,10 @@ def fixed_effect(
 
     Returns:
         The pooled effect.
+
+    Raises:
+        ValueError: as `_arrays`, without effects or for a study without a
+            positive variance.
     """
     theta, v = _arrays(effects)
     return _pool(theta, 1.0 / v, "fixed", 0.0, ci_level)
@@ -428,8 +554,25 @@ def heterogeneity(effects: Sequence[EffectSize]) -> Heterogeneity:
 
     Returns:
         The statistics.
+
+    Raises:
+        ValueError: as `_arrays`, without effects or for a study without a
+            positive variance.
     """
     theta, v = _arrays(effects)
+    return _heterogeneity(theta, v)
+
+
+def _heterogeneity(theta: np.ndarray, v: np.ndarray) -> Heterogeneity:
+    """Heterogeneity statistics of validated estimates and variances.
+
+    Args:
+        theta: the effects.
+        v: their variances, positive.
+
+    Returns:
+        The statistics.
+    """
     w = 1.0 / v
     k = theta.size
     theta_f = (w * theta).sum() / w.sum()
@@ -459,15 +602,19 @@ def random_effects(
 
     Returns:
         The pooled effect.
+
+    Raises:
+        ValueError: as `_arrays`, without effects or for a study without a
+            positive variance.
     """
     theta, v = _arrays(effects)
-    tau2 = heterogeneity(effects).tau2
+    tau2 = _heterogeneity(theta, v).tau2
     return _pool(theta, 1.0 / (v + tau2), "random", tau2, ci_level)
 
 
 def meta_analysis(
     studies: Sequence[Study],
-    kind: EffectKind = EffectKind.HEDGES_G,
+    kind: EffectKind | str = EffectKind.HEDGES_G,
     *,
     ci_level: float = 0.95,
 ) -> MetaResult:
@@ -475,34 +622,38 @@ def meta_analysis(
 
     Args:
         studies: the studies.
-        kind: the kind of effect.
+        kind: the kind of effect, as the member or as its string.
         ci_level: level of the intervals.
 
     Returns:
         The per study effects, the fixed effect and random effects pooling and the heterogeneity.
 
     Raises:
-        ValueError: without studies.
+        ValueError: without studies, for an unknown `kind`, or for a study
+            without a positive variance of its effect.
     """
     if not studies:
         raise ValueError("A meta-analysis needs at least one study")
+    kind = coerce(kind, EffectKind)
     effects = tuple(
         effect_size(s.control, s.treatment, kind, ci_level=ci_level, label=s.label)
         for s in studies
     )
+    theta, v = _arrays(effects)
+    het = _heterogeneity(theta, v)
     return MetaResult(
         kind=kind,
         effects=effects,
-        fixed=fixed_effect(effects, ci_level=ci_level),
-        random=random_effects(effects, ci_level=ci_level),
-        heterogeneity=heterogeneity(effects),
+        fixed=_pool(theta, 1.0 / v, "fixed", 0.0, ci_level),
+        random=_pool(theta, 1.0 / (v + het.tau2), "random", het.tau2, ci_level),
+        heterogeneity=het,
         ci_level=ci_level,
     )
 
 
 def meta_analysis_by(
     studies: Sequence[Study],
-    kind: EffectKind = EffectKind.HEDGES_G,
+    kind: EffectKind | str = EffectKind.HEDGES_G,
     *,
     ci_level: float = 0.95,
 ) -> dict[str, MetaResult]:
@@ -510,12 +661,16 @@ def meta_analysis_by(
 
     Args:
         studies: the studies; a study without a category is grouped under `""`.
-        kind: the kind of effect.
+        kind: the kind of effect, as the member or as its string.
         ci_level: level of the intervals.
 
     Returns:
         Category to result, in the order of first appearance.
+
+    Raises:
+        ValueError: as `meta_analysis`.
     """
+    kind = coerce(kind, EffectKind)
     groups: dict[str, list[Study]] = {}
     for study in studies:
         groups.setdefault(study.category or "", []).append(study)

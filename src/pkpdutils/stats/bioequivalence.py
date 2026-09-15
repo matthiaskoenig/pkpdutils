@@ -11,6 +11,7 @@ subject-within-sequence effects on the log scale; a paired design uses the
 within-subject differences; parallel groups use the Welch interval.
 """
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -21,8 +22,17 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 from pkpdutils.result import ParameterResult
-from pkpdutils.stats.ratio import RatioResult, _labels_match, ratio
-from pkpdutils.stats.sample import ParameterSample, _log_positive, paired_indices
+from pkpdutils.stats.ratio import RatioResult, ratio
+from pkpdutils.stats.sample import (
+    ParameterSample,
+    coerce,
+    exp_t_interval,
+    labels_match,
+    log_positive,
+    paired_indices,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class Design(StrEnum):
@@ -142,6 +152,14 @@ class BEResult:
         """
         return self.parameters[name]
 
+    def to_dict(self) -> dict[str, dict[str, Any]]:
+        """The result of every parameter as a dictionary, keyed by its name.
+
+        Returns:
+            Parameter name to the fields of its `BEParameter`.
+        """
+        return {name: p.to_dict() for name, p in self.parameters.items()}
+
     def to_dataframe(self) -> pd.DataFrame:
         """One row per parameter.
 
@@ -162,7 +180,7 @@ def _detect_design(test: ParameterSample, reference: ParameterSample) -> Design:
         `CROSSOVER` with `period` and `sequence` coordinates and matching
         labels, `PAIRED` with matching labels, else `PARALLEL`.
     """
-    if not _labels_match(test, reference):
+    if not labels_match(test, reference):
         return Design.PARALLEL
     keys = {"period", "sequence"}
     if keys <= set(test.coords) and keys <= set(reference.coords):
@@ -206,8 +224,8 @@ def _crossover(
     """
     index_t, index_r = paired_indices(test, reference)
     assert test.values is not None and reference.values is not None
-    x = _log_positive(test.values[index_t], test.name)
-    y = _log_positive(reference.values[index_r], reference.name)
+    x = log_positive(test.values[index_t], test.name)
+    y = log_positive(reference.values[index_r], reference.name)
     period_t = np.asarray(test.coords["period"])[index_t]
     sequence = np.asarray(test.coords["sequence"])[index_t]
     period_r = np.asarray(reference.coords["period"])[index_r]
@@ -238,9 +256,9 @@ def _crossover(
         mask = sequence == seq
         in_second = np.unique(period_t[mask])
         if in_second.size != 1:
-            raise ValueError(f"sequence '{seq}' mixes the order of test and reference")
+            raise ValueError(f"Sequence '{seq}' mixes the order of test and reference")
         if mask.sum() < 2:
-            raise ValueError(f"sequence '{seq}' needs at least two subjects")
+            raise ValueError(f"Sequence '{seq}' needs at least two subjects")
         groups.append((d[mask], u[mask]))
         test_second.append(bool(in_second[0] == 2))
     if test_second[0] == test_second[1]:
@@ -269,7 +287,7 @@ def tost(
     *,
     limits: tuple[float, float] = (0.8, 1.25),
     ci_level: float = 0.90,
-    design: Design | None = None,
+    design: Design | str | None = None,
 ) -> BEParameter:
     r"""Two one-sided tests of the geometric mean ratio against the acceptance limits.
 
@@ -277,26 +295,35 @@ def tost(
     \(t_U = (\ln \theta_U - \ln \mathrm{GMR}) / \mathrm{se}\), each tested one-sided
     with the degrees of freedom of the design at \(\alpha = (1 - \mathrm{ci\_level}) / 2\);
     rejecting both is the same as the interval at `ci_level` lying within
-    the limits (Schuirmann 1987).
+    the limits (Schuirmann 1987). Without a standard error (a single
+    subject, or two samples without a within-subject difference) the two
+    tests are undefined: the p values and the interval are `NaN` and the
+    parameter is not bioequivalent, as in `compare`.
 
     Args:
         test: the test sample.
         reference: the reference sample.
         limits: acceptance limits of the ratio.
         ci_level: level of the interval, 0.90 for the usual \(\alpha = 0.05\).
-        design: the design, detected from the samples by default.
+        design: the design, as the member or as its string, detected from
+            the samples by default.
 
     Returns:
         The result of the parameter.
 
     Raises:
-        ValueError: for reversed limits or a design the samples do not support.
+        ValueError: for reversed limits, an unknown design or a design the
+            samples do not support.
     """
     if not 0 < limits[0] < limits[1]:
         raise ValueError(
             f"'limits' must be (low, high) with 0 < low < high, got {limits}"
         )
-    resolved = design if design is not None else _detect_design(test, reference)
+    resolved = (
+        coerce(design, Design)
+        if design is not None
+        else _detect_design(test, reference)
+    )
     nan = float("nan")
     p_period = p_sequence = cv_intra = nan
     if resolved is Design.CROSSOVER:
@@ -321,11 +348,17 @@ def tost(
         if resolved is Design.PAIRED:
             # the variance of a within-subject difference is twice the residual variance
             cv_intra = float(np.sqrt(np.expm1(se**2 * n_test / 2.0)))
-    alpha = (1.0 - ci_level) / 2.0
-    tq = float(student_t.ppf(1.0 - alpha, df))
-    ci = (float(np.exp(log_ratio - tq * se)), float(np.exp(log_ratio + tq * se)))
-    p_lower = float(student_t.sf((log_ratio - np.log(limits[0])) / se, df))
-    p_upper = float(student_t.sf((np.log(limits[1]) - log_ratio) / se, df))
+    if se > 0 and np.isfinite(se) and df > 0:
+        ci = exp_t_interval(log_ratio, se, df, ci_level)
+        p_lower = float(student_t.sf((log_ratio - np.log(limits[0])) / se, df))
+        p_upper = float(student_t.sf((np.log(limits[1]) - log_ratio) / se, df))
+    else:
+        logger.debug(
+            "'%s' has no standard error of the log ratio, the two one-sided tests are NaN",
+            test.name,
+        )
+        ci = (nan, nan)
+        p_lower = p_upper = nan
     return BEParameter(
         name=test.name,
         unit=test.unit,
@@ -337,7 +370,7 @@ def tost(
         bioequivalent=bool(limits[0] <= ci[0] and ci[1] <= limits[1]),
         p_lower=p_lower,
         p_upper=p_upper,
-        p_value=max(p_lower, p_upper),
+        p_value=float(max(p_lower, p_upper)),
         log_ratio=log_ratio,
         se_log=se,
         df=df,
@@ -358,7 +391,7 @@ def bioequivalence(
     dim: str = "individual",
     limits: tuple[float, float] = (0.8, 1.25),
     ci_level: float = 0.90,
-    design: Design | None = None,
+    design: Design | str | None = None,
     **indexers: Any,
 ) -> BEResult:
     """Average bioequivalence of the parameters of two results.
@@ -374,12 +407,18 @@ def bioequivalence(
         dim: the sample dimension of the individuals.
         limits: acceptance limits of the ratio.
         ci_level: level of the intervals.
-        design: the design, detected from the samples by default.
+        design: the design, as the member or as its string, detected from
+            the samples by default.
         **indexers: coordinate label per remaining sample dimension.
 
     Returns:
         The result.
+
+    Raises:
+        ValueError: for an unknown design, or as `tost`.
     """
+    if design is not None:
+        design = coerce(design, Design)
     results = {
         name: tost(
             test.sample(name, dim, **indexers),

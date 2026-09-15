@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,7 @@ from pkpdutils.stats.meta import (
     meta_analysis_by,
     random_effects,
 )
-from pkpdutils.stats.tests import hedges_correction
+from pkpdutils.stats.sample import hedges_correction
 
 BCG = json.loads(
     (Path(__file__).parent.parent / "data" / "reference" / "meta_bcg.json").read_text()
@@ -164,3 +165,97 @@ def test_meta_analysis_result() -> None:
     assert set(by) == {"smokers", "contraceptives"} and by["smokers"].n_studies == 3
     with pytest.raises(ValueError, match="at least one"):
         meta_analysis([])
+
+
+def test_single_subject_study_gives_nan_effect() -> None:
+    # B11: the pooled standard deviation of two n=1 groups divided by zero
+    es = effect_size(
+        ParameterSample(values=np.array([1.0])),
+        ParameterSample(values=np.array([2.0])),
+        label="one subject",
+    )
+    assert np.isnan(es.estimate) and np.isnan(es.variance) and np.isnan(es.se)
+    assert (es.n_control, es.n_treatment) == (1, 1)
+
+
+def test_zero_variance_groups_give_nan_effect() -> None:
+    # B13: both groups constant gave an infinite effect with escaping warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        es = effect_size(
+            ParameterSample(values=np.array([1.0, 1.0])),
+            ParameterSample(values=np.array([2.0, 2.0])),
+        )
+    assert np.isnan(es.estimate) and np.isnan(es.variance)
+    assert np.isnan(es.ci_low) and np.isnan(es.ci_high)
+
+
+def test_a_study_without_variance_is_rejected_by_the_pooling() -> None:
+    # B12: a zero variance divided by zero and reported i2 = 0, tau2 = 0
+    effects = effects_from_arrays(
+        np.array([0.3, 0.2]), np.array([0.0, 0.02]), labels=["Meier", "Müller"]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for call in (heterogeneity, fixed_effect, random_effects):
+            with pytest.raises(ValueError, match="Meier"):
+                call(effects)
+    nan_variance = effects_from_arrays(np.array([0.3, 0.2]), np.array([np.nan, 0.02]))
+    with pytest.raises(ValueError, match="'0' has the variance nan"):
+        fixed_effect(nan_variance)
+
+
+def test_pooled_effects_compare_equal() -> None:
+    # B25: the weights array made the generated __eq__ raise
+    effects = effects_from_arrays(np.array([0.3, 0.2]), np.array([0.02, 0.03]))
+    assert fixed_effect(effects) == fixed_effect(effects)
+    assert fixed_effect(effects) != random_effects(effects)
+    assert fixed_effect(effects) != "fixed"
+
+
+def test_string_arguments_are_coerced() -> None:
+    control = ParameterSample(mean=100.0, sd=30.0, n=12)
+    treatment = ParameterSample(mean=130.0, sd=35.0, n=10)
+    assert (
+        effect_size(control, treatment, "log_ratio").to_dict()
+        == effect_size(control, treatment, EffectKind.LOG_RATIO).to_dict()
+    )
+    studies = [Study(label="s", control=control, treatment=treatment)]
+    assert meta_analysis(studies, "mean_diff").kind is EffectKind.MEAN_DIFF
+    assert meta_analysis_by(studies, "mean_diff")[""].kind is EffectKind.MEAN_DIFF
+    assert (
+        effects_from_arrays(np.array([0.3]), np.array([0.02]), kind="hedges_g")[0].kind
+        is EffectKind.HEDGES_G
+    )
+    with pytest.raises(ValueError, match="not a valid EffectKind"):
+        effect_size(control, treatment, "smd")
+
+
+def test_effects_from_arrays_defaults_to_hedges_g() -> None:
+    effects = effects_from_arrays(np.array([0.3, 0.2]), np.array([0.02, 0.03]))
+    assert all(e.kind is EffectKind.HEDGES_G for e in effects)
+    assert [e.label for e in effects] == ["0", "1"]
+
+
+def test_to_dict_of_every_result() -> None:
+    effects = effects_from_arrays(np.array([0.3, 0.2]), np.array([0.02, 0.03]))
+    het = heterogeneity(effects).to_dict()
+    assert set(het) == {"q", "df", "p_value", "i2", "h2", "tau2"}
+    study = Study(
+        label="s",
+        control=ParameterSample(values=np.array([1.0, 2.0])),
+        treatment=ParameterSample(values=np.array([3.0, 4.0])),
+        category="smokers",
+    )
+    assert study.to_dict() == {
+        "label": "s",
+        "category": "smokers",
+        "n_control": 2,
+        "n_treatment": 2,
+    }
+    result = meta_analysis([study], EffectKind.MEAN_DIFF)
+    d = result.to_dict()
+    assert d["kind"] == "mean_diff" and d["n_studies"] == 1 and d["labels"] == ("s",)
+    assert d["fixed"] == result.fixed.to_dict()
+    assert d["random"] == result.random.to_dict()
+    assert d["heterogeneity"] == result.heterogeneity.to_dict()

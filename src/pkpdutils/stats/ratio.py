@@ -1,18 +1,23 @@
-r"""Geometric mean ratio of a parameter between a test and a reference sample."""
+"""Geometric mean ratio of a parameter between a test and a reference sample."""
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from scipy.stats import t as student_t
 
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
-    _log_positive,
+    exp_t_interval,
+    labels_match,
+    log_positive,
     paired_values,
+    welch_df,
+    welch_se,
 )
-from pkpdutils.stats.tests import _welch_df
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,47 +74,6 @@ class RatioResult:
         }
 
 
-def _pair(
-    test: ParameterSample, reference: ParameterSample
-) -> tuple[np.ndarray, np.ndarray]:
-    """The log values of two paired samples, matched by `paired_values`.
-
-    Args:
-        test: the test sample.
-        reference: the reference sample.
-
-    Returns:
-        The logarithms of the test and the reference values in matching order.
-
-    Raises:
-        ValueError: for summary data, unequal sizes, labels which do not
-            match, no pair of finite values, or a non-positive value.
-    """
-    x, y = paired_values(test, reference)
-    return _log_positive(x, test.name), _log_positive(y, reference.name)
-
-
-def _labels_match(test: ParameterSample, reference: ParameterSample) -> bool:
-    """Whether both samples are individual, labelled and share an individual.
-
-    Which values are finite does not enter, so a missing value does not turn
-    a paired design into an unpaired one.
-
-    Args:
-        test: the test sample.
-        reference: the reference sample.
-
-    Returns:
-        `True` if the samples can be paired by label.
-    """
-    if not (test.is_individual and reference.is_individual):
-        return False
-    lx, ly = test.labels, reference.labels
-    if lx is None or ly is None:
-        return False
-    return bool(set(lx.tolist()) & set(ly.tolist()))
-
-
 def ratio(
     test: ParameterSample,
     reference: ParameterSample,
@@ -127,7 +91,9 @@ def ratio(
     Paired samples are matched with `paired_values`, by label when both
     samples carry labels and by position otherwise; a pair with a missing
     value is dropped. A sample of one value or two samples without variance
-    give `NaN` for `se_log`, `df` and the interval, the `gmr` stays finite.
+    give `NaN` for `se_log`, `df` and the interval, the `gmr` stays finite;
+    an unpaired sample without a finite value gives `NaN` throughout, a
+    paired one raises, as no pair remains.
 
     Args:
         test: the test sample.
@@ -143,10 +109,11 @@ def ratio(
         ValueError: for a paired ratio on summary data, unequal sizes,
             labels which do not match, or no pair of finite values.
     """
-    is_paired = _labels_match(test, reference) if paired is None else paired
-    alpha = 1.0 - ci_level
+    is_paired = labels_match(test, reference) if paired is None else paired
     if is_paired:
-        x, y = _pair(test, reference)
+        raw_test, raw_reference = paired_values(test, reference)
+        x = log_positive(raw_test, test.name)
+        y = log_positive(raw_reference, reference.name)
         d = x - y
         n = d.size
         center = float(d.mean())
@@ -157,13 +124,19 @@ def ratio(
         mu_t, s_t, n_test = test.moments(Scale.LOG)
         mu_r, s_r, n_reference = reference.moments(Scale.LOG)
         center = mu_t - mu_r
-        se = float(np.sqrt(s_t**2 / n_test + s_r**2 / n_reference))
-        df = _welch_df(s_t**2, n_test, s_r**2, n_reference)
-    tq = float(student_t.ppf(1.0 - alpha / 2.0, df)) if df > 0 else float("nan")
+        if n_test < 1 or n_reference < 1:
+            logger.debug(
+                "'%s' or '%s' has no finite value, the ratio is NaN",
+                test.name,
+                reference.name,
+            )
+        se = welch_se(s_t**2, n_test, s_r**2, n_reference)
+        df = welch_df(s_t**2, n_test, s_r**2, n_reference)
+    ci = exp_t_interval(center, se, df, ci_level)
     return RatioResult(
         gmr=float(np.exp(center)),
-        ci_low=float(np.exp(center - tq * se)),
-        ci_high=float(np.exp(center + tq * se)),
+        ci_low=ci[0],
+        ci_high=ci[1],
         ci_level=ci_level,
         log_ratio=center,
         se_log=se,

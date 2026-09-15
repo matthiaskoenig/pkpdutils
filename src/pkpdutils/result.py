@@ -379,7 +379,7 @@ class ParameterResult:
         return ParameterSample(
             mean=float(selected[name].values),
             sd=sd,
-            n=n,
+            n=int(n),
             geomean=geomean,
             geocv=geocv,
             name=name,

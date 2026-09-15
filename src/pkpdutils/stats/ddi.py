@@ -257,7 +257,7 @@ def ddi_classification(
 
 
 def substrate_sensitivity(
-    auc_ratio: float | RatioResult, thresholds: DDIThresholds | None = None
+    auc_ratio: float | RatioResult, *, thresholds: DDIThresholds | None = None
 ) -> Sensitivity:
     """Sensitivity of a substrate from its AUC ratio with a strong inhibitor.
 

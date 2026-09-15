@@ -9,6 +9,7 @@ from the moments (`scipy.stats.ttest_ind_from_stats`), on the log scale with
 the log-normal moments of `ParameterSample.log_moments`.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -21,9 +22,15 @@ from scipy.stats import t as student_t
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
-    _log_positive,
+    coerce,
+    cohen_d,
+    log_positive,
     paired_values,
+    welch_df,
+    welch_se,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TestMethod(StrEnum):
@@ -147,21 +154,6 @@ class TestResult:
         }
 
 
-def hedges_correction(n_total: int) -> float:
-    r"""Small sample correction of the standardized mean difference.
-
-    \(J = 1 - 3 / (4N - 9)\) (Hedges 1981, the approximation of the exact
-    gamma expression), with \(N\) the total number of values.
-
-    Args:
-        n_total: total number of values of both samples.
-
-    Returns:
-        The factor `J`.
-    """
-    return 1.0 - 3.0 / (4.0 * n_total - 9.0)
-
-
 def _values(sample: ParameterSample, scale: Scale) -> np.ndarray:
     """The finite values of an individual sample on the analysis scale.
 
@@ -242,33 +234,6 @@ def _p_from_t(statistic: float, df: float, alternative: Alternative) -> float:
     return float(student_t.sf(statistic, df))
 
 
-def _effect_sizes(
-    mean_a: float, sd_a: float, n_a: int, mean_b: float, sd_b: float, n_b: int
-) -> tuple[float, float]:
-    r"""Cohen's d and Hedges' g from the moments of two samples.
-
-    \(d = (\bar a - \bar b) / s_p\), \(s_p^2 = ((n_a - 1) s_a^2 + (n_b - 1) s_b^2) / (n_a + n_b - 2)\),
-    \(g = J d\).
-
-    Args:
-        mean_a: mean of `a`.
-        sd_a: standard deviation of `a`.
-        n_a: size of `a`.
-        mean_b: mean of `b`.
-        sd_b: standard deviation of `b`.
-        n_b: size of `b`.
-
-    Returns:
-        `d` and `g` (`NaN` if a sample holds a single value, so that the
-        pooled standard deviation is not estimable, or if it is zero).
-    """
-    if n_a < 2 or n_b < 2:
-        return float("nan"), float("nan")
-    pooled = np.sqrt(((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / (n_a + n_b - 2))
-    d = float((mean_a - mean_b) / pooled) if pooled > 0 else float("nan")
-    return d, d * hedges_correction(n_a + n_b)
-
-
 def _median_effect(a: ParameterSample, b: ParameterSample, scale: Scale) -> float:
     """Difference or ratio of the medians of two samples, on the original scale.
 
@@ -289,32 +254,6 @@ def _median_effect(a: ParameterSample, b: ParameterSample, scale: Scale) -> floa
     median_a = float(np.median(a.finite_values))
     median_b = float(np.median(b.finite_values))
     return median_a / median_b if scale is Scale.LOG else median_a - median_b
-
-
-def _welch_df(var_a: float, n_a: int, var_b: float, n_b: int) -> float:
-    r"""Welch-Satterthwaite degrees of freedom.
-
-    \(\nu = (s_a^2/n_a + s_b^2/n_b)^2 / ((s_a^2/n_a)^2/(n_a-1) + (s_b^2/n_b)^2/(n_b-1))\).
-
-    A sample of a single value has no variance to propagate and two samples
-    without variance have no scale, both give `NaN`.
-
-    Args:
-        var_a: variance of `a`.
-        n_a: size of `a`.
-        var_b: variance of `b`.
-        n_b: size of `b`.
-
-    Returns:
-        The degrees of freedom, `NaN` if a sample holds fewer than two
-        values or both variances are zero.
-    """
-    if n_a < 2 or n_b < 2 or (var_a == 0.0 and var_b == 0.0):
-        return float("nan")
-    with np.errstate(divide="ignore", invalid="ignore"):
-        va = np.float64(var_a) / n_a
-        vb = np.float64(var_b) / n_b
-        return float((va + vb) ** 2 / (va**2 / (n_a - 1) + vb**2 / (n_b - 1)))
 
 
 def _t_statistic(center: float, se: float, df: float) -> float:
@@ -338,14 +277,61 @@ def _mean_difference(u: np.ndarray, v: np.ndarray, axis: int) -> np.ndarray:
     return np.mean(u, axis=axis) - np.mean(v, axis=axis)
 
 
+def _nan_result(
+    method: TestMethod,
+    scale: Scale,
+    alternative: Alternative,
+    paired: bool,
+    ci_level: float,
+    n_a: int,
+    n_b: int,
+    a: ParameterSample,
+) -> TestResult:
+    """The result of a comparison of a sample without a finite value.
+
+    Args:
+        method: the test which was asked for.
+        scale: scale of the analysis.
+        alternative: the alternative hypothesis.
+        paired: whether the samples were paired.
+        ci_level: level of the interval.
+        n_a: number of values of `a`.
+        n_b: number of values of `b`.
+        a: the first sample, for the name and the unit.
+
+    Returns:
+        The result, with every statistic `NaN`.
+    """
+    nan = float("nan")
+    return TestResult(
+        test=method,
+        statistic=nan,
+        p_value=nan,
+        effect=nan,
+        ci_low=nan,
+        ci_high=nan,
+        ci_level=ci_level,
+        scale=scale,
+        alternative=alternative,
+        paired=paired,
+        df=nan,
+        cohen_d=nan,
+        hedges_g=nan,
+        n_a=n_a,
+        n_b=n_b,
+        name=a.name,
+        unit=a.unit,
+    )
+
+
 def compare(
     a: ParameterSample,
     b: ParameterSample,
     *,
-    test: TestMethod = TestMethod.AUTO,
-    scale: Scale = Scale.LOG,
+    test: TestMethod | str = TestMethod.AUTO,
+    scale: Scale | str = Scale.LOG,
     paired: bool = False,
-    alternative: Alternative = Alternative.TWO_SIDED,
+    alternative: Alternative | str = Alternative.TWO_SIDED,
     ci_level: float = 0.95,
     n_perm: int = 9999,
     seed: int | None = None,
@@ -363,7 +349,10 @@ def compare(
     the difference of the means, with `n_perm` resamples (Efron & Tibshirani
     1993, ch. 15). A sample of one value or two samples without variance
     give `NaN` for `statistic`, `p_value`, `df`, the interval and the effect
-    sizes.
+    sizes; a sample without a finite value gives a `NaN` effect as well,
+    unpaired, and raises on the paired path, where no pair remains.
+    `test`, `scale` and `alternative` are taken as the enumeration member or
+    as its string.
 
     Args:
         a: the first sample.
@@ -381,10 +370,13 @@ def compare(
         The result.
 
     Raises:
-        ValueError: for a paired test on unpaired or unequal samples, a
-            non-t test on summary data, or non-positive values on the log scale.
+        ValueError: for an unknown `test`, `scale` or `alternative`, a
+            paired test on unpaired or unequal samples, a non-t test on
+            summary data, or non-positive values on the log scale.
     """
-    method = test
+    method = coerce(test, TestMethod)
+    scale = coerce(scale, Scale)
+    alternative = coerce(alternative, Alternative)
     if method is TestMethod.AUTO:
         method = TestMethod.PAIRED_T if paired else TestMethod.WELCH_T
     if method in _PAIRED_TESTS and not paired:
@@ -401,17 +393,22 @@ def compare(
         return _welch_from_moments(a, b, scale, alternative, ci_level)
     if paired:
         raw_a, raw_b = paired_values(a, b)
-        x = _log_positive(raw_a, a.name) if scale is Scale.LOG else raw_a
-        y = _log_positive(raw_b, b.name) if scale is Scale.LOG else raw_b
+        x = log_positive(raw_a, a.name) if scale is Scale.LOG else raw_a
+        y = log_positive(raw_b, b.name) if scale is Scale.LOG else raw_b
         n_a = n_b = int(x.size)
     else:
         x, y = _values(a, scale), _values(b, scale)
         n_a, n_b = int(x.size), int(y.size)
-    mean_a, mean_b = float(x.mean()), float(y.mean())
-    sd_a = float(x.std(ddof=1)) if n_a > 1 else float("nan")
-    sd_b = float(y.std(ddof=1)) if n_b > 1 else float("nan")
-    d, g = _effect_sizes(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
     nan = float("nan")
+    if n_a < 1 or n_b < 1:
+        logger.debug(
+            "'%s' or '%s' has no finite value, the comparison is NaN", a.name, b.name
+        )
+        return _nan_result(method, scale, alternative, paired, ci_level, n_a, n_b, a)
+    mean_a, mean_b = float(x.mean()), float(y.mean())
+    sd_a = float(x.std(ddof=1)) if n_a > 1 else nan
+    sd_b = float(y.std(ddof=1)) if n_b > 1 else nan
+    d, g = cohen_d(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
     center = mean_a - mean_b
     if method in _T_TESTS:
         if method is TestMethod.PAIRED_T:
@@ -419,8 +416,8 @@ def compare(
             se = float(diff.std(ddof=1) / np.sqrt(n_a)) if n_a > 1 else nan
             df = float(n_a - 1) if n_a > 1 else nan
         elif method is TestMethod.WELCH_T:
-            se = float(np.sqrt(sd_a**2 / n_a + sd_b**2 / n_b))
-            df = _welch_df(sd_a**2, n_a, sd_b**2, n_b)
+            se = welch_se(sd_a**2, n_a, sd_b**2, n_b)
+            df = welch_df(sd_a**2, n_a, sd_b**2, n_b)
         elif n_a + n_b > 2:
             df = float(n_a + n_b - 2)
             pooled = ((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / df
@@ -440,7 +437,9 @@ def compare(
         effect = _median_effect(a, b, scale)
         ci = (nan, nan)
     elif method is TestMethod.WILCOXON:
-        res = stats.wilcoxon(x, y, alternative=str(alternative))
+        # two identical samples have no spread of the differences to divide by
+        with np.errstate(invalid="ignore", divide="ignore"):
+            res = stats.wilcoxon(x, y, alternative=str(alternative))
         statistic, p_value, df = float(res.statistic), float(res.pvalue), nan
         effect = _median_effect(a, b, scale)
         ci = (nan, nan)
@@ -498,12 +497,19 @@ def _welch_from_moments(
     """
     mean_a, sd_a, n_a = a.moments(scale)
     mean_b, sd_b, n_b = b.moments(scale)
-    se = float(np.sqrt(sd_a**2 / n_a + sd_b**2 / n_b))
-    df = _welch_df(sd_a**2, n_a, sd_b**2, n_b)
+    if n_a < 1 or n_b < 1:
+        logger.debug(
+            "'%s' or '%s' has no finite value, the comparison is NaN", a.name, b.name
+        )
+        return _nan_result(
+            TestMethod.WELCH_T, scale, alternative, False, ci_level, n_a, n_b, a
+        )
+    se = welch_se(sd_a**2, n_a, sd_b**2, n_b)
+    df = welch_df(sd_a**2, n_a, sd_b**2, n_b)
     center = mean_a - mean_b
     statistic = _t_statistic(center, se, df)
     low, high = _interval(center, se, df, ci_level, alternative)
-    d, g = _effect_sizes(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
+    d, g = cohen_d(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
     return TestResult(
         test=TestMethod.WELCH_T,
         statistic=float(statistic),
@@ -526,7 +532,7 @@ def _welch_from_moments(
 
 
 def multiple_comparison(
-    p_values: ArrayLike, method: AdjustMethod = AdjustMethod.HOLM
+    p_values: ArrayLike, method: AdjustMethod | str = AdjustMethod.HOLM
 ) -> np.ndarray:
     r"""Adjust p values for multiple comparisons.
 
@@ -536,24 +542,30 @@ def multiple_comparison(
 
     Args:
         p_values: the p values.
-        method: the adjustment.
+        method: the adjustment, as the member or as its string.
 
     Returns:
         The adjusted p values in the order of the input.
+
+    Raises:
+        ValueError: if `method` is not an `AdjustMethod`.
     """
+    resolved = coerce(method, AdjustMethod)
     p = np.asarray(p_values, dtype=np.float64).ravel()
     m = p.size
     if m == 0:
         return p
-    if method is AdjustMethod.BONFERRONI:
+    if resolved is AdjustMethod.BONFERRONI:
         return np.minimum(1.0, m * p)
     order = np.argsort(p)
     ranks = np.arange(1, m + 1)
     adjusted = np.empty(m)
-    if method is AdjustMethod.HOLM:
+    if resolved is AdjustMethod.HOLM:
         stepped = np.minimum(1.0, (m - ranks + 1) * p[order])
         adjusted[order] = np.maximum.accumulate(stepped)
-    else:
+    elif resolved is AdjustMethod.BH:
         stepped = np.minimum(1.0, m * p[order] / ranks)
         adjusted[order] = np.minimum.accumulate(stepped[::-1])[::-1]
+    else:
+        raise ValueError(f"'{resolved}' is not an implemented AdjustMethod")
     return adjusted
