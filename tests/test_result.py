@@ -73,3 +73,80 @@ def test_generic_summarize_uses_class_sets() -> None:
 def test_nca_result_is_parameter_result() -> None:
     assert issubclass(NCAResult, ParameterResult)
     assert NCAResult.flag_type.__name__ == "NCAFlag"
+
+
+def test_sample_coordinates_keeps_non_dimension_coords() -> None:
+    from pkpdutils.result import sample_coordinates
+
+    ds = xr.Dataset(
+        {"value": (("s", "time"), np.ones((3, 2)))},
+        coords={
+            "s": ["x", "y", "z"],
+            "period": ("s", [1, 2, 1]),
+            "time": [0.0, 1.0],
+            "grid": ("time", [0, 1]),
+        },
+    )
+    coords = sample_coordinates(ds, ("s",))
+    assert set(coords) == {"s", "period"}
+    assert coords["period"].to_numpy().tolist() == [1, 2, 1]
+
+
+def test_sample_individual_values() -> None:
+    r = make()
+    ds = r.ds.assign_coords(period=("s", [1, 2, 1]))
+    r = MyResult(ds)
+    sample = r.sample("a", dim="s")
+    assert sample.is_individual and sample.name == "a" and sample.unit == "mg"
+    assert sample.values is not None and sample.values.tolist() == [1.0, 2.0, 4.0]
+    assert sample.labels is not None and sample.labels.tolist() == ["x", "y", "z"]
+    assert sample.coords["period"].tolist() == [1, 2, 1]
+    with pytest.raises(ValueError, match="sample dimension"):
+        r.sample("a", dim="point")
+    with pytest.raises(ValueError, match="not a variable"):
+        r.sample("b", dim="s")
+
+
+def test_sample_two_dims_needs_indexers() -> None:
+    ds = xr.Dataset(
+        {
+            "a": (("g", "s"), np.array([[1.0, 2.0], [3.0, 4.0]]), {"units": "mg"}),
+            "flags": (
+                ("g", "s"),
+                np.zeros((2, 2), dtype=int),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={"g": ["c", "t"], "s": [1, 2]},
+    )
+    r = MyResult(ds)
+    sample = r.sample("a", dim="s", g="t")
+    assert sample.values is not None and sample.values.tolist() == [3.0, 4.0]
+    with pytest.raises(ValueError, match="remaining"):
+        r.sample("a", dim="s")
+
+
+def test_sample_summary_data() -> None:
+    ds = xr.Dataset(
+        {
+            "a": ((), 10.0, {"units": "mg"}),
+            "a_sd": ((), 2.0, {"units": "mg"}),
+            "a_geomean": ((), 9.8, {"units": "mg"}),
+            "a_geocv": ((), 0.2, {"units": "dimensionless"}),
+            "n": ((), 12.0, {"units": "dimensionless"}),
+            "flags": ((), 0, {"units": "dimensionless"}),
+        }
+    )
+    sample = MyResult(ds).sample("a")
+    assert not sample.is_individual
+    assert (sample.mean, sample.sd, sample.n) == (10.0, 2.0, 12)
+    assert (sample.geomean, sample.geocv) == (9.8, 0.2)
+    ds_se = ds.drop_vars(["a_sd", "a_geomean", "a_geocv"]).assign(
+        a_se=((), 0.5, {"units": "mg"}), a_n=((), 10.0, {"units": "dimensionless"})
+    )
+    sample_se = MyResult(ds_se).sample("a")
+    assert sample_se.n == 10 and sample_se.sd == pytest.approx(0.5 * np.sqrt(10))
+    with pytest.raises(ValueError, match="group data"):
+        MyResult(ds.drop_vars(["a_sd", "a_geomean", "a_geocv"])).sample("a")
+    with pytest.raises(ValueError, match="remaining"):
+        make().sample("a")

@@ -39,7 +39,7 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
-from pkpdutils.result import base_name
+from pkpdutils.result import base_name, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -593,11 +593,7 @@ def _to_result(
     Returns:
         The result.
     """
-    coords = {
-        d: timecourses.ds[d]
-        for d in timecourses.sample_dims
-        if d in timecourses.ds.coords
-    }
+    coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     data_vars: dict[str, Any] = {}
     for name, array in values.items():
         unit, factor = parameter_unit(
@@ -696,11 +692,7 @@ def partial_auc(
         time_unit=timecourses.time_unit,
         dose_unit=timecourses.dose_unit,
     )
-    coords = {
-        d: timecourses.ds[d]
-        for d in timecourses.sample_dims
-        if d in timecourses.ds.coords
-    }
+    coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     return xr.DataArray(
         (area * factor).reshape(timecourses.sample_shape),
         dims=timecourses.sample_dims,

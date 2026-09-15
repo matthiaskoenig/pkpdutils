@@ -9,6 +9,7 @@ from pkpdutils.fit.engine import build_result, fit_rows
 from pkpdutils.fit.model import Model
 from pkpdutils.fit.options import FitOptions
 from pkpdutils.fit.result import FitResult
+from pkpdutils.result import sample_coordinates
 from pkpdutils.timecourse import Timecourse, Timecourses
 
 
@@ -71,11 +72,7 @@ def fit_timecourses(
     y = timecourses.values.reshape(n_rows, n_time)
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
     rows = fit_rows(model, x, y, sd, options)
-    coords = {
-        d: timecourses.ds[d]
-        for d in timecourses.sample_dims
-        if d in timecourses.ds.coords
-    }
+    coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     return build_result(
         model,
         rows,

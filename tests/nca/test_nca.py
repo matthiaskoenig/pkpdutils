@@ -337,3 +337,23 @@ def test_run_rows_matches_nca_flags_and_shapes() -> None:
     for name in result.parameters:
         assert values[name].shape == (2,)
     np.testing.assert_array_equal(values["flags"], result["flags"].values)
+
+
+def test_nca_keeps_sample_coordinates() -> None:
+    time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+    values = np.stack([10 * np.exp(-0.2 * time), 12 * np.exp(-0.25 * time)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"], "period": ("individual", [1, 2])},
+        dose={"amount": np.array([100.0, 100.0]), "unit": "mg"},
+        route=Route.IV_BOLUS,
+    )
+    result = nca(batch)
+    assert result.ds["period"].to_numpy().tolist() == [1, 2]
+    sample = result.sample("auc_inf_obs", dim="individual")
+    assert sample.coords["period"].tolist() == [1, 2]
+    assert sample.labels is not None and sample.labels.tolist() == ["a", "b"]
