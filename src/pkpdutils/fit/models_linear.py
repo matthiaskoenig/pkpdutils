@@ -76,8 +76,10 @@ class LogLinear(Model):
             return p[0] + p[1] * np.log(x)
 
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Least squares on `ln x`."""
+        """Least squares on `ln x`, a flat line at zero without a positive `x`."""
         xs, ys = _finite(x, y, positive_x=True)
+        if xs.size == 0:
+            return np.array([0.0, 0.0], dtype=np.float64)
         slope, intercept = (
             _polyfit(np.log(xs), ys, 1) if xs.size >= 2 else (0.0, float(ys.mean()))
         )
@@ -99,8 +101,10 @@ class Power(Model):
             return p[0] * np.power(x, p[1])
 
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Least squares on the log-log data."""
+        """Least squares on the log-log data, `a = 1`, `b = 1` without a positive `x`."""
         xs, ys = _finite(x, y, positive_x=True)
+        if xs.size == 0:
+            return np.array([1.0, 1.0], dtype=np.float64)
         ok = ys > 0
         if ok.sum() >= 2:
             b, log_a = _polyfit(np.log(xs[ok]), np.log(ys[ok]), 1)
@@ -146,8 +150,12 @@ class Allometric(Model):
             return p[0] * np.power(x, b)
 
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Log-log least squares (`a` only when the exponent is fixed)."""
+        """Log-log least squares (`a` only when the exponent is fixed), `a = 1` without a positive `x`."""
         xs, ys = _finite(x, y, positive_x=True)
+        if xs.size == 0:
+            return np.array(
+                [1.0] if self.exponent is not None else [1.0, 0.75], dtype=np.float64
+            )
         ok = ys > 0
         if self.exponent is None:
             if ok.sum() >= 2:

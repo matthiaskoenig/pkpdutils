@@ -33,6 +33,7 @@ criterion (Burnham & Anderson 2002).
 
 import logging
 import math
+import warnings
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -155,6 +156,14 @@ def variance_of(
 def to_scale(p: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
     """Linear parameters to the scaled space.
 
+    A positive parameter which underflowed to exactly zero (or which a fixed
+    value or a bound put at zero or below) has no logarithm; the logarithm is
+    evaluated under `numpy.errstate(divide="ignore", invalid="ignore")` and
+    becomes `-inf` or `NaN` silently rather than raising a `RuntimeWarning`
+    under a strict warning filter, the counterpart of the overflow guard of
+    `from_scale`. The callers treat a non-finite search-scale parameter as an
+    uncertainty that cannot be computed.
+
     Args:
         p: the parameters on the linear scale.
         scales: the scale per parameter.
@@ -163,11 +172,12 @@ def to_scale(p: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
         The parameters on the search scale.
     """
     q = np.array(p, dtype=np.float64)
-    for i, scale in enumerate(scales):
-        if scale is ParameterScale.LOG10:
-            q[i] = np.log10(p[i])
-        elif scale is ParameterScale.LOG:
-            q[i] = np.log(p[i])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for i, scale in enumerate(scales):
+            if scale is ParameterScale.LOG10:
+                q[i] = np.log10(p[i])
+            elif scale is ParameterScale.LOG:
+                q[i] = np.log(p[i])
     return q
 
 
@@ -431,6 +441,41 @@ def _starts(
     return np.vstack([q0[None, :], lo + unit * (hi - lo)])
 
 
+def replicate_statistics(
+    values: np.ndarray, alpha: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Standard deviation and percentile interval of bootstrap replicates, column by column.
+
+    The finite replicates of a column are counted first and a column with
+    fewer than two of them is reported as `NaN`, the guard
+    `pkpdutils.result.ParameterResult.summarize` uses: `numpy.nanstd` with
+    `ddof=1` on such a column has no degrees of freedom left and
+    `numpy.nanpercentile` of an all-`NaN` column has nothing to interpolate,
+    and both would warn (and abort the batch under a strict warning filter)
+    rather than return a meaningful number.
+
+    Args:
+        values: the replicates, `(B, m)`, `NaN` where a replicate has no value.
+        alpha: `1 - ci_level`, the total tail probability of the interval.
+
+    Returns:
+        `(sd, ci_low, ci_high)`, one value per column.
+    """
+    finite = np.isfinite(values)
+    count = finite.sum(axis=0)
+    with np.errstate(invalid="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        sd = np.nanstd(values, axis=0, ddof=1)
+        low = np.nanpercentile(values, 100.0 * alpha / 2.0, axis=0)
+        high = np.nanpercentile(values, 100.0 * (1.0 - alpha / 2.0), axis=0)
+    usable = count > 1
+    return (
+        np.where(usable, sd, np.nan),
+        np.where(usable, low, np.nan),
+        np.where(usable, high, np.nan),
+    )
+
+
 def _embed(cov_free: np.ndarray, free: np.ndarray, k_all: int) -> np.ndarray:
     """The covariance of the free parameters in the full parameter grid (NaN for fixed ones).
 
@@ -584,6 +629,11 @@ def fit_row(
             scales = [scales[i] for i in order]
             fixed_values = fixed_values[order]
             q0_all = q0_all[order]
+            # the scaled bounds are derived from the bounds and the scales, so
+            # they are recomputed rather than permuted; the bootstrap below
+            # refits under `lq_all[free]`/`uq_all[free]` and would otherwise
+            # bound every phase by the bounds of another one
+            lq_all, uq_all = bounds_in_scale(lower, upper, scales)
     cov_free, singular = covariance(jac, float(solution.cost), n, k)
     if singular:
         flags |= int(FitFlag.SINGULAR)
@@ -610,27 +660,42 @@ def fit_row(
         for bound in (lower[i], upper[i]):
             if np.isfinite(bound) and np.isclose(p[i], bound, rtol=tol, atol=atol):
                 flags |= int(FitFlag.AT_BOUND)
-    # derived parameters with the delta method
-    derived = model.derived(p)
+    # derived parameters with the delta method. A parameter which ended at
+    # zero or beyond the range of `float64` has a non-finite search-scale
+    # value, so the central difference around it is `inf - inf` or a step of
+    # `inf`: the gradient is then meaningless and the uncertainty of every
+    # derived parameter is reported as `NaN` instead. The block runs under
+    # `numpy.errstate` so that a derived parameter of such a degenerate row
+    # (a half-life of a rate constant of zero, an overflow of the model at a
+    # perturbed parameter) stays a non-finite number instead of escaping as a
+    # `RuntimeWarning` under a strict filter and aborting the whole batch.
     derived_se: dict[str, float] = {}
     derived_lo: dict[str, float] = {}
     derived_hi: dict[str, float] = {}
-    for name, value in derived.items():
-        grad = np.zeros(k)
-        for j, i in enumerate(np.flatnonzero(free)):
-            h = 1e-6 * max(abs(q_all[i]), 1.0)
-            q_plus, q_minus = q_all.copy(), q_all.copy()
-            q_plus[i] += h
-            q_minus[i] -= h
-            grad[j] = (
-                model.derived(from_scale(q_plus, scales))[name]
-                - model.derived(from_scale(q_minus, scales))[name]
-            ) / (2 * h)
-        var_d = math.nan if singular else float(grad @ cov_free @ grad)
-        se_d = math.sqrt(var_d) if var_d >= 0 else math.nan
-        derived_se[name] = se_d
-        derived_lo[name] = value - tq * se_d
-        derived_hi[name] = value + tq * se_d
+    usable_gradient = bool(np.all(np.isfinite(q_all)))
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        derived = model.derived(p)
+        for name, value in derived.items():
+            if not usable_gradient:
+                derived_se[name] = math.nan
+                derived_lo[name] = math.nan
+                derived_hi[name] = math.nan
+                continue
+            grad = np.zeros(k)
+            for j, i in enumerate(np.flatnonzero(free)):
+                h = 1e-6 * max(abs(q_all[i]), 1.0)
+                q_plus, q_minus = q_all.copy(), q_all.copy()
+                q_plus[i] += h
+                q_minus[i] -= h
+                grad[j] = (
+                    model.derived(from_scale(q_plus, scales))[name]
+                    - model.derived(from_scale(q_minus, scales))[name]
+                ) / (2 * h)
+            var_d = math.nan if singular else float(grad @ cov_free @ grad)
+            se_d = math.sqrt(var_d) if var_d >= 0 else math.nan
+            derived_se[name] = se_d
+            derived_lo[name] = value - tq * se_d
+            derived_hi[name] = value + tq * se_d
     if derived.get("flip_flop", 0.0) >= 1.0:
         flags |= int(FitFlag.FLIP_FLOP)
     # statistics
@@ -720,7 +785,9 @@ def fit_row(
                 p_star = p_star[order_star]
             rows_p.append(p_star)
             rows_q.append(to_scale(p_star, scales))
-            rows_d.append(model.derived(p_star))
+            # a replicate can be degenerate in the same way as the fit above
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                rows_d.append(model.derived(p_star))
         n_boot = len(rows_p)
         if n_boot < 2:
             # too few replicates converged to estimate the uncertainty from;
@@ -733,24 +800,25 @@ def fit_row(
             alpha = 1.0 - options.ci_level
             # nan-tolerant: a replicate can be finite in its own parameters
             # but give a non-finite derived quantity (e.g. thalf for k ~ 0)
-            se_p = np.where(free, np.nanstd(arr_p, axis=0, ddof=1), np.nan)
-            ci_low = np.where(
-                free, np.nanpercentile(arr_p, 100 * alpha / 2, axis=0), np.nan
-            )
-            ci_high = np.where(
-                free, np.nanpercentile(arr_p, 100 * (1 - alpha / 2), axis=0), np.nan
-            )
+            sd_b, low_b, high_b = replicate_statistics(arr_p, alpha)
+            se_p = np.where(free, sd_b, np.nan)
+            ci_low = np.where(free, low_b, np.nan)
+            ci_high = np.where(free, high_b, np.nan)
             with np.errstate(invalid="ignore", divide="ignore"):
                 corr_b = np.corrcoef(arr_q[:, free], rowvar=False)
             corr = np.full((k_all, k_all), np.nan)
             corr[np.ix_(free, free)] = np.atleast_2d(corr_b)
-            for name in derived:
-                values = np.array([d[name] for d in rows_d], dtype=np.float64)
-                derived_se[name] = float(np.nanstd(values, ddof=1))
-                derived_lo[name] = float(np.nanpercentile(values, 100 * alpha / 2))
-                derived_hi[name] = float(
-                    np.nanpercentile(values, 100 * (1 - alpha / 2))
+            derived_names = list(derived)
+            if derived_names:
+                arr_d = np.array(
+                    [[d[name] for name in derived_names] for d in rows_d],
+                    dtype=np.float64,
                 )
+                sd_d, low_d, high_d = replicate_statistics(arr_d, alpha)
+                for j, name in enumerate(derived_names):
+                    derived_se[name] = float(sd_d[j])
+                    derived_lo[name] = float(low_d[j])
+                    derived_hi[name] = float(high_d[j])
     return RowFit(
         p=p,
         q=q_all,

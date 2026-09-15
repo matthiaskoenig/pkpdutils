@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from pkpdutils.fit import FitFlag, FitOptions, compare_models, fit
-from pkpdutils.fit.engine import fit_row
+from pkpdutils.fit.engine import fit_row, replicate_statistics
 from pkpdutils.fit.models import BiExp, Emax, Linear, MonoExp, SigmoidEmax
 
 T = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
@@ -183,3 +183,102 @@ def test_from_scale_overflow_fails_the_start_without_a_warning() -> None:
     y = BiExp().predict(T, np.array([8.0, 2.0, 2.0, 0.2]))
     row = fit_row(BiExp(), T, y, None, options, np.random.default_rng(0))
     assert row.flags & int(FitFlag.NOT_CONVERGED)
+
+
+def test_a_degenerate_row_does_not_abort_the_fit() -> None:
+    """A row the optimizer cannot fit is reported through its flags, it never raises.
+
+    The delta method perturbs every parameter on the search scale; a row whose
+    parameters or derived parameters run out of the range of `float64` would
+    otherwise raise the floating point `RuntimeWarning` of that perturbation
+    under a strict warning filter and take the whole batch with it.
+    """
+    result = fit(
+        Emax(),
+        np.array([0.5, 1.0, 2.0, 4.0, 8.0, 16.0]),
+        np.array([1e12, 1e10, 1e8, 1e6, 1e4, 1e2]),
+    )
+    assert result.flags()
+    assert np.isfinite(float(result["ec50"].values))
+
+
+def test_a_parameter_at_zero_gives_no_derived_uncertainty() -> None:
+    """A rate constant driven to zero has no logarithm, so the delta method gradient is skipped."""
+    x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0])
+    result = fit(
+        BiExp(), x, np.full(x.size, 1e12), options=FitOptions(n_starts=3, seed=29)
+    )
+    assert float(result["k2"].values) == 0.0
+    assert np.isnan(float(result["thalf_2_se"].values))
+    assert np.isnan(float(result["auc_ci_low"].values))
+    assert "SINGULAR" in result.flags()
+
+
+def test_a_degenerate_row_does_not_disturb_the_other_rows_of_a_batch() -> None:
+    """The good row of a batch is fitted as if it were alone."""
+    x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0])
+    good = BiExp().predict(x, np.array([8.0, 2.0, 2.0, 0.2]))
+    batch = fit(
+        BiExp(),
+        x,
+        np.stack([np.full(x.size, 1e12), good]),
+        dims=("individual",),
+        options=FitOptions(n_starts=3, seed=29),
+    )
+    alone = fit(BiExp(), x, good, options=FitOptions(n_starts=3, seed=29))
+    assert float(batch["r2"].values[1]) > 0.999
+    assert not batch.decode_flags(int(batch["flags"].values[1]))
+    for name in ("a1", "k1", "a2", "k2", "lambda_z", "auc"):
+        assert float(batch[name].values[1]) == pytest.approx(
+            float(alone[name].values), rel=1e-6
+        )
+
+
+def test_replicate_statistics_of_degenerate_columns() -> None:
+    """A column with fewer than two finite replicates is `NaN`, without a numpy warning."""
+    values = np.array(
+        [
+            [1.0, np.nan, 2.0, np.nan],
+            [3.0, np.nan, np.nan, 4.0],
+            [5.0, np.nan, np.nan, np.nan],
+        ]
+    )
+    sd, low, high = replicate_statistics(values, 0.05)
+    assert sd[0] == pytest.approx(np.std([1.0, 3.0, 5.0], ddof=1))
+    assert low[0] < high[0]
+    assert np.isnan(sd[1:]).all()
+    assert np.isnan(low[1:]).all() and np.isnan(high[1:]).all()
+
+
+def test_bootstrap_of_a_row_with_a_degenerate_derived_parameter() -> None:
+    """A bootstrap over replicates whose derived parameters are not finite reduces without warning."""
+    x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 24.0])
+    result = fit(
+        BiExp(),
+        x,
+        np.full(x.size, 1e12),
+        options=FitOptions(n_starts=1, bootstrap=5, seed=29),
+    )
+    assert int(result["n_bootstrap"].values) >= 0
+
+
+def test_the_bootstrap_refits_under_the_reordered_phases() -> None:
+    """A fit whose phases are reordered bootstraps under the reordered bounds and scales.
+
+    Every positional array of the row is permuted with the phases; the scaled
+    bounds are recomputed from the permuted bounds and scales, which the
+    bootstrap refits under.
+    """
+    x = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 24.0])
+    y = BiExp().predict(x, np.array([8.0, 2.0, 2.0, 0.2]))
+    # the guess labels the fast phase `a2`, `k2`; the fit swaps the phases back
+    options = FitOptions(
+        initial={"a1": 2.0, "k1": 0.2, "a2": 8.0, "k2": 2.0},
+        n_starts=1,
+        bootstrap=20,
+        seed=5,
+    )
+    result = fit(BiExp(), x, y, options=options)
+    assert float(result["k1"].values) > float(result["k2"].values)
+    assert float(result["k1"].values) == pytest.approx(2.0, rel=1e-3)
+    assert int(result["n_bootstrap"].values) >= 2
