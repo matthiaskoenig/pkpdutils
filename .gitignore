@@ -32,3 +32,4 @@ examples/**/results/
 *~
 .DS_Store
 .ipynb_checkpoints/
+.superpowers/

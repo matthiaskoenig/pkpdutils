@@ -81,13 +81,18 @@ class FitOptions(BaseModel):
             robust loss they are approximations
         n_starts: number of start points (Latin hypercube in the start box)
         seed: seed of the start point sampling and the bootstrap
-        n_workers: worker processes for many samples or starts, `None` for
-            the calling process. A pooled call (`n_workers > 1` with more
-            than one row) must run under an `if __name__ == "__main__":`
-            guard, since python's `spawn` and `forkserver` process start
-            methods (the default on macOS and Windows, and on Linux from
-            python 3.14) re-import the module without re-running it; the
-            NCA pool (`NCAOptions.n_workers`) has the same requirement
+        n_workers: worker processes of a batch fit, one row per job (never the
+            starts of a single row). `None` is automatic: the calling process
+            up to 2 000 rows, where a batch does not earn back the start-up of
+            the workers, and one worker per core, at most 8, above it; `1` is
+            always serial and `n > 1` uses that many workers, which is how a
+            smaller batch of expensive rows (several starts, a residual
+            bootstrap) asks for the pool. A pooled call must run under an
+            `if __name__ == "__main__":` guard, since python's `spawn` and
+            `forkserver` process start methods (the default on macOS and
+            Windows, and on Linux from python 3.14) re-import the module
+            without re-running it; the NCA (`NCAOptions.n_workers`) runs in
+            threads and needs no guard
         ci_level: level of the confidence intervals
         bootstrap: number of residual bootstrap replicates, 0 for none
         max_nfev: maximal function evaluations per start, `None` for the scipy default

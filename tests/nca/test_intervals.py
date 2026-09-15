@@ -365,3 +365,75 @@ def test_superposition_on_a_protocol_with_different_amounts() -> None:
     )
     at = predicted.value[np.isclose(predicted.time, 24.5)]
     assert at.size == 1 and at[0] == pytest.approx(expected, rel=1e-3)
+
+
+def test_an_interval_of_a_batch_is_analysed_like_the_curve_on_its_own() -> None:
+    # B3: the samples of an interval are gathered as a block of the packed row
+    # and the block is as wide as the widest interval of the batch; a row must
+    # get the parameters it gets on its own, whatever the other rows hold
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    curves = []
+    for step, doses in ((0.5, 5), (4.0, 3), (2.0, 2)):
+        t = np.arange(0.0, doses * TAU + 0.01, step)
+        c = np.zeros_like(t)
+        for k in range(doses):
+            shifted = t - k * TAU
+            c += np.where(shifted >= 0, C0 * np.exp(-K * shifted), 0.0)
+        curves.append(
+            Timecourse(
+                time=t,
+                value=c,
+                time_unit="hr",
+                unit="mg/l",
+                label=f"every {step} h",
+                dosing=Dosing.regimen(
+                    Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+                    interval=TAU,
+                    n_doses=doses,
+                ),
+            )
+        )
+    batch = nca(Timecourses.from_timecourses(curves), options)
+    for i, curve in enumerate(curves):
+        single = nca_single(curve, options)
+        assert curve.dosing is not None
+        n_doses = curve.dosing.n_doses
+        for name in single.ds.data_vars:
+            if not str(name).startswith("interval_"):
+                continue
+            np.testing.assert_allclose(
+                batch[str(name)].to_numpy()[i, :n_doses],
+                single[str(name)].to_numpy(),
+                rtol=1e-12,
+                equal_nan=True,
+                err_msg=f"{name} of {curve.label}",
+            )
+            assert np.isnan(batch[str(name)].to_numpy()[i, n_doses:]).all()
+
+
+def test_an_interval_with_samples_on_both_of_its_bounds() -> None:
+    # the sample at the start of an interval and the interpolated value at that
+    # time carry the same time: the gathered block keeps them in the order the
+    # insertion gave, so the trapezoids of the interval are the ones of the
+    # samples it holds
+    t = np.array([0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0])
+    c = np.array([10.0, 8.0, 6.0, 4.0, 12.0, 9.0, 6.0, 3.0, 8.0])
+    tc = Timecourse(
+        time=t,
+        value=c,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing.regimen(
+            Dose(amount=100, unit="mg", route=Route.ORAL), interval=12.0, n_doses=2
+        ),
+    )
+    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LINEAR))
+    auc = result["interval_auc"].to_numpy()
+    # the linear trapezoids of the samples at 0, 3, 6, 9, 12 and 12, 15, 18, 21, 24
+    assert auc[0] == pytest.approx(3 * (9.0 + 7.0 + 5.0 + 8.0))
+    assert auc[1] == pytest.approx(3 * (10.5 + 7.5 + 4.5 + 5.5))
+    assert result["interval_n_points"].to_numpy().tolist() == [5.0, 5.0]
+    # the route is not a bolus, so the sample at the end of the interval is the
+    # observed trough and the sample at its start is the observed value there
+    assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(12.0)
+    assert result["interval_c_start"].to_numpy().tolist() == [10.0, 12.0]

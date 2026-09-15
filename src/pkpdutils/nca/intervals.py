@@ -56,7 +56,6 @@ import numpy as np
 
 from pkpdutils.nca.auc import (
     auc_aumc,
-    insert_point,
     interpolate_at,
     pack_valid,
     take_rows,
@@ -195,6 +194,99 @@ def _back_extrapolate(
 TROUGH_POINTS = 3
 
 
+def _interval_block(
+    tp: np.ndarray, cp: np.ndarray, first: np.ndarray, n_inside: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """The samples of one interval gathered out of the packed rows.
+
+    `pack_valid` keeps the time order, so the samples of an interval are the
+    contiguous block `first ... first + n_inside - 1` of the packed row. The
+    block is gathered by index, which is `max(n_inside)` columns wide instead
+    of the full width of the row and needs no sort, where masking and packing
+    the full row again would cost an `argsort` over every sample of the curve
+    for every interval.
+
+    Args:
+        tp: packed times `(N, n)`
+        cp: packed values `(N, n)`
+        first: index of the first sample of the interval per row `(N,)`
+        n_inside: number of samples of the interval per row `(N,)`
+
+    Returns:
+        The times and the values of the block `(N, w)` with `w = max(n_inside)`,
+        `NaN` outside the block.
+    """
+    n = tp.shape[1]
+    width = int(n_inside.max()) if n_inside.size else 0
+    columns = np.arange(width)
+    index = np.minimum(first[:, None] + columns[None, :], max(n - 1, 0))
+    in_block = columns[None, :] < n_inside[:, None]
+    t_block = np.where(in_block, np.take_along_axis(tp, index, axis=1), np.nan)
+    c_block = np.where(in_block, np.take_along_axis(cp, index, axis=1), np.nan)
+    return t_block, c_block
+
+
+def _with_bounds(
+    t_block: np.ndarray,
+    c_block: np.ndarray,
+    n_inside: np.ndarray,
+    *,
+    t_start: np.ndarray,
+    c_start: np.ndarray,
+    t_end: np.ndarray,
+    c_end: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The curve of one interval: the block of its samples with both bounds inserted.
+
+    The bounds need no sort either: every sample of the interval lies at or
+    after its start and strictly before its end, so the start goes in front of
+    the block and the end behind it. A bound whose time or value is not finite
+    is not inserted, as in `pkpdutils.nca.auc.insert_point`.
+
+    Args:
+        t_block: times of the samples of the interval `(N, w)`
+        c_block: values of the samples of the interval `(N, w)`
+        n_inside: number of samples of the interval per row `(N,)`
+
+    Keyword Args:
+        t_start: start of the interval per row `(N,)`
+        c_start: value at the start per row `(N,)`
+        t_end: end of the interval per row `(N,)`
+        c_end: value at the end per row `(N,)`
+
+    Returns:
+        The packed times and values `(N, w + 2)` and the number of points per
+        row.
+    """
+    n_rows, width = t_block.shape
+    has_start = np.isfinite(t_start) & np.isfinite(c_start)
+    has_end = np.isfinite(t_end) & np.isfinite(c_end)
+    if width:
+        # a sample recorded exactly at the start of the interval keeps its
+        # place in front of the inserted bound (the order a stable insertion
+        # gives); both carry the same time, so only their values change places
+        with np.errstate(invalid="ignore"):
+            tie = has_start & (n_inside >= 1) & (t_block[:, 0] == t_start)
+        if tie.any():
+            c_block = c_block.copy()
+            observed = c_block[:, 0].copy()
+            c_block[:, 0] = np.where(tie, c_start, observed)
+            c_start = np.where(tie, observed, c_start)
+
+    offset = has_start.astype(np.int64)
+    index = offset[:, None] + np.arange(width)[None, :]
+    tq = np.full((n_rows, width + 2), np.nan)
+    cq = np.full((n_rows, width + 2), np.nan)
+    np.put_along_axis(tq, index, t_block, axis=1)
+    np.put_along_axis(cq, index, c_block, axis=1)
+    tq[:, 0] = np.where(has_start, t_start, tq[:, 0])
+    cq[:, 0] = np.where(has_start, c_start, cq[:, 0])
+    end = (offset + n_inside)[:, None]
+    np.put_along_axis(tq, end, np.where(has_end, t_end, np.nan)[:, None], axis=1)
+    np.put_along_axis(cq, end, np.where(has_end, c_end, np.nan)[:, None], axis=1)
+    return tq, cq, n_inside + offset + has_end.astype(np.int64)
+
+
 def _extrapolate_end(
     tp: np.ndarray,
     cp: np.ndarray,
@@ -286,6 +378,7 @@ def _interval_column(
     n_inside = inside.sum(axis=1)
     # the samples of the interval are a block of the packed row
     first = np.clip(before.sum(axis=1), 0, n - 1)
+    t_block, c_block = _interval_block(tp, cp, first, n_inside)
     last_idx = np.clip(first + n_inside - 1, 0, n - 1)
     c_last_inside = np.where(n_inside >= 1, take_rows(cp, last_idx), np.nan)
     has_sample_at_end = at_end.any(axis=1)
@@ -318,17 +411,23 @@ def _interval_column(
         )
     extrapolated = np.zeros(n_rows, dtype=bool)
     if np.any(post_dose):
+        # the regression runs over the full row, not over the gathered block:
+        # its normal equations subtract two nearly equal sums, so the same
+        # samples at different column positions give a slope which differs by
+        # more than a rounding error of the trough
         trough = _extrapolate_end(tp, cp, inside, t_end)
         c_end = np.where(post_dose, trough, c_end)
         extrapolated = post_dose & np.isfinite(trough)
 
     # the interval as its own curve: the samples inside plus both bounds
-    tq, cq, nq = pack_valid(np.where(inside, tp, np.nan), np.where(inside, cp, np.nan))
-    tq, cq, nq = insert_point(
-        tq, cq, nq, np.where(np.isfinite(c_start), t_start, np.nan), c_start
-    )
-    tq, cq, nq = insert_point(
-        tq, cq, nq, np.where(np.isfinite(c_end), t_end, np.nan), c_end
+    tq, cq, nq = _with_bounds(
+        t_block,
+        c_block,
+        n_inside,
+        t_start=t_start,
+        c_start=c_start,
+        t_end=t_end,
+        c_end=c_end,
     )
     exists = np.isfinite(t_start) & np.isfinite(t_end)
     # an interval without an observation of its own is not analysed: a sample at

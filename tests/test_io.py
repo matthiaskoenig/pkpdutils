@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -503,3 +504,152 @@ def test_readers_coerce_a_route_string() -> None:
         route="oral",
     )
     assert batch.route is Route.ORAL
+
+
+def generated_events(n_subjects: int = 60) -> pd.DataFrame:
+    """An event table with the four dose patterns and a missing observation.
+
+    Subject `i` carries `i % 4 + 3` observations on a shifted grid and, by
+    `i % 4`, a single dose, `ADDL` doses, a steady state dose or two dose rows
+    given in the wrong order.
+    """
+    rows: list[dict[str, Any]] = []
+    for i in range(1, n_subjects + 1):
+        weight = 60.0 + i
+        shared = {"ID": f"s{i}", "WT": weight, "N": float(4 + i % 5)}
+        dose = {**shared, "DV": np.nan, "EVID": 1, "MDV": 1, "ADDL": 0, "II": np.nan}
+        if i % 4 == 0:
+            rows.append({**dose, "TIME": 0.0, "AMT": 100.0, "SS": 0})
+        elif i % 4 == 1:
+            rows.append(
+                {**dose, "TIME": 0.0, "AMT": 50.0, "ADDL": 3, "II": 12.0, "SS": 0}
+            )
+        elif i % 4 == 2:
+            rows.append({**dose, "TIME": 0.0, "AMT": 75.0, "II": 8.0, "SS": 1})
+        else:
+            rows.append({**dose, "TIME": 24.0, "AMT": 25.0, "SS": 0})
+            rows.append({**dose, "TIME": 0.0, "AMT": 25.0, "SS": 0})
+        times = 0.5 * np.arange(1, i % 4 + 4) + 0.25 * (i % 3)
+        for k, t in enumerate(times):
+            missing = (i + k) % 7 == 0
+            rows.append(
+                {
+                    **shared,
+                    "TIME": float(t),
+                    "DV": np.nan if missing else round(10.0 - 0.1 * i + k, 3),
+                    "AMT": 0.0,
+                    "EVID": 0,
+                    "MDV": 1 if missing else 0,
+                    "ADDL": 0,
+                    "II": np.nan,
+                    "SS": 0,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_read_events_expands_every_dose_record_of_the_table_at_once() -> None:
+    # B3: the reader builds the per subject arrays and the dose expansion with
+    # numpy instead of a scalar pandas lookup per row; the batch is the one the
+    # per row implementation built
+    df = generated_events()
+    batch = read_events(
+        df,
+        time_unit="hr",
+        unit="mg/l",
+        dose_unit="mg",
+        route=Route.ORAL,
+        n_col="N",
+    )
+    assert batch.sample_shape == (60,)
+    assert batch.ds["individual"].to_numpy()[:3].tolist() == ["s1", "s2", "s3"]
+    assert batch.ds["WT"].to_numpy()[:3].tolist() == [61.0, 62.0, 63.0]
+    assert batch.ds.attrs["steady_state_marker"] is True
+    # the four dose patterns: ADDL, steady state, the unsorted pair, one dose
+    assert batch.dosing_of(individual="s1") == Dosing(
+        amounts=[50.0] * 4, times=[0.0, 12.0, 24.0, 36.0], unit="mg", route=Route.ORAL
+    )
+    assert batch.dosing_of(individual="s2") == Dosing(
+        amounts=[75.0] * 6,
+        times=[-40.0, -32.0, -24.0, -16.0, -8.0, 0.0],
+        unit="mg",
+        route=Route.ORAL,
+    )
+    assert batch.dosing_of(individual="s3") == Dosing(
+        amounts=[25.0, 25.0], times=[0.0, 24.0], unit="mg", route=Route.ORAL
+    )
+    assert batch.dosing_of(individual="s4") == Dosing(
+        amounts=[100.0], times=[0.0], unit="mg", route=Route.ORAL
+    )
+    # the observations of a subject, in time order and with the missing value
+    tc = batch.sel(individual="s6")
+    assert tc.time.tolist() == [0.5, 1.0, 1.5, 2.0, 2.5]
+    assert np.isnan(tc.value[1]) and tc.value[0] == pytest.approx(9.4)
+    # the whole batch, against the values of the per row implementation
+    assert batch.n_time == 6 and batch.n_dose == 6
+    n = batch.n
+    assert n is not None and n.tolist()[:5] == [5.0, 6.0, 7.0, 8.0, 4.0]
+    assert int(np.isfinite(batch.values).sum()) == 233
+    assert float(np.nansum(batch.values)) == pytest.approx(2059.9)
+    assert float(np.nansum(batch.times)) == pytest.approx(457.5)
+    amounts = batch.dose_amount
+    times = batch.dose_time
+    assert amounts is not None and times is not None
+    assert float(np.nansum(amounts)) == pytest.approx(12000.0)
+    assert float(np.nansum(times)) == pytest.approx(-360.0)
+
+
+def test_read_events_reads_a_table_of_20000_rows() -> None:
+    df = generated_events(3500)
+    assert len(df) > 20_000
+    batch = read_events(
+        df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL
+    )
+    assert batch.sample_shape == (3500,)
+    assert int(np.isfinite(batch.values).sum()) == 13500
+    assert float(np.nansum(batch.values)) == pytest.approx(-2202250.0)
+    assert batch.dosing_of(individual="s3497") == Dosing(
+        amounts=[50.0] * 4, times=[0.0, 12.0, 24.0, 36.0], unit="mg", route=Route.ORAL
+    )
+
+
+def test_read_events_reports_the_first_subject_of_every_check() -> None:
+    df = generated_events(8)
+    without_interval = df.copy()
+    without_interval.loc[without_interval["ID"] == "s5", "II"] = 0.0
+    with pytest.raises(ValueError, match=r"subject 's5' has the dose record at time 0"):
+        read_events(
+            without_interval, time_unit="hr", unit="mg/l", dose_unit="mg", route="oral"
+        )
+    varying = df.copy()
+    varying.loc[varying.index[-1], "N"] = 99.0
+    with pytest.raises(ValueError, match=r"subject s8: 'N' is not constant"):
+        read_events(
+            varying,
+            time_unit="hr",
+            unit="mg/l",
+            dose_unit="mg",
+            route="oral",
+            n_col="N",
+        )
+
+
+def test_read_events_drops_the_rows_without_a_subject(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    df = generated_events(8)
+    df.loc[df["ID"] == "s3", "ID"] = np.nan
+    with caplog.at_level("WARNING", logger="pkpdutils.io"):
+        batch = read_events(
+            df, time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL
+        )
+    assert "Dropped 8 rows without a value in 'ID'" in caplog.text
+    assert batch.ds["individual"].to_numpy().tolist() == [
+        "s1",
+        "s2",
+        "s4",
+        "s5",
+        "s6",
+        "s7",
+        "s8",
+    ]

@@ -74,3 +74,26 @@ def test_normalize_clearance() -> None:
 def test_unit_str() -> None:
     assert unit_str("ng/ml") == "nanogram / milliliter"
     assert unit_str(parse_unit("hr")) == "hour"
+
+
+def test_unit_helpers_are_cached() -> None:
+    # B1: the pint calls are the cost of every timecourse, dose and parameter;
+    # the same string must give the same (immutable) object without parsing again
+    assert parse_unit("ng/ml") is parse_unit("ng/ml")
+    hits = parse_unit.cache_info().hits
+    assert parse_unit("ng/ml") == ureg.Unit("nanogram / milliliter")
+    assert parse_unit.cache_info().hits == hits + 1
+    assert check_dose_unit("mg") is None
+    assert check_dose_unit("mg") is None
+    assert check_dose_unit.cache_info().currsize >= 1
+    assert is_per_bodyweight("mg/kg") is is_per_bodyweight("mg/kg") is True
+    assert is_per_bodyweight.cache_info().currsize >= 1
+
+
+def test_cached_unit_helpers_keep_raising() -> None:
+    # an exception is not cached, so a wrong unit is rejected every time
+    for _ in range(2):
+        with pytest.raises(ValueError, match="not_a_unit"):
+            parse_unit("not_a_unit")
+        with pytest.raises(ValueError, match="A dose must be in"):
+            check_dose_unit("liter")

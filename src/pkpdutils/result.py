@@ -42,6 +42,73 @@ def sample_coordinates(
     }
 
 
+def nan_percentile(
+    values: np.ndarray, q: float | Sequence[float], axis: int = -1
+) -> np.ndarray:
+    """Percentiles along one axis ignoring `NaN`, vectorized over the other axes.
+
+    Same result as `numpy.nanpercentile(values, q, axis=axis)` with the default
+    linear interpolation, down to the last bit, but without its fallback to
+    `numpy.apply_along_axis`, which is a python level loop over the reduced
+    slices as soon as the array holds a single `NaN`. The slices are sorted
+    instead (`NaN` sorts last), the finite count `k` of every slice gives the
+    virtual index `(k - 1) q / 100` and the two neighbouring order statistics
+    are gathered and interpolated in one vectorized step, as numpy does for an
+    array without `NaN`.
+
+    A slice without a single non-`NaN` value is `NaN`, without the
+    `RuntimeWarning` numpy emits for it.
+
+    Args:
+        values: the values; `NaN` is ignored, `+-inf` is an ordinary value, as
+            in `numpy.nanpercentile`.
+        q: percentile in `[0, 100]`, or a sequence of them.
+        axis: the axis to reduce.
+
+    Returns:
+        The percentiles: the shape of `values` without `axis` for a single `q`,
+        with the number of percentiles prepended for a sequence of them.
+    """
+    array = np.asarray(values, dtype=np.float64)
+    quantiles = np.true_divide(np.asarray(q, dtype=np.float64), 100)
+    single = quantiles.ndim == 0
+    levels = np.atleast_1d(quantiles)[:, None]
+    moved = np.moveaxis(array, axis, -1)
+    shape = moved.shape[:-1]
+    if moved.shape[-1] == 0:
+        empty = np.full((levels.size, *shape), np.nan)
+        return empty[0] if single else empty
+    flat = np.ascontiguousarray(moved).reshape(-1, moved.shape[-1])
+    ordered = np.sort(flat, axis=-1)
+    count = np.count_nonzero(~np.isnan(flat), axis=-1)
+    n = count.astype(np.float64)[None, :]
+    # numpy's "linear" method: the percentile sits at (k - 1) q / 100 of the
+    # sorted values and is interpolated between its neighbours; an index at or
+    # beyond the last value takes the last value; a slice of only NaN has
+    # k = 0 and every index of it is NaN
+    virtual = (n - 1.0) * levels
+    last = np.maximum(count - 1, 0)[None, :]
+    below = np.floor(virtual).astype(np.intp)
+    above = below + 1
+    beyond = virtual >= n - 1.0
+    before = virtual < 0.0
+    below = np.where(beyond, last, below)
+    above = np.where(beyond, last, above)
+    below = np.where(before, 0, below)
+    above = np.where(before, 0, above)
+    gamma = virtual - below
+    rows = np.arange(flat.shape[0])[None, :]
+    low, high = ordered[rows, below], ordered[rows, above]
+    # the two branches of numpy's interpolation, which anchors at the closer of
+    # the two values so that the result stays inside the interval; `errstate`
+    # covers the slices which hold `NaN` or an infinity, where numpy warns too
+    with np.errstate(invalid="ignore"):
+        span = high - low
+        out = np.where(gamma >= 0.5, high - span * (1.0 - gamma), low + span * gamma)
+    out = out.reshape((levels.size, *shape))
+    return out[0] if single else out
+
+
 def check_coordinate_collision(
     coords: Mapping[str, Any], variables: Iterable[str]
 ) -> None:
@@ -533,7 +600,7 @@ class ParameterResult:
                 tq = student_t.ppf(1.0 - alpha / 2.0, np.maximum(count - 1.0, 1.0))
                 low, high = mean - tq * se, mean + tq * se
                 median = np.nanmedian(filled, axis=-1)
-                q25, q75 = np.nanpercentile(filled, [25, 75], axis=-1)
+                q25, q75 = nan_percentile(filled, (25.0, 75.0))
                 mean = np.where(count > 0, mean, np.nan)
                 median = np.where(count > 0, median, np.nan)
             data_vars[name] = (dims, mean, {"units": units})

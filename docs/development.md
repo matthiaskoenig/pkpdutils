@@ -150,6 +150,32 @@ uvx ty check
 
 The configuration lives in `[tool.ty]` in `pyproject.toml`. Warnings are treated as errors, so the codebase is kept free of diagnostics. Suppress an unavoidable diagnostic with a rule specific `# ty: ignore[rule-name]` rather than a blanket comment.
 
+## Benchmarks
+
+`scripts/benchmark.py` times the hot paths of the package: the analysis of a small, a large and a multiple dose batch, the bootstrap and the delta method, a batch fit, the construction of timecourses and the iteration over a batch.
+
+```bash
+uv run python scripts/benchmark.py all                        # every case, about 15 s
+uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
+```
+
+The cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `fit`, `constructors`, `iterate` and `all`; `--repeat` (3 by default) is the number of timed runs after one warm-up run. The script prints a markdown table with the size of the case, the median wall time and the peak resident set size. Every case runs in a fresh interpreter, so the memory and the caches (`pkpdutils.units`) of one case do not carry into the next.
+
+The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
+
+## Parallelism
+
+`src/pkpdutils/parallel.py` holds the worker pools of the package. `executor(kind, n_workers)` returns one lazily created executor per kind and size, shared by every call of the process and closed by an `atexit` handler, so that the start-up of a process pool - about 0.7 s with the `forkserver` and `spawn` start methods, which import `pkpdutils`, numpy, scipy, xarray and pint in every worker - is paid once and not once per analysis. `resolve_workers(n_workers, n_rows, threshold=..., max_workers=8)` turns the option into a worker count (`None` automatic and serial below the threshold, `1` serial, anything else taken as given) and `split_rows(n_rows, n_workers, min_rows=1000, max_rows=None)` cuts the rows into about one contiguous slice per worker, never shorter than `min_rows` while there is more than one and never longer than `max_rows`.
+
+The two analyses use different workers, because their rows cost different things:
+
+| analysis | workers | automatic from | why |
+|---|---|---|---|
+| `nca` (`run_rows`) | threads | 20 000 rows (`NCA_WORKER_THRESHOLD`) | the core is vectorized numpy and releases the GIL; no pickling and no copy of the batch, and the pool starts in half a millisecond |
+| `fit` (`fit_rows`) | processes | 2 000 rows (`FIT_WORKER_THRESHOLD`) | a row is a python-heavy `scipy.optimize.least_squares` search, which only a process escapes the GIL for; the threshold is the measured break-even of the first pooled call, whose workers import the package, against the serial run |
+
+A pooled fit needs the `if __name__ == "__main__":` guard of `multiprocessing`; the threads of the NCA do not. Neither pool is used when the caller asks for `n_workers=1`. A pool that broke - a worker process killed by the operating system - is dropped and replaced by the next `executor` call, and `fit_rows` retries the batch once in the fresh pool; the pools are not re-entrant, so work running in a worker must never submit to the pool it runs in.
+
 ## Examples
 
 The examples are runnable scripts in `examples/`, they are not part of the package. They are run as modules from the root of the repository:

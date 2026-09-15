@@ -9,19 +9,33 @@ time_unit)` converted to `liter / hour` (or per kilogram), a volume converted
 to `liter` (or per kilogram), see `pkpdutils.units`.
 """
 
+from functools import lru_cache
+
 import pandas as pd
 
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import NCAFlag
 from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS, LOGNORMAL_PARAMETERS
 from pkpdutils.result import ParameterResult
-from pkpdutils.units import Q_, normalize_clearance, normalize_volume, ureg
+from pkpdutils.units import (
+    CACHE_SIZE,
+    Q_,
+    normalize_clearance,
+    normalize_volume,
+    ureg,
+)
 
 
+@lru_cache(maxsize=CACHE_SIZE)
 def parameter_unit(
     expression: str, *, unit: str, time_unit: str, dose_unit: str | None
 ) -> tuple[str, float]:
     """Unit of a parameter and the factor from its raw unit to the reported unit.
+
+    The unit of a parameter depends only on the four strings of the signature,
+    of which an analysis has a handful (`PARAMETER_UNITS` holds 29 expressions),
+    while the derivation costs several pint conversions; the result is therefore
+    cached (`pkpdutils.units.CACHE_SIZE` entries).
 
     Args:
         expression: pint expression with the placeholders `{unit}`, `{time}`

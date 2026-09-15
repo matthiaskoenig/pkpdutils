@@ -10,6 +10,7 @@ The API reference is generated from the docstrings of the package.
 | [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Dosing`, `Route` and `DosingRegimen`, the data model |
 | [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample` |
 | [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
+| [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
 | [console](console.md) | shared rich console |
 | [log](log.md) | logging of the package |
 

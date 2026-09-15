@@ -568,3 +568,28 @@ def test_resolve_spread_takes_an_explicit_spread() -> None:
     se = resolve_spread(batch, options, spread=BootstrapSpread.SE)
     np.testing.assert_allclose(se, sd / np.sqrt(12.0))
     np.testing.assert_allclose(resolve_spread(batch, options), se)
+
+
+@pytest.mark.parametrize("chunk_rows", [7, 250, 5000])
+def test_bootstrap_does_not_depend_on_the_block_size(chunk_rows: int) -> None:
+    # B1 (F5): the replicates are drawn and analysed block of curves by block of
+    # curves; the blocking follows `chunk_rows` and must not move a single digit
+    tcs = Timecourses.from_timecourses(
+        [group_curve(label=f"g{index}") for index in range(5)]
+    )
+    options = NCAOptions(
+        uncertainty=UncertaintyMethod.BOOTSTRAP,
+        n_boot=120,
+        seed=42,
+        chunk_rows=chunk_rows,
+    )
+    result = nca(tcs, options)
+    reference = nca(
+        tcs,
+        NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=120, seed=42),
+    )
+    assert list(result.ds.data_vars) == list(reference.ds.data_vars)
+    for name in reference.ds.data_vars:
+        np.testing.assert_array_equal(
+            result.ds[name].values, reference.ds[name].values, err_msg=name
+        )
