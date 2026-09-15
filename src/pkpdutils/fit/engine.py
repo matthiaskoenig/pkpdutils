@@ -24,18 +24,19 @@ confidence intervals and the correlation matrix are the empirical statistics
 of the replicate parameters, an alternative to the Jacobian-based ones above
 that does not rely on the local linear approximation; fewer than two
 converged replicates fall back to the Jacobian-based statistics and set
-`FitFlag.BOOTSTRAP_FALLBACK`. `fit_rows` distributes the rows over a
-`ProcessPoolExecutor` when `options.n_workers > 1`, with one child seed per
-row drawn up front so serial and pooled runs agree; `pkpdutils.fit.compare`
-ranks several models on the same data by the corrected Akaike information
-criterion (Burnham & Anderson 2002).
+`FitFlag.BOOTSTRAP_FALLBACK`. `fit_rows` distributes the rows over the shared
+process pool (`pkpdutils.parallel`) for a batch of more than
+`FIT_WORKER_THRESHOLD` rows or an explicit `options.n_workers > 1`, with one
+child seed per row drawn up front so serial and pooled runs agree;
+`pkpdutils.fit.compare` ranks several models on the same data by the corrected
+Akaike information criterion (Burnham & Anderson 2002).
 """
 
+import functools
 import logging
 import math
 import warnings
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,11 +49,23 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
+from pkpdutils.parallel import executor, resolve_workers
 from pkpdutils.result import base_name, check_coordinate_collision, nan_percentile
 
 logger = logging.getLogger(__name__)
 
 LN10 = math.log(10.0)
+
+#: rows from which `fit_rows` uses the process pool with `n_workers=None`.
+#: The pool is shared and started once per process, but that start is an
+#: import of `pkpdutils` and its dependencies in every worker, about a second,
+#: which a batch has to be big enough to earn back on its own: the measured
+#: break-even against the serial run is around 1 500 rows of the cheapest model
+#: (a mono-exponential row of about 1 ms), so the automatic default stays
+#: serial below 2 000 rows and a script whose rows are more expensive - several
+#: starts, a residual bootstrap, a sum of exponentials - asks for the pool with
+#: an explicit `FitOptions.n_workers`.
+FIT_WORKER_THRESHOLD = 2_000
 
 
 @dataclass
@@ -857,19 +870,27 @@ def fit_row(
 
 
 def _fit_row_job(
-    args: tuple[Model, np.ndarray, np.ndarray, np.ndarray | None, FitOptions, int],
+    model: Model,
+    options: FitOptions,
+    row: tuple[np.ndarray, np.ndarray, np.ndarray | None, int],
 ) -> RowFit:
-    """Worker entry point for `fit_rows`: fit one row from its arguments and seed.
+    """Worker entry point for `fit_rows`: fit one row from its data and seed.
 
-    A module-level function so it can be pickled for a `ProcessPoolExecutor`.
+    A module-level function so that it can be pickled for a
+    `ProcessPoolExecutor`. The model and the options come first, so that
+    `fit_rows` can bind them with `functools.partial`: they are then pickled
+    once per task of the pool instead of once per row, and a row sends only
+    its own arrays and its seed.
 
     Args:
-        args: `(model, x, y, sd, options, seed)` of one row.
+        model: the model.
+        options: the options.
+        row: `(x, y, sd, seed)` of one row.
 
     Returns:
         The fit of the row.
     """
-    model, x, y, sd, options, seed = args
+    x, y, sd, seed = row
     return fit_row(model, x, y, sd, options, np.random.default_rng(int(seed)))
 
 
@@ -880,15 +901,24 @@ def fit_rows(
     sd: np.ndarray | None,
     options: FitOptions,
 ) -> list[RowFit]:
-    """Fit every row of `(N, n)` arrays, serially or in a process pool.
+    """Fit every row of `(N, n)` arrays, serially or in the shared process pool.
 
     Row seeds are drawn from `options.seed` before the rows are distributed,
-    one child seed per row, so the result does not depend on `options.n_workers`
-    or the order the rows finish in. A pooled call (`options.n_workers > 1`
-    with more than one row) must run under an `if __name__ == "__main__":`
-    guard, since python's `spawn` and `forkserver` process start methods
-    (the default on macOS and Windows, and on Linux from python 3.14)
-    re-import the module without re-running it.
+    one child seed per row, so the result does not depend on
+    `options.n_workers` or the order the rows finish in.
+
+    `options.n_workers` decides how many workers run the rows
+    (`pkpdutils.parallel.resolve_workers`): `None` is automatic and stays in
+    the calling process below `FIT_WORKER_THRESHOLD` rows, `1` is serial and
+    any other number is taken as given. A row is a python-heavy
+    `scipy.optimize.least_squares` search, so a parallel run maps the rows
+    over the shared process pool (`pkpdutils.parallel.executor`) in batches of
+    about a quarter of the rows of a worker, which keeps the number of tasks
+    (and with them the pickling of the model and the options) small. A pooled
+    call must run under an `if __name__ == "__main__":` guard, since python's
+    `spawn` and `forkserver` process start methods (the default on macOS and
+    Windows, and on Linux from python 3.14) re-import the module without
+    re-running it.
 
     Args:
         model: the model
@@ -900,16 +930,28 @@ def fit_rows(
     Returns:
         One `RowFit` per row, in row order.
     """
+    n_rows = int(y.shape[0])
     rng = np.random.default_rng(options.seed)
-    seeds = rng.integers(0, 2**32 - 1, size=y.shape[0])
-    jobs = [
-        (model, x[i], y[i], None if sd is None else sd[i], options, int(seeds[i]))
-        for i in range(y.shape[0])
+    seeds = rng.integers(0, 2**32 - 1, size=n_rows)
+    rows = [
+        (x[i], y[i], None if sd is None else sd[i], int(seeds[i]))
+        for i in range(n_rows)
     ]
-    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
-            return list(pool.map(_fit_row_job, jobs))
-    return [_fit_row_job(job) for job in jobs]
+    n_workers = resolve_workers(
+        options.n_workers, n_rows, threshold=FIT_WORKER_THRESHOLD
+    )
+    job = functools.partial(_fit_row_job, model, options)
+    if n_workers > 1 and n_rows > 1:
+        chunksize = max(1, n_rows // (4 * n_workers))
+        logger.debug(
+            "fit: %d rows over %d processes, chunksize %d",
+            n_rows,
+            n_workers,
+            chunksize,
+        )
+        pool = executor("process", n_workers)
+        return list(pool.map(job, rows, chunksize=chunksize))
+    return [job(row) for row in rows]
 
 
 def _as_rows(

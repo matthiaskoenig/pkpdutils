@@ -47,6 +47,7 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
 )
+from pkpdutils.parallel import resolve_workers
 from pkpdutils.result import base_name, nan_percentile
 from pkpdutils.timecourse import Timecourses
 
@@ -467,8 +468,11 @@ def bootstrap(
     # replicate rows as the analysis would process at once anyway, so the core
     # sees the same chunks (`chunk_rows` per worker) as an unblocked run and
     # the draws, which are generated row block after row block from the same
-    # generator, are the same numbers
-    block_rows = max(1, (options.chunk_rows * max(options.n_workers or 1, 1)) // b)
+    # generator, are the same numbers. The worker count of the replicate rows
+    # decides the size of a block, so that an automatic run
+    # (`options.n_workers is None`) fills every thread of `run_rows` too.
+    workers = resolve_workers(options.n_workers, n_rows * b)
+    block_rows = max(1, (options.chunk_rows * workers) // b)
     n_blocks = max(1, -(-n_rows // block_rows))
     dose_amount = flatten_rows(timecourses.dose_amount, n_rows)
     dose_time = flatten_rows(timecourses.dose_time, n_rows)

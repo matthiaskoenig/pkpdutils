@@ -207,15 +207,16 @@ class NCAOptions(BaseModel):
         intervals: whether the per-interval parameters (`interval_*`) are part
             of the result of a multiple dose analysis
         effect_threshold: threshold of `time_above` for effect timecourses, `None` for none
-        n_workers: number of worker processes for large batches, `None` for
-            the calling process. A pooled call (`n_workers > 1` with more
-            than one row) must run under an `if __name__ == "__main__":`
-            guard, since python's `spawn` and `forkserver` process start
-            methods (the default on macOS and Windows, and on Linux from
-            python 3.14) re-import the module without re-running it; the
-            fit pool (`FitOptions.n_workers`) has the same requirement
-        chunk_rows: rows per chunk of the vectorized core, which bounds its
-            memory; the pool maps the chunks in order
+        n_workers: workers of the analysis. `None` is automatic: the calling
+            thread up to 20 000 rows and one worker per core, at most 8, above
+            it; `1` is always serial and `n > 1` uses that many workers. The
+            core is vectorized numpy and releases the GIL, so its workers are
+            threads of the calling process (`pkpdutils.parallel`) and no
+            `if __name__ == "__main__":` guard is needed; the fit
+            (`FitOptions.n_workers`) uses processes and does need one
+        chunk_rows: most rows of a chunk of the vectorized core, which bounds
+            its memory; the chunks are mapped in order and there are at least
+            as many of them as there are workers
         uncertainty: propagation of `sd`/`se` to the parameters; `None` selects
             `BOOTSTRAP` when the batch carries an uncertainty and `NONE` otherwise
         n_boot: number of bootstrap replicates

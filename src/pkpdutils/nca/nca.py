@@ -19,7 +19,6 @@ WinNonlin NCA, see `docs/nca.md`:
 """
 
 import logging
-from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -47,6 +46,7 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.result import NCAResult, parameter_unit
 from pkpdutils.nca.terminal import terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
+from pkpdutils.parallel import executor, resolve_workers, split_rows
 from pkpdutils.result import base_name, check_coordinate_collision, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
@@ -721,11 +721,18 @@ def run_rows(
 ) -> dict[str, np.ndarray]:
     """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
 
-    The rows are analysed in chunks of at most `options.chunk_rows` rows, which
-    bounds the memory of the vectorized core; with `options.n_workers > 1` the
-    chunks are mapped in order over a `ProcessPoolExecutor`. A chunk is a
-    contiguous range of rows (`chunk_bounds`), so it is a slice of the input
-    arrays and not a copy of them.
+    The rows are cut into about one chunk per worker, none of them longer than
+    `options.chunk_rows` rows, which bounds the memory of the vectorized core
+    (`pkpdutils.parallel.split_rows`). A chunk is a contiguous range of rows,
+    so it is a slice of the input arrays and not a copy of them.
+
+    `options.n_workers` decides how many workers run them
+    (`pkpdutils.parallel.resolve_workers`): `None` is automatic and stays in
+    the calling thread below 20 000 rows, `1` is serial and any other number
+    is taken as given. The chunks of a parallel run are mapped in order over
+    the shared thread pool (`pkpdutils.parallel.executor`), since the core is
+    vectorized numpy and releases the GIL for most of its time: the chunks are
+    neither pickled nor copied and the pool starts in half a millisecond.
 
     The dose arrays carry the dosing protocol of every row, `(N, n_dose)`
     padded with `NaN`. A row whose protocol holds more than one dose, and every
@@ -751,32 +758,35 @@ def run_rows(
         per-interval parameter of a multiple dose batch (`K` dosing intervals).
     """
     n_rows = t.shape[0]
-    # the rows are analysed in chunks of at most `chunk_rows` rows, which bounds
-    # the memory of the vectorized core; the worker pool maps the chunks in order
-    n_chunks = max(1, -(-n_rows // options.chunk_rows))
+    n_workers = resolve_workers(options.n_workers, n_rows)
+    # about one chunk per worker, none longer than `chunk_rows`, which bounds
+    # the memory of the vectorized core; an empty batch keeps its one empty
+    # chunk, so that the result carries the variables of the analysis
+    chunks = split_rows(n_rows, n_workers, max_rows=options.chunk_rows) or [slice(0, 0)]
     multiple = is_multiple_dose(dose_amount, dose_time, options, n_rows=n_rows)
-    chunks = chunk_bounds(n_rows, n_chunks)
     jobs = [
         (
-            t[start:stop],
-            c[start:stop],
-            None if dose_amount is None else dose_amount[start:stop],
-            None if dose_time is None else dose_time[start:stop],
-            None if dose_duration is None else dose_duration[start:stop],
+            t[rows],
+            c[rows],
+            None if dose_amount is None else dose_amount[rows],
+            None if dose_time is None else dose_time[rows],
+            None if dose_duration is None else dose_duration[rows],
             route,
             options,
-            multiple[start:stop],
+            multiple[rows],
         )
-        for start, stop in chunks
+        for rows in chunks
     ]
-    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
-            parts = list(pool.map(_compute_chunk, jobs))
+    if n_workers > 1 and len(jobs) > 1:
+        logger.debug(
+            "NCA: %d chunks of %d rows over %d threads", len(jobs), n_rows, n_workers
+        )
+        parts = list(executor("thread", n_workers).map(_compute_chunk, jobs))
     else:
         parts = [_compute_chunk(job) for job in jobs]
     # a chunk of single dose rows reports fewer variables than one holding a
     # multiple dose row, so the chunks are merged into their union
-    values = merge_rows(parts, [stop - start for start, stop in chunks])
+    values = merge_rows(parts, [rows.stop - rows.start for rows in chunks])
     if "n_doses" in values:
         # the number of doses describes the protocol of a row and not the path
         # it took: it is filled in for every row of the batch, so that a single
@@ -788,9 +798,10 @@ def run_rows(
 def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:
     """Non-compartmental analysis of a batch of timecourses.
 
-    The rows are analysed in chunks of `options.chunk_rows` rows, in the calling
-    process or, with `options.n_workers`, in a pool of worker processes; a
-    multiple dose analysis is chunked the same way.
+    The rows are analysed in chunks of at most `options.chunk_rows` rows, in
+    the calling thread or, for a large batch or an explicit
+    `options.n_workers`, in the shared thread pool (`run_rows`); a multiple
+    dose analysis is chunked the same way.
 
     A sample whose dosing protocol holds more than one dose (and every sample
     of an analysis with `options.tau`) is analysed over its dosing intervals:

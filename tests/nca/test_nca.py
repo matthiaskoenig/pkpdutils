@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -14,6 +16,7 @@ from pkpdutils.nca import (
     nca_single,
 )
 from pkpdutils.nca.nca import chunk_bounds, run_rows
+from pkpdutils.parallel import resolve_workers
 
 K, C0 = 0.5, 10.0
 T_DENSE = np.linspace(0, 20, 401)
@@ -291,6 +294,75 @@ def test_chunking_matches_one_chunk() -> None:
                 other[name].values, one[name].values, equal_nan=True
             )
         np.testing.assert_array_equal(other["flags"].values, one["flags"].values)
+
+
+def bolus_batch(n_rows: int, seed: int = 3) -> Timecourses:
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    k = np.random.default_rng(seed).uniform(0.05, 0.5, size=n_rows)[:, None]
+    return Timecourses.from_arrays(
+        t,
+        C0 * np.exp(-k * t[None, :]),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        dose=IV_DOSE,
+        substance="x",
+    )
+
+
+def assert_same_result(a: NCAResult, b: NCAResult) -> None:
+    assert set(a.ds.data_vars) == set(b.ds.data_vars)
+    for variable in a.ds.data_vars:
+        name = str(variable)
+        np.testing.assert_allclose(
+            a[name].to_numpy(), b[name].to_numpy(), equal_nan=True, err_msg=name
+        )
+
+
+def test_automatic_workers_match_serial_on_a_large_batch() -> None:
+    # 30 000 rows is above the threshold of `resolve_workers`, so `n_workers=None`
+    # runs the chunks in the shared thread pool
+    batch = bolus_batch(30_000)
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    assert resolve_workers(options.n_workers, batch.n_samples) == max(
+        1, min(os.cpu_count() or 1, 8)
+    )
+    serial = nca(batch, options.model_copy(update={"n_workers": 1}))
+    assert_same_result(nca(batch, options), serial)
+    assert_same_result(nca(batch, options.model_copy(update={"n_workers": 4})), serial)
+
+
+def test_workers_match_serial_on_a_mixed_batch_in_small_chunks() -> None:
+    # every chunk carries one row, so the workers see single dose and multiple
+    # dose chunks with different variables (`merge_rows`)
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12, 16, 20, 24.0])
+    curves: list[Timecourse] = []
+    for index in range(6):
+        if index % 2:
+            dosing = Dosing.regimen(IV_DOSE, 12.0, 3)
+            value = np.zeros_like(t)
+            for start in dosing.times:
+                value += np.where(t >= start, C0 * np.exp(-K * (t - start)), 0.0)
+        else:
+            dosing = Dosing.single(IV_DOSE)
+            value = C0 * np.exp(-K * t) * (1.0 + 0.1 * index)
+        curves.append(
+            Timecourse(
+                time=t,
+                value=value,
+                time_unit="hr",
+                unit="mg/l",
+                dosing=dosing,
+                substance="x",
+                label=f"s{index}",
+            )
+        )
+    batch = Timecourses.from_timecourses(curves)
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    whole = nca(batch, options)
+    assert whole["n_doses"].to_numpy().tolist() == [1.0, 3.0, 1.0, 3.0, 1.0, 3.0]
+    split = nca(batch, options.model_copy(update={"n_workers": 3, "chunk_rows": 1}))
+    assert_same_result(split, whole)
 
 
 def test_effect_kind() -> None:

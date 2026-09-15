@@ -149,6 +149,24 @@ def test_log_scale_interval_is_asymmetric() -> None:
     assert np.log(k / low) == pytest.approx(np.log(high / k), rel=1e-6)
 
 
+def test_pooled_fit_matches_serial() -> None:
+    """The rows of a batch fit give the same result in the pool as in the process."""
+    rng = np.random.default_rng(17)
+    n_rows = 300
+    a = rng.uniform(8.0, 12.0, n_rows)[:, None]
+    k = rng.uniform(0.2, 0.4, n_rows)[:, None]
+    y = a * np.exp(-k * T[None, :]) * rng.normal(1.0, 0.02, (n_rows, T.size))
+    x = np.broadcast_to(T, y.shape)
+    serial = fit(MonoExp(), x, y, options=FitOptions(seed=11, n_workers=1))
+    pooled = fit(MonoExp(), x, y, options=FitOptions(seed=11, n_workers=2))
+    assert set(pooled.ds.data_vars) == set(serial.ds.data_vars)
+    for variable in serial.ds.data_vars:
+        name = str(variable)
+        np.testing.assert_allclose(
+            pooled[name].values, serial[name].values, equal_nan=True, err_msg=name
+        )
+
+
 def test_batch_rows_dims_and_nan_padding() -> None:
     """Many rows with sample dimensions, coordinates and NaN padded points."""
     ys = np.stack(

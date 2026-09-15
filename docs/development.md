@@ -163,6 +163,19 @@ The cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `f
 
 The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
 
+## Parallelism
+
+`src/pkpdutils/parallel.py` holds the worker pools of the package. `executor(kind, n_workers)` returns one lazily created executor per kind and size, shared by every call of the process and closed by an `atexit` handler, so that the start-up of a process pool - about 0.7 s with the `forkserver` and `spawn` start methods, which import `pkpdutils`, numpy, scipy, xarray and pint in every worker - is paid once and not once per analysis. `resolve_workers(n_workers, n_rows, threshold=..., max_workers=8)` turns the option into a worker count (`None` automatic and serial below the threshold, `1` serial, anything else taken as given) and `split_rows(n_rows, n_workers, min_rows=1000, max_rows=None)` cuts the rows into about one contiguous slice per worker, never shorter than `min_rows` while there is more than one and never longer than `max_rows`.
+
+The two analyses use different workers, because their rows cost different things:
+
+| analysis | workers | automatic from | why |
+|---|---|---|---|
+| `nca` (`run_rows`) | threads | 20 000 rows | the core is vectorized numpy and releases the GIL; no pickling and no copy of the batch, and the pool starts in half a millisecond |
+| `fit` (`fit_rows`) | processes | 2 000 rows | a row is a python-heavy `scipy.optimize.least_squares` search, which only a process escapes the GIL for; the threshold is the measured break-even of the first pooled call, whose workers import the package, against the serial run |
+
+A pooled fit needs the `if __name__ == "__main__":` guard of `multiprocessing`; the threads of the NCA do not. Neither pool is used when the caller asks for `n_workers=1`.
+
 ## Examples
 
 The examples are runnable scripts in `examples/`, they are not part of the package. They are run as modules from the root of the repository:
