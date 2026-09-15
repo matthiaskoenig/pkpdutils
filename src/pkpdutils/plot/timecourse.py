@@ -22,6 +22,7 @@ def _figure_of(ax: Axes | None) -> tuple[Figure, Axes]:
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(6, 4))
+        fig.set_layout_engine("constrained")
         return fig, ax
     fig = ax.get_figure()
     assert isinstance(fig, Figure)

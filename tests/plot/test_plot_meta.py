@@ -31,6 +31,9 @@ def test_plot_forest_log_ratio_is_a_ratio_axis() -> None:
     assert labels[:4] == ["study 0", "study 1", "study 2", "study 3"]
     assert "fixed" in labels[4].lower() and "random" in labels[5].lower()
     assert ax.get_xlabel().startswith("ratio")
+    fig.canvas.draw()
+    xtick_texts = [t.get_text() for t in ax.get_xticklabels()]
+    assert all("^" not in t and "10^" not in t for t in xtick_texts)
     matplotlib.pyplot.close("all")
 
 

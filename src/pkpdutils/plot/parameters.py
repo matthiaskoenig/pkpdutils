@@ -1,5 +1,6 @@
 """Distribution of a parameter over the individuals, by group."""
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,8 @@ from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.plot.timecourse import _figure_of
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, summarize
+
+logger = logging.getLogger(__name__)
 
 
 def plot_parameters(
@@ -70,9 +73,10 @@ def plot_parameters(
     ax.boxplot(values, positions=positions, widths=0.5, showfliers=False, zorder=1)
     for pos, (label, group) in zip(positions, groups.items(), strict=True):
         v = group.finite_values
+        v_plot = v[v > 0] if log else v
         ax.plot(
-            pos + rng.uniform(-0.15, 0.15, v.size),
-            v,
+            pos + rng.uniform(-0.15, 0.15, v_plot.size),
+            v_plot,
             linestyle="none",
             marker=style.data_marker,
             color=style.data_color,
@@ -82,8 +86,15 @@ def plot_parameters(
             label=label,
         )
         if v.size:
-            s = summarize(group, scale=scale, ci_level=ci_level)
-            center = s.geomean if scale is Scale.LOG else s.mean
+            effective_scale = scale
+            if scale is Scale.LOG and np.any(v <= 0):
+                logger.debug(
+                    "group '%s' has non-positive values, the marker uses the arithmetic mean",
+                    label,
+                )
+                effective_scale = Scale.LINEAR
+            s = summarize(group, scale=effective_scale, ci_level=ci_level)
+            center = s.geomean if effective_scale is Scale.LOG else s.mean
             err = (
                 np.array([[center - s.ci_low], [s.ci_high - center]])
                 if np.isfinite(s.ci_low)

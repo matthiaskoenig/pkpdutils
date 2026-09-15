@@ -354,6 +354,7 @@ def plot_bland_altman(
         mean = (y[ok] + pred[ok]) / 2.0
         diff = pred[ok] - y[ok]
     fig, ax = plt.subplots(figsize=(6, 4))
+    fig.set_layout_engine("constrained")
     ax.plot(
         mean,
         diff,

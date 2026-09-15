@@ -1,10 +1,12 @@
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
+import xarray as xr
 from matplotlib.figure import Figure
 
 from pkpdutils import Route, Timecourses, nca
 from pkpdutils.plot import plot_parameters
+from pkpdutils.result import ParameterResult
 from pkpdutils.stats import Scale
 
 matplotlib.use("Agg")
@@ -51,4 +53,32 @@ def test_plot_parameters_single_group_linear() -> None:
     assert out is fig
     assert [t.get_text() for t in ax.get_xticklabels()] == ["cmax"]
     assert len(ax.containers) >= 1  # the error bar of the mean
+    matplotlib.pyplot.close("all")
+
+
+def _result_with_nonpositive_value() -> ParameterResult:
+    individual = [f"s{i}" for i in range(4)]
+    values = np.array([1.0, 2.0, 3.0, -0.5])
+    ds = xr.Dataset(
+        {
+            "value": (("individual",), values, {"units": "mg/l"}),
+            "flags": (
+                ("individual",),
+                np.zeros(4, dtype=np.int64),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={
+            "individual": individual,
+            "sex": ("individual", ["F", "F", "M", "M"]),
+        },
+    )
+    return ParameterResult(ds)
+
+
+def test_plot_parameters_nonpositive_value_falls_back_to_linear_marker() -> None:
+    result = _result_with_nonpositive_value()
+    fig = plot_parameters(result, "value", "individual", by="sex", log=True)
+    assert isinstance(fig, Figure)
+    assert fig.axes[0].get_yscale() == "log"
     matplotlib.pyplot.close("all")
