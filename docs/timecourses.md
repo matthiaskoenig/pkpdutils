@@ -39,7 +39,9 @@ tc = Timecourse(
     substance="drug",
 )
 print(tc.dose.amount)  # the first dose, 100 mg
-print(tc.relative_to_dose(which="last").dosing.first.time)  # 0.0
+shifted = tc.relative_to_dose(which="last")
+print(shifted.dosing.last.time)  # 0.0
+print(shifted.dosing.first.time)  # -36.0
 ```
 
 ## Data layout of a batch

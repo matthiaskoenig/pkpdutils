@@ -14,7 +14,7 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 
 ## NONMEM / Monolix event records
 
-`read_events`/`Timecourses.from_events` and the inverse `write_events`/`to_events`.
+`read_events`/`Timecourses.from_events` and the inverse `write_events`/`to_events`, the one row per event format[^bauer].
 
 | column | role | notes |
 | --- | --- | --- |
