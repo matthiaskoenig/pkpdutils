@@ -271,6 +271,9 @@ def test_fixed_phase_parameter_keeps_its_label() -> None:
     assert np.isnan(q["k1_se"].magnitude)
     assert np.isfinite(q["k2_se"].magnitude) and q["k2_se"].magnitude > 0
     assert q["k2"].magnitude == pytest.approx(2.0, rel=0.1)
+    # the phases keep the user's labelling, so they are not ordered here and
+    # `lambda_z` is the slowest rate, not the rate of the last phase
+    assert q["lambda_z"].magnitude == 0.2
 
 
 def test_bounded_phase_parameter_flags_its_own_bound() -> None:

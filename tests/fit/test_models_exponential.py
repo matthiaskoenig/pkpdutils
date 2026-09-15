@@ -53,6 +53,14 @@ def test_biexp_predict_strip_and_sort() -> None:
     np.testing.assert_allclose(swapped, p)
 
 
+def test_lambda_z_is_the_slowest_rate_of_unordered_phases() -> None:
+    unordered = np.array([2.0, 0.2, 8.0, 2.0])
+    assert BiExp().derived(unordered)["lambda_z"] == pytest.approx(0.2)
+    assert TriExp().derived(np.array([4.0, 1.0, 1.0, 0.1, 10.0, 5.0]))[
+        "lambda_z"
+    ] == pytest.approx(0.1)
+
+
 def test_triexp() -> None:
     m = TriExp()
     assert m.parameter_names == ("a1", "k1", "a2", "k2", "a3", "k3")

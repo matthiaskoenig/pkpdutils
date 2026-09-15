@@ -192,9 +192,15 @@ class _SumOfExponentials(Model):
         )
 
     def derived(self, p: np.ndarray) -> dict[str, float]:
-        """`lambda_z`, the half-lives of the phases and the area."""
+        """`lambda_z`, the half-lives of the phases and the area.
+
+        `lambda_z` is the smallest of the rate constants, not the rate of the
+        last phase: the phases are ordered by decreasing rate after a fit, but
+        not when the engine keeps the user's labelling (a fixed or bounded
+        phase parameter), and the terminal rate is the slowest one either way.
+        """
         pairs = p.reshape(-1, 2)
-        out: dict[str, float] = {"lambda_z": float(pairs[-1, 1])}
+        out: dict[str, float] = {"lambda_z": float(np.min(pairs[:, 1]))}
         for i, (_, k) in enumerate(pairs, start=1):
             out[f"thalf_{i}"] = LN2 / k
         out["auc"] = float(np.sum(pairs[:, 0] / pairs[:, 1]))
