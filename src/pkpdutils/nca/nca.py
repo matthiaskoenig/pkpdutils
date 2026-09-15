@@ -494,11 +494,7 @@ def reference_dose(
     counts = valid.sum(axis=1)
     index = np.maximum(counts - 1, 0) if last else np.zeros_like(counts)
     picked = [
-        None
-        if a is None
-        else np.where(
-            counts > 0, np.take_along_axis(a, index[:, None], axis=1)[:, 0], np.nan
-        )
+        None if a is None else np.where(counts > 0, take_rows(a, index), np.nan)
         for a in shaped
     ]
     return picked[0], picked[1], picked[2]
@@ -571,8 +567,8 @@ def merge_rows(
     carries `NaN` in the steady state variables and a multiple dose row `NaN`
     in `cl`, `vz`, `vss`, `auc_inf_dn` and `cmax_dn`; `n_doses`, which
     describes the protocol of a row and not the path it took, is filled in for
-    every row by the caller. The variables are ordered after the group which
-    reports the most of them.
+    every row of the batch by `run_rows`. The variables are ordered after the
+    group which reports the most of them.
 
     Args:
         parts: one mapping of variable name to `(n_k,)` or `(n_k, K)` array per
@@ -659,11 +655,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
         # back into the order of the chunk
         back = np.empty_like(order)
         back[order] = np.arange(order.size)
-        out = {name: array[back] for name, array in merged.items()}
-        # the number of doses describes the protocol of a row and not the path
-        # it took, so the single dose rows report theirs instead of `NaN`
-        out["n_doses"] = dose_counts(dose_time, t.shape[0])
-        return out
+        return {name: array[back] for name, array in merged.items()}
     if multiple.all() and multiple.size:
         # the steady state analysis imports this module, so the import is local
         from pkpdutils.nca.steady_state import compute_steady_state
@@ -756,7 +748,13 @@ def run_rows(
         parts = [_compute_chunk(job) for job in jobs]
     # a chunk of single dose rows reports fewer variables than one holding a
     # multiple dose row, so the chunks are merged into their union
-    return merge_rows(parts, [int(rows.size) for rows in chunks])
+    values = merge_rows(parts, [int(rows.size) for rows in chunks])
+    if "n_doses" in values:
+        # the number of doses describes the protocol of a row and not the path
+        # it took: it is filled in for every row of the batch, so that a single
+        # dose row reports its own count wherever the chunks happen to cut
+        values["n_doses"] = dose_counts(dose_time, n_rows)
+    return values
 
 
 def nca(timecourses: Timecourses, options: NCAOptions | None = None) -> NCAResult:

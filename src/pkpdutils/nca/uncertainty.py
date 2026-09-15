@@ -587,13 +587,11 @@ def delta(
                 low = base * np.exp(-z * rel)
                 high = base * np.exp(z * rel)
                 # the geometric CV is the spread over subjects, as in the
-                # bootstrap: with mu = x and sd = x_sd,
-                # sigma_log² = ln(1 + (sd/mu)²) and geocv = sqrt(exp(sigma_log²) - 1)
-                # = sd/mu, the arithmetic CV (the log-normal moment relation)
+                # bootstrap: with mu = x and sd = x_sd the log-normal moment
+                # relation gives sigma_log² = ln(1 + (sd/mu)²), so
+                # geocv = sqrt(exp(sigma_log²) - 1) = |sd/mu|, the arithmetic CV
                 out[f"{name}_geomean"] = np.where(valid, base, np.nan)
-                out[f"{name}_geocv"] = np.where(
-                    valid, np.sqrt(np.expm1(np.log1p((x_sd / base) ** 2))), np.nan
-                )
+                out[f"{name}_geocv"] = np.where(valid, np.abs(x_sd / base), np.nan)
             else:
                 low = base - z * x_se
                 high = base + z * x_se

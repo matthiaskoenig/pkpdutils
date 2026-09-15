@@ -72,3 +72,4 @@ New:
 - `Timecourses.n_workers`/`NCAOptions.n_workers` semantics: `None` is automatic, `1` serial.
 - `stats`: `effects_from_arrays` defaults to `HEDGES_G`.
 - Reader errors are `ValueError`, not pydantic `ValidationError`.
+- `ParameterResult.summarize` no longer reports `_sd`, `_se`, `_ci_low`, `_ci_high`, `_geomean` and `_geocv` for the discrete parameters (`tmax`, `tlast`, `tau`, the counts and the diagnostics of the terminal regression); they keep `x`, `x_median`, `x_q25`, `x_q75` and `x_n`.
