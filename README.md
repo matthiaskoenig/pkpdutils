@@ -27,7 +27,7 @@ If you have any questions or issues please [open an issue](https://github.com/ma
 
 If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi.org/10.5281/zenodo.3997539):
 
-> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* [Computer software]. Zenodo. https://doi.org/10.5281/zenodo.3997539
+> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.3997539
 
 ## Installation
 
