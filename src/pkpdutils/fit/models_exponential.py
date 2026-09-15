@@ -231,17 +231,6 @@ class _SumOfExponentials(Model):
         order = np.argsort(-pairs[:, 1], kind="stable")
         return np.concatenate([[2 * i, 2 * i + 1] for i in order]).astype(np.intp)
 
-    def sort_parameters(self, p: np.ndarray) -> np.ndarray:
-        """Order the phases by decreasing rate constant (the engine calls this after a fit).
-
-        Args:
-            p: phases as `[a1, k1, a2, k2, ...]`, any order.
-
-        Returns:
-            The parameter vector with the phases ordered by decreasing rate.
-        """
-        return p[self.parameter_order(p)]
-
 
 class BiExp(_SumOfExponentials):
     """`y = a1 exp(-k1 x) + a2 exp(-k2 x)` with `k1 > k2`."""

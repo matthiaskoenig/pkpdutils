@@ -32,7 +32,7 @@ Curve fitting, see [Curve fitting](../fitting.md) and [Pharmacodynamics](../pd.m
 
 | module | description |
 | --- | --- |
-| [fit](fit.md) | `fit`, `fit_timecourses`, `fit_table`, `FitOptions`, `FitResult`, `Model`: the engine, the result, the front ends and the options |
+| [fit](fit.md) | `fit`, `fit_timecourse`, `fit_timecourses`, `fit_table`, `FitOptions`, `FitResult`, `Model`: the engine, the result, the front ends and the options |
 | [fit.models](fit.models.md) | the model library: exponentials, the Emax family, linear, power and allometric models |
 | [fit.compare](fit.compare.md) | `compare_models` and `ModelComparison`: the ranking by AICc and the Akaike weights |
 | [fit.proportionality](fit.proportionality.md) | `proportionality_test`: the confidence interval criterion of dose proportionality |

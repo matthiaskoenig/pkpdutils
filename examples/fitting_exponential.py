@@ -11,9 +11,8 @@ from pkpdutils import (
     FitOptions,
     Route,
     Timecourse,
-    Timecourses,
     compare_models,
-    fit_timecourses,
+    fit_timecourse,
 )
 from pkpdutils.console import console
 from pkpdutils.fit import Weighting
@@ -38,15 +37,15 @@ tc = Timecourse(
 
 if __name__ == "__main__":
     console.rule("Bateman fit with 1/sd weighting and a residual bootstrap")
-    result = fit_timecourses(
+    result = fit_timecourse(
         Bateman(),
-        Timecourses.from_timecourses([tc]),
-        FitOptions(weighting=Weighting.INV_SD, n_starts=5, bootstrap=200, seed=1),
+        tc,
+        options=FitOptions(
+            weighting=Weighting.INV_SD, n_starts=5, bootstrap=200, seed=1
+        ),
     )
     console.print(result.to_dataframe().T)  # the last row holds the decoded flags
-    plot_fit(result, individual="oral", log_y=True).savefig(
-        "fitting_exponential.png", dpi=120
-    )
+    plot_fit(result, log_y=True).savefig("fitting_exponential.png", dpi=120)
 
     console.rule("Which model? AICc of mono-, bi-exponential and Bateman")
     comparison = compare_models(

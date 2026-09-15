@@ -147,17 +147,29 @@ result.flags()  # e.g. ['AT_BOUND']
 
 `FitOptions` also carries `fixed`, `bounds` and `initial` per parameter name, `loss`, `ci_level`, `bootstrap`, `n_workers` and the scipy tolerances.
 
+A single `Timecourse` is fitted by `fit_timecourse`, which takes the times relative to the dose and the units from the curve and returns a result without a sample dimension, so nothing has to be indexed:
+
+```python
+from pkpdutils import fit_timecourse
+from pkpdutils.fit.models import Bateman
+
+result = fit_timecourse(Bateman(), timecourse, options=FitOptions(n_starts=5, seed=1))
+result.to_quantities()["ka"]  # no indexer, the result is one sample
+```
+
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
 ```python
 from pkpdutils import fit_timecourses
 from pkpdutils.fit.models import BiExp
 
-fits = fit_timecourses(BiExp(), batch, FitOptions(n_starts=10, seed=1))
+fits = fit_timecourses(BiExp(), batch, options=FitOptions(n_starts=10, seed=1))
 fits["k1"]  # DataArray over the sample dims of the batch
 fits.to_dataframe()  # one row per sample, flags decoded
 fits.summarize("individual")  # mean, sd, se, interval over the individuals
 ```
+
+`summarize` reduces the parameters and the derived parameters over a sample dimension; the goodness of fit and the counts of the single fits (`FitResult.statistics`) are left out, they describe one fit and are read from the unsummarized result (`fits.to_dataframe()`).
 
 `fit_timecourses` passes the `sd` of the batch to the engine and nothing else, so `Weighting.INV_SD` on a batch that carries `se` and `n` but no `sd` raises `ValueError: Weighting.INV_SD needs 'sd'` rather than deriving the standard deviation; give the batch an `sd` (or use another weighting) in that case.
 

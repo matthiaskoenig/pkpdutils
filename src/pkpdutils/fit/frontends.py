@@ -1,4 +1,4 @@
-"""Front ends of the engine for batches of timecourses and for tables of parameters."""
+"""Front ends of the engine for one timecourse, for batches of timecourses and for tables of parameters."""
 
 from typing import Any
 
@@ -9,11 +9,38 @@ from pkpdutils.fit.engine import build_result, fit_rows
 from pkpdutils.fit.model import Model
 from pkpdutils.fit.options import FitOptions
 from pkpdutils.fit.result import FitResult
-from pkpdutils.timecourse import Timecourses
+from pkpdutils.timecourse import Timecourse, Timecourses
+
+
+def fit_timecourse(
+    model: Model, timecourse: Timecourse, *, options: FitOptions | None = None
+) -> FitResult:
+    """Fit a model to one timecourse, with the times relative to the dose.
+
+    The curve is fitted as a batch of one (`fit_timecourses`) and the single
+    sample is dropped from the result, so the result has no sample dimension
+    and `to_quantities`, `flags`, `predict` and `correlation` need no
+    indexer.
+
+    Args:
+        model: the model (`x` is the time relative to the dose, `y` the value)
+        timecourse: the curve; its `sd` is used for `Weighting.INV_SD`
+
+    Keyword Args:
+        options: the options, defaults for `None`
+
+    Returns:
+        The result of the single curve, without a sample dimension.
+    """
+    batch = fit_timecourses(
+        model, Timecourses.from_timecourses([timecourse]), options=options
+    )
+    dim = batch.sample_dims[0]
+    return FitResult(batch.ds.isel({dim: 0}, drop=True), model)
 
 
 def fit_timecourses(
-    model: Model, timecourses: Timecourses, options: FitOptions | None = None
+    model: Model, timecourses: Timecourses, *, options: FitOptions | None = None
 ) -> FitResult:
     """Fit a model to every curve of a batch, with the times relative to the dose.
 
@@ -28,6 +55,8 @@ def fit_timecourses(
     Args:
         model: the model (`x` is the time relative to the dose, `y` the value)
         timecourses: the batch; `sd` is used for `Weighting.INV_SD`
+
+    Keyword Args:
         options: the options, defaults for `None`
 
     Returns:

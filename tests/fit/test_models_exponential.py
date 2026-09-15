@@ -49,8 +49,8 @@ def test_biexp_predict_strip_and_sort() -> None:
         np.log(2) / 0.2
     )
     assert d["auc"] == pytest.approx(8 / 2 + 2 / 0.2)
-    swapped = m.sort_parameters(np.array([2.0, 0.2, 8.0, 2.0]))
-    np.testing.assert_allclose(swapped, p)
+    unordered = np.array([2.0, 0.2, 8.0, 2.0])
+    np.testing.assert_allclose(unordered[m.parameter_order(unordered)], p)
 
 
 def test_lambda_z_is_the_slowest_rate_of_unordered_phases() -> None:
@@ -73,9 +73,8 @@ def test_triexp() -> None:
         and guess[5] < guess[3] < guess[1]
     )
     assert m.derived(p)["lambda_z"] == pytest.approx(0.1)
-    np.testing.assert_allclose(
-        m.sort_parameters(np.array([1.0, 0.1, 10.0, 5.0, 4.0, 1.0])), p
-    )
+    unordered = np.array([1.0, 0.1, 10.0, 5.0, 4.0, 1.0])
+    np.testing.assert_allclose(unordered[m.parameter_order(unordered)], p)
 
 
 def test_bateman_with_and_without_lag() -> None:

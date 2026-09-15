@@ -12,6 +12,7 @@ from pkpdutils.fit.engine import (
     to_scale,
     variance_of,
 )
+from pkpdutils.fit.model import Model, ModelParameter
 from pkpdutils.fit.models import Bateman, BiExp, Emax, Linear, MonoExp
 from pkpdutils.units import ureg
 
@@ -426,6 +427,51 @@ def test_discrete_derived_parameters_carry_no_uncertainty() -> None:
     for suffix in ("_se", "_ci_low", "_ci_high", "_cv"):
         assert f"flip_flop{suffix}" not in result
     assert "tmax_se" in result
+
+
+class ReservedSuffixModel(Model):
+    """A model whose parameter name collides with the suffixes of the derived variables."""
+
+    name = "reserved"
+    parameters = (
+        ModelParameter("a", "[y]", description="amplitude"),
+        ModelParameter("k_n", "1/[x]", description="a rate named like a count"),
+    )
+
+    def predict(self, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+        return p[0] * np.exp(-p[1] * x)
+
+    def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        return np.array([float(y[0]), 0.1])
+
+
+def test_a_parameter_with_a_reserved_suffix_is_rejected() -> None:
+    """`k_n` would read as the count of a parameter `k`, so the model is rejected."""
+    _, y = noisy_monoexp(np.random.default_rng(22))
+    with pytest.raises(ValueError, match=r"k_n.*reserved suffix '_n'"):
+        fit(ReservedSuffixModel(), T, y)
+
+
+def test_a_derived_parameter_with_a_reserved_suffix_is_rejected() -> None:
+    """The derived parameters are checked like the fitted ones."""
+
+    class DerivedSuffixModel(ReservedSuffixModel):
+        name = "reserved_derived"
+        parameters = (ModelParameter("a", "[y]", description="amplitude"),)
+        derived_units = {"a_se": "[y]"}  # noqa: RUF012
+
+        def predict(self, x: np.ndarray, p: np.ndarray) -> np.ndarray:
+            return np.full_like(x, p[0])
+
+        def derived(self, p: np.ndarray) -> dict[str, float]:
+            return {"a_se": float(p[0])}
+
+        def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            return np.array([float(y[0])])
+
+    _, y = noisy_monoexp(np.random.default_rng(23))
+    with pytest.raises(ValueError, match=r"a_se.*reserved suffix '_se'"):
+        fit(DerivedSuffixModel(), T, y)
 
 
 def test_fit_validates_the_sample_dimensions_before_fitting() -> None:

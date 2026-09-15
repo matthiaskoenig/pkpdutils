@@ -48,6 +48,7 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
+from pkpdutils.result import base_name
 
 logger = logging.getLogger(__name__)
 
@@ -1021,6 +1022,31 @@ def _cv(se: float, value: float) -> float:
 _RESERVED_DIMS: frozenset[str] = frozenset({"point", "parameter", "parameter_"})
 
 
+def _check_no_reserved_suffix(model: Model) -> None:
+    """Reject a model whose parameter or derived name ends in a suffix of the result variables.
+
+    The result writes the uncertainty of a parameter `p` as `p_se`,
+    `p_ci_low`, ... and `ParameterResult` reads that structure back with
+    `pkpdutils.result.base_name`, so a parameter named `k_n` or `auc_se`
+    would be classified as the uncertainty of a parameter `k` or `auc` that
+    does not exist, and `summarize` would then drop it.
+
+    Args:
+        model: the model, for its parameter and derived names.
+
+    Raises:
+        ValueError: if a parameter or derived name ends in a reserved suffix.
+    """
+    for name in (*model.parameter_names, *model.derived_units):
+        stem = base_name(name)
+        if stem is not None:
+            raise ValueError(
+                f"'{name}' of {model.name} ends in the reserved suffix "
+                f"'{name[len(stem) :]}', which the result uses for the "
+                f"derived variables of a parameter; rename the parameter"
+            )
+
+
 def _check_no_dimension_collision(model: Model, dims: tuple[str, ...]) -> None:
     """Reject a sample dimension whose name collides with a variable `build_result` writes.
 
@@ -1037,17 +1063,7 @@ def _check_no_dimension_collision(model: Model, dims: tuple[str, ...]) -> None:
     Raises:
         ValueError: if a name in `dims` collides with a written variable or a reserved dimension.
     """
-    written = {
-        "cost",
-        "r2",
-        "rmse",
-        "aic",
-        "aicc",
-        "bic",
-        "n_points",
-        "n_parameters",
-        "n_starts_converged",
-        "n_bootstrap",
+    written = set(FitResult.statistic_variables) | {
         "x_data",
         "y_data",
         "y_pred",
@@ -1131,8 +1147,10 @@ def build_result(
         The `FitResult`.
 
     Raises:
-        ValueError: if a name in `dims` collides with a variable the result
-            writes or a reserved dimension (`_check_no_dimension_collision`).
+        ValueError: if a parameter or derived name of the model ends in a
+            reserved suffix (`_check_no_reserved_suffix`), or if a name in
+            `dims` collides with a variable the result writes or a reserved
+            dimension (`_check_no_dimension_collision`).
     """
     n_rows, n_points = y.shape
     sample_shape: tuple[int, ...] = (
@@ -1140,6 +1158,7 @@ def build_result(
     )
     names = model.parameter_names
     k = len(names)
+    _check_no_reserved_suffix(model)
     _check_no_dimension_collision(model, dims)
 
     def units_of(expr: str) -> str:

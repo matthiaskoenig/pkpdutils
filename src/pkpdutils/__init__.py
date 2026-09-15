@@ -13,6 +13,7 @@ from pkpdutils.fit import (
     compare_models,
     fit,
     fit_table,
+    fit_timecourse,
     fit_timecourses,
 )
 from pkpdutils.nca import (
@@ -45,6 +46,7 @@ __all__ = [
     "compare_models",
     "fit",
     "fit_table",
+    "fit_timecourse",
     "fit_timecourses",
     "nca",
     "nca_single",

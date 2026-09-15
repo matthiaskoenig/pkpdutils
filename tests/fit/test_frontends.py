@@ -7,6 +7,7 @@ from pkpdutils.fit import (
     FitOptions,
     Weighting,
     fit_table,
+    fit_timecourse,
     fit_timecourses,
     proportionality_test,
 )
@@ -36,9 +37,31 @@ def curves(n: int = 3) -> Timecourses:
     return Timecourses.from_timecourses(tcs)
 
 
+def test_fit_timecourse_of_a_single_curve() -> None:
+    """One curve gives a result without a sample dimension."""
+    tc = Timecourse(
+        time=T + 5.0,
+        value=10.0 * np.exp(-0.25 * T),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS, time=5.0),
+        substance="x",
+        label="single",
+    )
+    result = fit_timecourse(MonoExp(), tc, options=FitOptions(n_starts=3, seed=0))
+    assert result.sample_dims == ()
+    q = result.to_quantities()  # no indexer needed
+    assert q["k"].magnitude == pytest.approx(0.25, rel=1e-3)
+    assert result.units("k") == "1 / hour"
+    np.testing.assert_allclose(result["x_data"].values, T)
+    assert result.flags() == []
+    assert len(result.to_dataframe()) == 1
+    assert result.predict(T).shape == T.shape
+
+
 def test_fit_timecourses_relative_to_dose_with_units() -> None:
     result = fit_timecourses(
-        MonoExp(), curves(), FitOptions(weighting=Weighting.INV_SD)
+        MonoExp(), curves(), options=FitOptions(weighting=Weighting.INV_SD)
     )
     assert result.sample_dims == ("individual",)
     np.testing.assert_allclose(result["k"].values, [0.2, 0.3, 0.4], rtol=0.1)
