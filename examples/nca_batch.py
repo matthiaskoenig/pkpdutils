@@ -8,7 +8,7 @@ working directory.
 import numpy as np
 
 from pkpdutils import NCAOptions, Route, Timecourses, nca
-from pkpdutils.console import console
+from pkpdutils.console import console, print_table
 from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid
 
 rng = np.random.default_rng(1)
@@ -44,12 +44,20 @@ batch = Timecourses.from_arrays(
 if __name__ == "__main__":
     result = nca(batch, options=NCAOptions())
     console.rule("Parameters over (dose, individual)")
-    console.print(result.ds)
+    console.print(result)  # one row per sample, the parameters with their units
     df = result.to_dataframe()
-    console.print(
-        df[["dose", "individual", "auc_inf_obs", "cmax", "thalf", "cl_f", "flags"]]
-    )
     df.to_csv("nca_batch.tsv", sep="\t", index=False)
+
+    console.rule("The parameter table of the publication")
+    print_table(
+        result.summary_table(
+            "individual",
+            parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
+            stats=("n", "geomean", "geocv"),
+            unit_style="short",
+        ),
+        title="Geometric mean [CV %] by dose group",
+    )
 
     console.rule("Dose proportionality at a glance: AUC / dose")
     console.print(result["auc_inf_dn"].mean(dim="individual").values)

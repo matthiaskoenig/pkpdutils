@@ -31,6 +31,7 @@ A study of twelve subjects in three dose groups, from the event table it arrives
 import pandas as pd
 
 from pkpdutils import Route, Timecourses, nca, summary_table
+from pkpdutils.console import print_table
 from pkpdutils.plot import plot_mean_timecourse
 
 # [study.csv](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/data/study.csv):
@@ -45,18 +46,40 @@ batch = Timecourses.from_events(
     covariates=["dose"],
 )
 result = nca(batch)
-print(
-    summary_table(
-        result,
-        "individual",
-        by="dose",
-        parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
-    ).to_string(index=False)
+table = summary_table(
+    result,
+    "individual",
+    by="dose",
+    parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
+    stats=("n", "geomean", "geocv", "median", "range"),
+    unit_style="short",
 )
+print_table(table, title="Pharmacokinetic parameters by dose group")
 plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
 ```
 
 ![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/images/nca_batch_curves.png)
+
+The table the snippet prints, the geometric mean with its coefficient of variation per dose group:
+
+```text
+Pharmacokinetic parameters by dose group
+
+  parameter     unit     dose   n   geomean   geocv    median   range
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  auc_inf_obs   h⋅mg/l     50   4   5.07      28.0 %   4.76     4.08 - 7.29
+  cmax          mg/l       50   4   0.925     14.9 %   0.883    0.818 - 1.15
+  thalf         h          50   4   2.86      23.5 %   2.72     2.37 - 3.89
+  cl_f          l/h        50   4   9.86      28.0 %   10.7     6.86 - 12.3
+  auc_inf_obs   h⋅mg/l    100   4   10.2      27.1 %   9.58     8.22 - 14.4
+  cmax          mg/l      100   4   1.87      10.6 %   1.79     1.75 - 2.19
+  thalf         h         100   4   2.87      24.2 %   2.73     2.35 - 3.91
+  cl_f          l/h       100   4   9.84      27.1 %   10.6     6.94 - 12.2
+  auc_inf_obs   h⋅mg/l    200   4   20.4      26.0 %   19.3     16.6 - 28.6
+  cmax          mg/l      200   4   3.69      6.82 %   3.70     3.38 - 3.99
+  thalf         h         200   4   2.89      25.9 %   2.75     2.33 - 4.05
+  cl_f          l/h       200   4   9.79      26.0 %   10.5     6.98 - 12.0
+```
 
 The same steps with the table built in place, the parameters printed and four more walk-throughs (bioequivalence, drug-drug interaction, steady state, dose proportionality) are in the [Workflows](https://matthiaskoenig.github.io/pkpdutils/workflows/) of the documentation; the [Gallery](https://matthiaskoenig.github.io/pkpdutils/gallery/) shows a figure and a snippet for every example of the repository.
 

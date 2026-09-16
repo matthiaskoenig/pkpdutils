@@ -57,6 +57,35 @@ DOSE_DIMENSIONS: tuple[str, ...] = (
 CACHE_SIZE: int = 1024
 
 
+def short_unit(unit: str) -> str:
+    """A unit in the short symbols of pint, `mg/l` for `milligram / liter`.
+
+    The analyses derive their units with pint and store its canonical long
+    form (`milligram / liter`, `hour * milligram / liter`) in the `units`
+    attributes of a result, which is too long for a table header or an axis
+    label. A string in that long form is written in the short symbols of the
+    registry (the `~P` format of pint); a string the user spelled themselves
+    (`hr`, `ng/ml`, anything which is not the canonical form of the unit it
+    names) is kept as it is, so that a table or a figure carries the unit as
+    the data carries it. A dimensionless or empty unit gives the empty string,
+    and a string which is not a unit of the registry is passed through
+    unchanged.
+
+    Args:
+        unit: the unit string of a variable.
+
+    Returns:
+        The short unit, empty for a dimensionless or empty unit.
+    """
+    if not unit.strip() or unit == "dimensionless":
+        return ""
+    try:
+        parsed = parse_unit(unit)
+    except ValueError:
+        return unit
+    return f"{parsed:~P}" if unit == str(parsed) else unit
+
+
 @lru_cache(maxsize=CACHE_SIZE)
 def parse_unit(unit: str) -> Unit:
     """Parse a unit string with the registry of the package.

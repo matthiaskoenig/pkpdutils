@@ -11,7 +11,7 @@ The API reference is generated from the docstrings of the package.
 | [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample`, `summary_table` the parameter table of a publication |
 | [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
 | [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
-| [console](console.md) | shared rich console |
+| [console](console.md) | shared rich console, `rich_table` and `print_table` for the tables of the package |
 | [log](log.md) | logging of the package |
 
 ## pkpdutils.nca

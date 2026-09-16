@@ -42,13 +42,14 @@ def example_modules() -> list[str]:
 
 def render(module: str, work_dir: Path) -> list[Path]:
     """Run one example in `work_dir` and return the PNG files it wrote."""
-    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg")
+    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-W", "error", "-m", module],
         cwd=work_dir,
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     if result.returncode != 0:
