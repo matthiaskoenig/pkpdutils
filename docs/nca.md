@@ -313,7 +313,7 @@ geometric = result.summary_table(
 
 The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`. A parameter read from the sampling grid, such as \(t_\mathrm{max}\), carries no standard deviation and no geometric statistics, so those cells stay empty. `by` groups the samples by a coordinate along the dimension the statistics are taken over, which is what a study with one sample dimension and a dose group coordinate needs, see the first walk-through of [Workflows](workflows.md).
 
-Multiple dosing and steady state: a curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without any further option, `nca_single` and `nca` the same way. `superposition` predicts such a curve from a single dose curve and a protocol:
+Multiple dosing and steady state: a curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without any further option, `nca_single` and `nca` the same way. `superposition` predicts such a curve from a single dose curve and a protocol; the prediction carries a sample right before every later dose (the trough) and takes a fine `grid` of times for a smooth figure:
 
 ```python
 import numpy as np

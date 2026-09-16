@@ -126,28 +126,7 @@ def plot_ratio(
     ax.set_ylim(top, bottom)
     ax.invert_yaxis()
     if thresholds is not None:
-        classes = {
-            thresholds.inhibitor_weak: "weak inhibitor",
-            thresholds.inhibitor_moderate: "moderate inhibitor",
-            thresholds.inhibitor_strong: "strong inhibitor",
-            thresholds.inducer_weak: "weak inducer",
-            thresholds.inducer_moderate: "moderate inducer",
-            thresholds.inducer_strong: "strong inducer",
-        }
-        for value, label in classes.items():
-            ax.axvline(value, color=style.limit_color, linestyle=":", linewidth=1.0)
-            tick_values.add(value)
-            # anchored just below the top border, hanging down into the plot,
-            # so the rotated label stays clear of the x tick labels below the axes
-            ax.text(
-                value,
-                top + 0.05 * (bottom - top),
-                label,
-                rotation=90,
-                fontsize="x-small",
-                ha="right",
-                va="top",
-            )
+        tick_values.update(_shade_interaction_classes(ax, entries, thresholds, top))
     # the reference values (unity, limits, thresholds) are the ticks that
     # matter here; the automatic log ticks of a narrow range crowd into each
     # other and are turned off
@@ -164,3 +143,85 @@ def plot_ratio(
         fontsize="small",
     )
     return fig
+
+
+#: fill colors of the induction classes, weak to strong (a sequential blue)
+INDUCTION_COLORS: tuple[str, str, str] = ("#deebf7", "#9ecae1", "#4292c6")
+
+#: fill colors of the inhibition classes, weak to strong (a sequential orange)
+INHIBITION_COLORS: tuple[str, str, str] = ("#fee6ce", "#fdae6b", "#e6550d")
+
+#: fill color of the range without an interaction
+NO_INTERACTION_COLOR = "#f2f2f2"
+
+#: transparency of the class bands
+CLASS_ALPHA = 0.45
+
+
+def _shade_interaction_classes(
+    ax: Axes,
+    entries: Mapping[str, RatioLike],
+    thresholds: DDIThresholds,
+    top: float,
+) -> set[float]:
+    """Shade the classes of an interaction as bands of the ratio axis.
+
+    The axis is cut at the thresholds into the bands `strong inducer`,
+    `moderate inducer`, `weak inducer`, `no interaction`, `weak inhibitor`,
+    `moderate inhibitor` and `strong inhibitor`, each filled with its own
+    color (blues for induction, oranges for inhibition, darker the stronger
+    the class, light gray for none) and named at the top; the axis is widened
+    to show every band, at least a factor of 2 beyond the strong thresholds.
+
+    Args:
+        ax: the axes of the ratios.
+        entries: the ratios drawn, to keep their intervals inside the axis.
+        thresholds: the class thresholds.
+        top: the y position of the top border, where the names hang from.
+
+    Returns:
+        The threshold values, for the ticks of the axis.
+    """
+    edges = [
+        thresholds.inducer_strong,
+        thresholds.inducer_moderate,
+        thresholds.inducer_weak,
+        thresholds.inhibitor_weak,
+        thresholds.inhibitor_moderate,
+        thresholds.inhibitor_strong,
+    ]
+    low = min(edges[0] / 2.0, *(r.ci_low for r in entries.values()))
+    high = max(edges[-1] * 2.0, *(r.ci_high for r in entries.values()))
+    low = low / 1.1
+    high = high * 1.1
+    bounds = [low, *edges, high]
+    names = [
+        "strong inducer",
+        "moderate inducer",
+        "weak inducer",
+        "no interaction",
+        "weak inhibitor",
+        "moderate inhibitor",
+        "strong inhibitor",
+    ]
+    colors = [
+        *reversed(INDUCTION_COLORS),
+        NO_INTERACTION_COLOR,
+        *INHIBITION_COLORS,
+    ]
+    for left, right, name, color in zip(
+        bounds[:-1], bounds[1:], names, colors, strict=True
+    ):
+        ax.axvspan(left, right, color=color, alpha=CLASS_ALPHA, linewidth=0, zorder=0)
+        ax.text(
+            float(np.sqrt(left * right)),
+            top,
+            name,
+            rotation=90,
+            fontsize="x-small",
+            ha="center",
+            va="top",
+            color="0.25",
+        )
+    ax.set_xlim(low, high)
+    return set(edges)

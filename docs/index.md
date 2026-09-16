@@ -13,13 +13,15 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 
 - **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with dosing protocols, routes, uncertainties and metadata.
 - **[Data formats](formats.md)** - read the event records of NONMEM and Monolix, the two tables of PKNCA and the CDISC ADaM ADNCA dataset, and write event records back.
-- **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 - **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and multiple dosing (every dosing interval, steady state, accumulation), vectorized over a batch, with flags and units.
 - **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
 - **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.
 - **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.
 - **[Statistics](statistics.md)** - significance tests, geometric mean ratios, bioequivalence, drug-drug interaction classification and meta-analysis on the parameters of groups and studies.
+- **[Bioequivalence](bioequivalence.md)** - the average bioequivalence of two formulations, crossover and parallel designs, the ratio table and figure of the report.
+- **[Drug-drug interactions](ddi.md)** - exposure ratios with and without a perpetrator, the FDA and EMA classes, substrate sensitivity, the class figure.
 - **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures, parameter distributions, ratio and forest plots.
+- **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 
 The methods behind the package are cited in [References](references.md).
 

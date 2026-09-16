@@ -229,3 +229,15 @@ fig = plot_nca(tc, nca_single(tc), style=style)
 ```
 
 The reference of the module is in [API: plot](api/plot.md).
+
+## Saving figures
+
+Every function returns the `Figure`; `save_figure` writes it in the formats a manuscript needs next to each other, `png` (a raster image at `dpi`), `svg` (a vector image whose text stays text, so a journal can edit the labels) and `tif` (LZW compressed, the format of the submission systems), from one stem:
+
+```python
+from pkpdutils.plot import save_figure
+
+files = save_figure(fig, "figures/figure_1")  # figure_1.png, .svg and .tif
+save_figure(fig, "figures/figure_1.pdf")  # one file, by its extension
+save_figure(fig, "figures/figure_1", formats=("png", "eps"), dpi=600)
+```

@@ -45,12 +45,8 @@ def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     )
     fig = plot_ratio(be, limits=None, thresholds=DDIThresholds.fda())
     ax = fig.axes[0]
-    dotted = [
-        float(np.asarray(line.get_xdata())[0])
-        for line in ax.get_lines()
-        if line.get_linestyle() == ":"
-    ]
-    assert sorted(dotted) == [0.2, 0.5, 0.8, 1.25, 2.0, 5.0]
+    # the thresholds are the ticks, the classes the shaded bands between them
+    assert {0.2, 0.5, 0.8, 1.25, 2.0, 5.0} <= set(ax.get_xticks())
     assert any("strong" in t.get_text() for t in ax.texts)
     matplotlib.pyplot.close("all")
 
@@ -95,3 +91,29 @@ def test_plot_ratio_drops_the_unity_tick_when_thresholds_crowd_it() -> None:
     plain = plot_ratio(ratios)
     assert "1" in [t.get_text() for t in plain.axes[0].get_xticklabels()]
     matplotlib.pyplot.close("all")
+
+
+def test_plot_ratio_shades_the_interaction_classes() -> None:
+    from matplotlib.patches import Rectangle
+
+    ratios = {"auc": ratio(ParameterSample(values=TEST), ParameterSample(values=REF))}
+    fig = plot_ratio(ratios, thresholds=DDIThresholds.fda())
+    ax = fig.axes[0]
+    bands = [p for p in ax.patches if isinstance(p, Rectangle)]
+    assert len(bands) == 7
+    texts = [t.get_text() for t in ax.texts]
+    for name in (
+        "strong inducer",
+        "moderate inducer",
+        "weak inducer",
+        "no interaction",
+        "weak inhibitor",
+        "moderate inhibitor",
+        "strong inhibitor",
+    ):
+        assert name in texts
+    low, high = ax.get_xlim()
+    assert low < 0.2 / 2 and high > 5 * 2
+    # the threshold values are the ticks
+    assert {0.2, 0.5, 0.8, 1.25, 2.0, 5.0} <= set(ax.get_xticks())
+    matplotlib.pyplot.close(fig)
