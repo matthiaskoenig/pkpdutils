@@ -213,6 +213,19 @@ def repeat_rows(a: np.ndarray | None, n_rows: int, repeats: int) -> np.ndarray |
     return repeat_block(flatten_rows(a, n_rows), 0, n_rows, repeats)
 
 
+def _repeat_windows(windows: np.ndarray | None, repeats: int) -> np.ndarray | None:
+    """Repeat every terminal window of a batch once per replicate of its row.
+
+    Args:
+        windows: the windows `(N, 2)`, or `None`
+        repeats: copies per row
+
+    Returns:
+        The repeated windows `(N * repeats, 2)`, or `None`.
+    """
+    return None if windows is None else np.repeat(windows, repeats, axis=0)
+
+
 def resolve_spread(
     timecourses: Timecourses,
     options: NCAOptions,
@@ -469,7 +482,7 @@ def bootstrap(
     """
     # the analysis of the replicates runs through the same core as the original
     # curves, whose module imports this one
-    from pkpdutils.nca.nca import chunk_bounds, merge_rows, run_rows
+    from pkpdutils.nca.nca import chunk_bounds, merge_rows, run_rows, sample_windows
 
     if (
         options.kind is Kind.EFFECT
@@ -505,6 +518,7 @@ def bootstrap(
     dose_duration = flatten_rows(timecourses.dose_duration, n_rows)
     batch_lloq = timecourses.lloq
     lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
+    windows = sample_windows(timecourses, options.terminal)
     parts: list[dict[str, np.ndarray]] = []
     counts: list[int] = []
     for start, stop in chunk_bounds(n_rows, n_blocks):
@@ -527,6 +541,9 @@ def bootstrap(
                 route=timecourses.route,
                 options=options,
                 lloq=None if lloq is None else np.repeat(lloq[start:stop], b),
+                windows=_repeat_windows(
+                    None if windows is None else windows[start:stop], b
+                ),
             )
         )
         counts.append(rows * b)
@@ -602,7 +619,7 @@ def delta(
     """
     # the analysis of the perturbed curves runs through the same core as the
     # original curves, whose module imports this one
-    from pkpdutils.nca.nca import run_rows
+    from pkpdutils.nca.nca import run_rows, sample_windows
 
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     t = timecourses.times.reshape(n_rows, n_time)
@@ -632,6 +649,7 @@ def delta(
             if timecourses.lloq is None
             else np.repeat(timecourses.lloq.reshape(n_rows), n_time)
         ),
+        windows=_repeat_windows(sample_windows(timecourses, options.terminal), n_time),
     )
     alpha = 1.0 - options.ci_level
     z = float(norm.ppf(1.0 - alpha / 2.0))

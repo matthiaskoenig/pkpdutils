@@ -54,6 +54,7 @@ from pkpdutils.fit.models import (
 )
 from pkpdutils.fit.proportionality import ProportionalityResult
 from pkpdutils.nca import (
+    Acceptance,
     AUCMethod,
     BLQAction,
     BLQHandling,
@@ -76,6 +77,7 @@ from pkpdutils.result import summary_table
 from pkpdutils.stats import (
     ParameterSample,
     bioequivalence,
+    carryover_table,
     compare,
     ddi_classification,
     meta_analysis,
@@ -100,6 +102,7 @@ __version__ = "1.2.0.dev0"
 __all__ = [
     "Q_",
     "AUCMethod",
+    "Acceptance",
     "Allometric",
     "BLQAction",
     "BLQHandling",
@@ -141,6 +144,7 @@ __all__ = [
     "Weighting",
     "__version__",
     "bioequivalence",
+    "carryover_table",
     "compare",
     "compare_models",
     "ddi_classification",

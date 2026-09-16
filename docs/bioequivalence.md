@@ -236,10 +236,81 @@ plot_ratio(be, labels={"auc_inf_obs": "AUC(0-inf)", "cmax": "Cmax"})
 
 The ratios, the tests and the samples behind them are on the [Statistics](statistics.md) page, the figures on [Plotting](plotting.md), the runnable study in the second walk-through of [Workflows](workflows.md) and in `examples/bioequivalence.py`. The reference of the module is in [API: stats.bioequivalence](api/stats.bioequivalence.md).
 
+## Carryover
+
+A subject whose pre-dose concentration in a period exceeds 5 % of its own \(C_\mathrm{max}\) of that period carries drug from the previous period. ICH M13A[^ich_m13a] (2.2.3.3), the FDA guidance for ANDAs[^fda_anda] and the EMA guideline[^ema_be] draw the same line and ask for the subject to be dropped from the evaluation of that period; M13A adds that a statistical test for carryover "is not considered relevant", so this comparison replaces it (the sequence effect `p_sequence` of the crossover analysis stays in the result as a diagnostic).
+
+`carryover_table(batch, result)` reads the pre-dose value of every sample - the value at the dose time, or the last one before it - against the \(C_\mathrm{max}\) of the same sample, and `bioequivalence(..., carryover="flag" | "exclude", test_batch=..., reference_batch=...)` acts on it: `"flag"` names the subjects in `BEParameter.carryover` and leaves the analysis alone, `"exclude"` drops them from every parameter and names them there as well.
+
+```python
+import numpy as np
+
+from pkpdutils import Route, Timecourses, bioequivalence, carryover_table, nca
+
+# two periods of six subjects, one sample before the dose; the pre-dose sample
+# of `s3` carries 6 % of its own maximum from the previous period
+carry_time = np.array([0.0, 0.5, 1, 2, 4, 6, 8, 12, 24])
+carry_subjects = [f"s{i + 1}" for i in range(6)]
+
+
+def period(scale: float) -> Timecourses:
+    ke, ka = 0.2, 1.2
+    values = np.stack(
+        [
+            scale
+            * (1 + 0.05 * i)
+            * 10
+            * (np.exp(-ke * carry_time) - np.exp(-ka * carry_time))
+            for i in range(6)
+        ]
+    )
+    values[2, 0] = 0.06 * values[2].max()
+    return Timecourses.from_arrays(
+        carry_time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": carry_subjects},
+        dose={"amount": np.full(6, 100.0), "unit": "mg"},
+        route=Route.ORAL,
+        substance="drug",
+    )
+
+
+test_period, reference_period = period(0.95), period(1.0)
+test_result, reference_result = nca(test_period), nca(reference_period)
+print(carryover_table(test_period, test_result).to_string(index=False))
+
+checked = bioequivalence(
+    test_result,
+    reference_result,
+    parameters=["auc_inf_obs", "cmax"],
+    carryover="exclude",
+    test_batch=test_period,
+    reference_batch=reference_period,
+)
+print("dropped:", checked["cmax"].carryover, "subjects left:", checked["cmax"].n_test)
+```
+
+```text
+individual  predose     cmax  fraction  flagged
+        s1 0.000000 5.506220      0.00    False
+        s2 0.000000 5.781531      0.00    False
+        s3 0.363411 6.056842      0.06     True
+        s4 0.000000 6.332153      0.00    False
+        s5 0.000000 6.607464      0.00    False
+        s6 0.000000 6.882775      0.00    False
+dropped: ('s3',) subjects left: 5
+```
+
+A subject the results themselves mark `excluded` (`NCAResult.exclude`, the acceptance criteria of [Non-compartmental analysis](nca.md#acceptance-criteria-and-exclusions)) is left out of every parameter as well, without any keyword; `bioequivalence(..., include_excluded=True)` analyses the whole study again.
+
 ## References
 
 [^fda_be]: U.S. Food and Drug Administration. *Statistical Approaches to Establishing Bioequivalence.* 2026. See [References](references.md#regulatory-guidance).
 [^schuirmann]: Schuirmann DJ. *J Pharmacokinet Biopharm.* 1987;15:657-680. See [References](references.md#statistics).
 [^ema_be]: European Medicines Agency. *Guideline on the Investigation of Bioequivalence.* CPMP/EWP/QWP/1401/98 Rev. 1, 2010. See [References](references.md#regulatory-guidance).
 [^ich_m13a]: International Council for Harmonisation. *Bioequivalence for Immediate-Release Solid Oral Dosage Forms M13A.* 2024. See [References](references.md#regulatory-guidance).
+[^fda_anda]: U.S. Food and Drug Administration. *Bioequivalence Studies With Pharmacokinetic Endpoints for Drugs Submitted Under an ANDA.* 2026. See [References](references.md#regulatory-guidance).
 [^chow]: Chow SC, Liu JP. *Design and Analysis of Bioavailability and Bioequivalence Studies.* 3rd ed. 2009, ch. 3. See [References](references.md#statistics).

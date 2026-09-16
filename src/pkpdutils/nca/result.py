@@ -11,15 +11,17 @@ to `liter` (or per kilogram), see `pkpdutils.units`.
 
 from collections.abc import Sequence
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import xarray as xr
 
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX, INTERVAL_UNITS
 from pkpdutils.nca.options import NCAFlag
 from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS, LOGNORMAL_PARAMETERS
-from pkpdutils.result import ParameterResult
+from pkpdutils.result import EXCLUDED_VARIABLE, ParameterResult
 from pkpdutils.units import (
     CACHE_SIZE,
     Q_,
@@ -30,6 +32,9 @@ from pkpdutils.units import (
 
 #: name of the coordinate carrying the dose amount of every sample of a result
 DOSE_COORDINATE = "dose_amount"
+
+#: name of the text variable carrying why a sample was excluded
+REASON_VARIABLE = "excluded_reason"
 
 #: suffix of a dose normalized variable (`NCAResult.dose_normalized`)
 DOSE_NORMALIZED_SUFFIX = "_dn"
@@ -107,6 +112,8 @@ class NCAResult(ParameterResult):
     flag_type = NCAFlag
     lognormal_parameters = LOGNORMAL_PARAMETERS
     discrete_parameters = DISCRETE_PARAMETERS
+    #: the acceptance and the exclusion of a sample, no parameters of it
+    status_variables = frozenset({"accepted", EXCLUDED_VARIABLE, REASON_VARIABLE})
     #: the per-interval parameters are point variables (the dimension
     #: `interval`) which `summarize` reduces over the sample dimension, so
     #: that a multiple dose study reports the mean trough per interval over
@@ -218,6 +225,121 @@ class NCAResult(ParameterResult):
                 normalized
             )
         return NCAResult(ds)
+
+    def exclude(
+        self,
+        mask: "npt.ArrayLike | xr.DataArray | None" = None,
+        *,
+        reason: str = "",
+        **indexers: Any,
+    ) -> "NCAResult":
+        """A copy of the result with further samples marked as excluded.
+
+        The excluded samples stay in the result - `to_dataframe` reports every
+        row and the `excluded` column says which - and are left out of
+        `summarize`, `summary_table`, `ParameterResult.sample` and therefore of
+        every statistic of `pkpdutils.stats` which reads a result, unless
+        `include_excluded=True` asks for them. It is the record-level and
+        subject-level exclusion a regulatory analysis documents (CDISC ADNCA
+        carries the subject-level exclusion flags; PKNCA the
+        `exclude_nca_*` rules), and the same mechanism
+        `pkpdutils.nca.options.Acceptance(exclude=True)` uses.
+
+        Args:
+            mask: the samples to exclude, a boolean array over the sample
+                dimensions or a boolean `xarray.DataArray` along them;
+                `None` with `indexers` to name single samples.
+            reason: the text written into `excluded_reason` of the newly
+                excluded samples; the reason of a sample which was already
+                excluded is kept.
+            **indexers: coordinate label per sample dimension of one sample, as
+                `xarray.Dataset.sel` takes them; a dimension without an indexer
+                is excluded as a whole.
+
+        Returns:
+            A copy of the result with `excluded` set and `excluded_reason`
+            written.
+
+        Raises:
+            ValueError: if neither `mask` nor `indexers` are given, if both
+                are, or if the mask does not have the shape of the samples.
+        """
+        if (mask is None) == (not indexers):
+            raise ValueError(
+                "give either 'mask', a boolean array over the sample dimensions, "
+                "or the indexers of the samples to exclude"
+            )
+        template = xr.zeros_like(self.ds["flags"], dtype=bool)
+        if mask is None:
+            selected = template.copy()
+            selected.loc[indexers] = True
+        elif isinstance(mask, xr.DataArray):
+            selected = (
+                mask.astype(bool).broadcast_like(template).transpose(*template.dims)
+            )
+        else:
+            values = np.asarray(mask, dtype=bool)
+            if values.shape != template.shape:
+                raise ValueError(
+                    f"'mask' has the shape {values.shape}, the samples "
+                    f"{template.dims} have {template.shape}"
+                )
+            selected = xr.DataArray(values, dims=template.dims, coords=template.coords)
+        ds = self.ds.copy()
+        before = (
+            ds[EXCLUDED_VARIABLE].astype(bool)
+            if EXCLUDED_VARIABLE in ds.data_vars
+            else template
+        )
+        excluded = before | selected
+        excluded.attrs = {"units": "dimensionless"}
+        ds[EXCLUDED_VARIABLE] = excluded
+        reasons = (
+            ds[REASON_VARIABLE]
+            if REASON_VARIABLE in ds.data_vars
+            else xr.full_like(template, "", dtype=object)
+        )
+        # a sample which was already excluded keeps the reason it carries
+        written = xr.where(selected & ~before, reason, reasons.astype(str))
+        written.attrs = {"units": "dimensionless"}
+        ds[REASON_VARIABLE] = written
+        return NCAResult(ds)
+
+    def terminal_windows(self) -> dict[Any, tuple[float, float]]:
+        """The terminal window of every sample, keyed as `TerminalPhase.windows`.
+
+        `lambda_z_t_first` and `lambda_z_t_last` of every sample with a
+        terminal phase, keyed by the sample label (the label of a result with
+        one sample dimension, the tuple of labels of a result with several), so
+        that
+
+        ```python
+        # not executed
+        reviewed = nca(batch, options=options.model_copy(
+            update={"terminal": TerminalPhase(windows=result.terminal_windows())}
+        ))
+        ```
+
+        re-runs the analysis with exactly the windows of `result`. A sample
+        without a terminal phase carries no window and follows
+        `TerminalPhase.method` again, which reproduces its result as well.
+
+        Returns:
+            Sample label to `(t_first, t_last)`, in the times of the analysis
+            (relative to the reference dose of the sample).
+        """
+        from pkpdutils.nca.nca import sample_keys
+
+        if "lambda_z_t_first" not in self.ds.data_vars:
+            return {}
+        first = self.ds["lambda_z_t_first"].to_numpy().reshape(-1)
+        last = self.ds["lambda_z_t_last"].to_numpy().reshape(-1)
+        labels = sample_keys(self.ds, self.sample_dims)
+        return {
+            label: (float(t_first), float(t_last))
+            for label, t_first, t_last in zip(labels, first, last, strict=True)
+            if np.isfinite(t_first) and np.isfinite(t_last)
+        }
 
     @property
     def has_intervals(self) -> bool:

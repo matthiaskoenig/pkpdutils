@@ -110,6 +110,7 @@ def terminal_fit(
     phase: TerminalPhase,
     manual_mask: np.ndarray | None = None,
     exclude: np.ndarray | None = None,
+    windows: np.ndarray | None = None,
 ) -> TerminalFit:
     """Terminal log-linear regression of every row.
 
@@ -123,6 +124,10 @@ def terminal_fit(
         exclude: packed points which may not enter the regression `(N, n)`,
             the values below the limit of quantification a BLQ rule kept or
             imputed (`pkpdutils.nca.options.BLQRules`)
+        windows: the terminal window of single rows `(N, 2)`, `NaN` for a row
+            without one (`TerminalPhase.windows`). A row with a window
+            regresses the points whose time lies in `[t_first, t_last]`, every
+            other row follows `phase.method`.
 
     Returns:
         The fit per row.
@@ -140,15 +145,103 @@ def terminal_fit(
         regressable = regressable & ~exclude
     flags = np.zeros(n_rows, dtype=np.int64)
 
+    fit = _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
+    if windows is None:
+        return fit
+    given = np.isfinite(windows).all(axis=1)
+    if not given.any():
+        return fit
+    with np.errstate(invalid="ignore"):
+        inside = regressable & (tp >= windows[:, :1]) & (tp <= windows[:, 1:2])
+    return _merge_fits(fit, _fit_selected(tp, y, inside, phase, flags), given)
+
+
+def _merge_fits(base: TerminalFit, other: TerminalFit, use: np.ndarray) -> TerminalFit:
+    """Take the fit of `other` in the rows of `use` and the fit of `base` elsewhere.
+
+    Args:
+        base: the fit of the batch rule (`TerminalPhase.method`)
+        other: the fit of the rows with a window of their own
+        use: the rows which take the fit of `other` `(N,)`
+
+    Returns:
+        The combined fit.
+    """
+    return TerminalFit(
+        slope=np.where(use, other.slope, base.slope),
+        intercept=np.where(use, other.intercept, base.intercept),
+        r2=np.where(use, other.r2, base.r2),
+        r2_adj=np.where(use, other.r2_adj, base.r2_adj),
+        se_slope=np.where(use, other.se_slope, base.se_slope),
+        n_points=np.where(use, other.n_points, base.n_points),
+        t_first=np.where(use, other.t_first, base.t_first),
+        t_last=np.where(use, other.t_last, base.t_last),
+        start=np.where(use, other.start, base.start).astype(np.int64),
+        flags=np.where(use, other.flags, base.flags).astype(np.int64),
+    )
+
+
+def _fit_selected(
+    tp: np.ndarray,
+    y: np.ndarray,
+    selected: np.ndarray,
+    phase: TerminalPhase,
+    flags: np.ndarray,
+) -> TerminalFit:
+    """Regress exactly the selected points of every row.
+
+    A single window per row: the selected points, with the statistics of the
+    suffix sums and everything before the first selected point excluded.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`
+        selected: the points of the regression `(N, n)`
+        phase: the selection rule, for `min_points` and `min_adj_r2`
+        flags: the flags of every row so far `(N,)`
+
+    Returns:
+        The fit per row.
+    """
+    stats = window_statistics(tp, np.where(selected, y, 0.0), selected)
+    start = np.where(selected.any(axis=1), selected.argmax(axis=1), 0)
+    return _collect(tp, stats, start, selected.any(axis=1), phase, flags, selected)
+
+
+def _fit_by_method(
+    tp: np.ndarray,
+    y: np.ndarray,
+    regressable: np.ndarray,
+    n_valid: np.ndarray,
+    tmax_idx: np.ndarray,
+    phase: TerminalPhase,
+    manual_mask: np.ndarray | None,
+) -> TerminalFit:
+    """The regression of every row under the rule of `phase.method`.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`, `NaN` where there is none
+        regressable: the points which may enter a regression `(N, n)`
+        n_valid: valid points per row
+        tmax_idx: packed index of the maximum per row
+        phase: the selection rule and its parameters
+        manual_mask: packed points of the regression for `TerminalMethod.MANUAL`
+
+    Returns:
+        The fit per row.
+
+    Raises:
+        ValueError: `phase.method` is `TerminalMethod.MANUAL` and `manual_mask` is `None`.
+    """
+    n_rows, n = tp.shape
+    idx = np.arange(n)[None, :]
+    flags = np.zeros(n_rows, dtype=np.int64)
+
     if phase.method is TerminalMethod.MANUAL:
         if manual_mask is None:
             raise ValueError("TerminalMethod.MANUAL needs 'manual_mask'")
-        selected = regressable & manual_mask
-        # a single window per row: the selected points, statistics via the
-        # suffix sums with everything before the first selected point excluded
-        stats = window_statistics(tp, np.where(selected, y, 0.0), selected)
-        start = np.where(selected.any(axis=1), selected.argmax(axis=1), 0)
-        return _collect(tp, stats, start, selected.any(axis=1), phase, flags, selected)
+        return _fit_selected(tp, y, regressable & manual_mask, phase, flags)
 
     # with `exclude_cmax` a window may only start after the point of the maximum,
     # otherwise it may start anywhere in the row, also before the maximum

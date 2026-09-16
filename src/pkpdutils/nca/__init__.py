@@ -7,6 +7,7 @@
 
 from pkpdutils.nca.nca import nca, nca_single, partial_auc
 from pkpdutils.nca.options import (
+    Acceptance,
     AUCMethod,
     BLQAction,
     BLQHandling,
@@ -22,11 +23,14 @@ from pkpdutils.nca.options import (
     UncertaintyMethod,
     decode_flags,
 )
+from pkpdutils.nca.report import M13A_STATISTICS, acceptability_table, methods_line
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.nca.steady_state import accumulation_ratio, superposition
 
 __all__ = [
+    "M13A_STATISTICS",
     "AUCMethod",
+    "Acceptance",
     "BLQAction",
     "BLQHandling",
     "BLQRules",
@@ -40,8 +44,10 @@ __all__ = [
     "TerminalMethod",
     "TerminalPhase",
     "UncertaintyMethod",
+    "acceptability_table",
     "accumulation_ratio",
     "decode_flags",
+    "methods_line",
     "nca",
     "nca_single",
     "partial_auc",

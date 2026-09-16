@@ -62,6 +62,7 @@ nav = [
       { "intervals" = "api/nca.intervals.md" },
       { "steady_state" = "api/nca.steady_state.md" },
       { "uncertainty" = "api/nca.uncertainty.md" },
+      { "report" = "api/nca.report.md" },
     ] },
     { "pkpdutils.fit" = [
       { "fit" = "api/fit.md" },

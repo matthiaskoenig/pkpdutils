@@ -43,7 +43,10 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auec_last`, `auec_baseline` | \(\mathrm{AUEC}\) | area under the effect curve, raw and baseline corrected | value·time | [NCA](nca.md) |
 | `emax_baseline`, `time_above` | | baseline corrected maximum, time above a threshold | value, time | [NCA](nca.md) |
 | `auec_tau`, `emin_ss`, `emax_ss`, `eavg`, `time_above_tau` | | steady state effect parameters of the last dosing interval, and `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg`, `interval_time_above` per interval | value·time, value, value, value, time | [Pharmacodynamics](pd.md) |
-| `flags` | | `NCAFlag` bits, including `SPAN_LOW` of the terminal phase and `INCOMPLETE_INTERVAL`, `EXTRAPOLATED_TROUGH` of a multiple dose analysis | – | [NCA](nca.md) |
+| `accepted` | | whether the sample meets every threshold of `NCAOptions.acceptance` (boolean) | – | [NCA](nca.md) |
+| `excluded`, `excluded_reason` | | whether the sample is left out of the summaries and the statistics, and why (`NCAResult.exclude`) | – | [NCA](nca.md) |
+| `auc_<name>` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | a named partial area of `NCAOptions.partial_aucs`, one variable per interval | value·time | [NCA](nca.md) |
+| `flags` | | `NCAFlag` bits, including `SPAN_LOW` of the terminal phase, `NOT_ACCEPTED` of the acceptance criteria, `PARTIAL_EXTRAPOLATED` of a named partial area and `INCOMPLETE_INTERVAL`, `EXTRAPOLATED_TROUGH` of a multiple dose analysis | – | [NCA](nca.md) |
 | `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |
