@@ -2,9 +2,11 @@
 
 The Emax model `E = E0 + Emax C / (EC50 + C)` and its sigmoid form with the
 Hill coefficient `n` describe a saturable response (Gabrielsson & Weiner 2016,
-ch. 4); `Imax` is the inhibitory form `E = E0 (1 - Imax C / (IC50 + C))`.
-`EC90 = 9^{1/n} EC50` is the concentration of 90 % of the maximal effect. The
-same models describe a pharmacokinetic parameter against an inhibitor dose.
+ch. 4; Bonate 2011), the exposure-response relationship regulatory guidance
+addresses (FDA 2003); `Imax` is the inhibitory form
+`E = E0 (1 - Imax C / (IC50 + C))`. `EC90 = 9^{1/n} EC50` is the concentration
+of 90 % of the maximal effect. The same models describe a pharmacokinetic
+parameter against an inhibitor dose.
 """
 
 from typing import ClassVar

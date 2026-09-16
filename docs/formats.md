@@ -224,6 +224,6 @@ Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several com
 
 [^bauer]: Bauer RJ. NONMEM Tutorial Part I: Description of Commands and Options, with Simple Examples of Population Analysis. *CPT: Pharmacometrics & Systems Pharmacology.* 2019;8(8):525-537. See [References](references.md#data-formats).
 [^pknca]: Denney W, Duvvuri S, Buckeridge C. Simple, automatic noncompartmental analysis: the PKNCA R package. *Journal of Pharmacokinetics and Pharmacodynamics.* 2015;42:S65. See [References](references.md#data-formats).
-[^cdisc-adnca]: CDISC. ADaM Implementation Guide for Non-compartmental Analysis Input Data (ADNCA). 2024. See [References](references.md#data-formats).
+[^cdisc-adnca]: CDISC. ADaM Implementation Guide for Non-compartmental Analysis Input Data (ADNCA). 2021. See [References](references.md#data-formats).
 
 The example is `examples/formats.py`, the reference of the module is in [API: io](api/io.md).

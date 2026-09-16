@@ -17,7 +17,7 @@ time axis), one route and the dosing protocol of every subject:
 - **CDISC ADNCA** (`read_adnca`): the analysis dataset of a non-compartmental
   analysis of the ADaM standard, one row per concentration record with the
   time since the first dose (`AFRLT`) and since the reference dose (`ARRLT`),
-  see the CDISC ADaM ADNCA implementation guide (2024).
+  see the CDISC ADaM ADNCA implementation guide (2021).
 
 The readers are also reachable as the constructors `Timecourses.from_events`,
 `Timecourses.from_pknca` and `Timecourses.from_adnca`, the writer as

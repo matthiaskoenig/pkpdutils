@@ -79,7 +79,7 @@ result.to_quantities()["auec_tau"]  # the last, complete interval
 
 ## Concentration-effect relationships
 
-The Emax model describes a saturable effect, the Hill coefficient \(n\) of the sigmoid form makes the transition steeper, and the Imax forms describe inhibition [^gw]:
+The Emax model describes a saturable effect, the Hill coefficient \(n\) of the sigmoid form makes the transition steeper, and the Imax forms describe inhibition [^gw][^bonate][^fda_exposure_response]:
 
 \[
 E = E_0 + E_\mathrm{max}\,\frac{C^n}{\mathrm{EC}_{50}^n + C^n}, \qquad
@@ -150,3 +150,5 @@ The example is `examples/emax.py`, the figures are described in [Plotting](plott
 ## References
 
 [^gw]: Gabrielsson J, Weiner D. *Pharmacokinetic and Pharmacodynamic Data Analysis*. 5th ed. Swedish Pharmaceutical Press; 2016, ch. 4. See [References](references.md#textbooks).
+[^bonate]: Bonate PL. *Pharmacokinetic-Pharmacodynamic Modeling and Simulation*. 2nd ed. Springer; 2011. See [References](references.md#textbooks).
+[^fda_exposure_response]: U.S. Food and Drug Administration. *Exposure-Response Relationships - Study Design, Data Analysis, and Regulatory Applications.* 2003. See [References](references.md#regulatory-guidance).
