@@ -272,6 +272,13 @@
 > *Journal of Clinical Pharmacology.* 2003;43(5):443-469.
 > [doi:10.1177/0091270003252519](https://doi.org/10.1177/0091270003252519)
 
+**Draper and Smith.** The confidence band of a simple linear regression, drawn around the terminal regression of the NCA figure.
+
+> Draper NR, Smith H.
+> **Applied Regression Analysis.**
+> 3rd edition. Wiley; 1998.
+> [doi:10.1002/9781118625590](https://doi.org/10.1002/9781118625590)
+
 ## Data formats
 
 The exchange formats of `pkpdutils.io`: the event records of NONMEM and Monolix, the two tables of PKNCA and the CDISC ADaM dataset of a non-compartmental analysis.

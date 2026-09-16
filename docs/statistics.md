@@ -36,7 +36,7 @@ flowchart LR
 
 **Drug-drug interactions.** A perpetrator is classified by how much it changes the \(\mathrm{AUC}\) of a sensitive substrate, a strong, moderate or weak inhibitor or inducer[^fda_ddi][^ema_ddi], read conservatively from the bound of the interval closer to 1. The thresholds, the sensitivity of a substrate and the table and figure of the report are on [Drug-drug interactions](ddi.md).
 
-**Meta-analysis.** Effects of several studies (Hedges' g, a mean difference or the log ratio of geometric means, the effect native to pharmacokinetics) are pooled with inverse variance weights. The fixed effect model assumes one true effect; the random effects model of DerSimonian and Laird adds the between-study variance \(\tau^2\) to every weight and widens the interval when the studies disagree[^dl]. \(Q\), \(I^2\) and \(H^2\) measure that disagreement[^higgins].
+**Meta-analysis.** Effects of several studies (Hedges' g, a mean difference or the log ratio of geometric means, the effect native to pharmacokinetics) are pooled with inverse variance weights[^borenstein]. The fixed effect model assumes one true effect; the random effects model of DerSimonian and Laird adds the between-study variance \(\tau^2\) to every weight and widens the interval when the studies disagree[^dl]. \(Q\), \(I^2\) and \(H^2\) measure that disagreement[^higgins].
 
 ## Math
 
@@ -264,7 +264,7 @@ Figures: `plot_parameters`, `plot_ratio` and `plot_forest`, see [Plotting](plott
 
 ## References
 
-[^fda_be]: U.S. Food and Drug Administration. *Statistical Approaches to Establishing Bioequivalence.* 2001. See [References](references.md#regulatory-guidance).
+[^fda_be]: U.S. Food and Drug Administration. *Statistical Approaches to Establishing Bioequivalence.* 2026. See [References](references.md#regulatory-guidance).
 [^schuirmann]: Schuirmann DJ. *J Pharmacokinet Biopharm.* 1987;15:657-680. See [References](references.md#statistics).
 [^fda_ddi]: U.S. Food and Drug Administration. *Clinical Drug Interaction Studies.* 2020. See [References](references.md#regulatory-guidance).
 [^ema_ddi]: European Medicines Agency. *Guideline on the investigation of drug interactions.* 2012. See [References](references.md#regulatory-guidance).
@@ -274,3 +274,4 @@ Figures: `plot_parameters`, `plot_ratio` and `plot_forest`, see [Plotting](plott
 [^higgins]: Higgins JPT, Thompson SG. *Stat Med.* 2002;21:1539-1558. See [References](references.md#statistics).
 [^holm]: Holm S. *Scand J Stat.* 1979;6:65-70. See [References](references.md#statistics).
 [^bh]: Benjamini Y, Hochberg Y. *J R Stat Soc B.* 1995;57:289-300. See [References](references.md#statistics).
+[^borenstein]: Borenstein M, Hedges LV, Higgins JPT, Rothstein HR. *Introduction to Meta-Analysis.* 2nd ed. Wiley; 2021. See [References](references.md#statistics).

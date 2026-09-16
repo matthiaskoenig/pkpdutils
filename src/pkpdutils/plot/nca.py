@@ -126,7 +126,7 @@ def _terminal_band(
     \(\hat y(t) \pm t_{n-2, 1 - \alpha/2}\, s \sqrt{1/n + (t - \bar t)^2 / S_{tt}}\),
     exponentiated back to the concentration scale, so it widens away from
     the centre of the regression window and shows how uncertain the
-    extrapolated tail is [@Draper1998].
+    extrapolated tail is (Draper & Smith 1998, ch. 1).
 
     Args:
         t: the times of the curve (relative to the analysed dose).

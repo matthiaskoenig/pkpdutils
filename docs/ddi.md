@@ -18,7 +18,7 @@ flowchart LR
   RES --> FIG["plot_ratio(thresholds=...)<br/>the class bands"]
 ```
 
-**Perpetrator and victim.** The perpetrator is the drug that changes an enzyme or a transporter, the victim, or substrate, is the drug whose exposure is measured. A study characterizes one of the two: an index substrate such as midazolam measures how strong a perpetrator is, an index perpetrator such as itraconazole measures how sensitive a substrate is. The same ratio is read in both directions, which is why the same thresholds classify the perpetrator and grade the sensitivity of the substrate.
+**Perpetrator and victim.** The perpetrator is the drug that changes an enzyme or a transporter, the victim, or substrate, is the drug whose exposure is measured[^bjornsson]. A study characterizes one of the two: an index substrate such as midazolam measures how strong a perpetrator is, an index perpetrator such as itraconazole measures how sensitive a substrate is; the FDA keeps the tables of the index substrates, inhibitors and inducers[^fda_ddi_table]. The same ratio is read in both directions, which is why the same thresholds classify the perpetrator and grade the sensitivity of the substrate.
 
 **The classes of a perpetrator.** The FDA guidance classifies a perpetrator by the AUC ratio of a sensitive index substrate with and without it[^fda_ddi]; the EMA guideline uses the same numbers[^ema_ddi]:
 
@@ -231,3 +231,5 @@ The ratios, the tests and the samples behind them are on the [Statistics](statis
 
 [^fda_ddi]: U.S. Food and Drug Administration. *Clinical Drug Interaction Studies.* 2020. See [References](references.md#regulatory-guidance).
 [^ema_ddi]: European Medicines Agency. *Guideline on the investigation of drug interactions.* 2012. See [References](references.md#regulatory-guidance).
+[^bjornsson]: Bjornsson TD, Callaghan JT, Einolf HJ, et al. *J Clin Pharmacol.* 2003;43:443-469. See [References](references.md#statistics).
+[^fda_ddi_table]: U.S. Food and Drug Administration. *Drug Development and Drug Interactions: Table of Substrates, Inhibitors and Inducers.* See [References](references.md#regulatory-guidance).
