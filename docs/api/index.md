@@ -28,6 +28,7 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.intervals](nca.intervals.md) | parameters of every dosing interval of a multiple dose curve |
 | [nca.steady_state](nca.steady_state.md) | steady state parameters of the last interval, accumulation ratio, superposition |
 | [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
+| [nca.report](nca.report.md) | `M13A_STATISTICS`, `acceptability_table`, `methods_line`: the tables of a regulatory report |
 
 ## pkpdutils.fit
 

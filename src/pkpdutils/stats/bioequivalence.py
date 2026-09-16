@@ -13,9 +13,9 @@ within-subject differences; parallel groups use the Welch interval.
 
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,7 @@ from pkpdutils.stats.sample import (
     log_positive,
     paired_indices,
 )
+from pkpdutils.timecourse import Timecourses
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class BEParameter:
         p_sequence: p value of the sequence (carryover) effect (crossover), `NaN` otherwise
         n_test: number of test values
         n_reference: number of reference values
+        carryover: the subjects whose pre-dose concentration exceeds the
+            carryover threshold (`carryover_table`), either flagged here or,
+            with `carryover="exclude"`, already dropped from the analysis
     """
 
     name: str
@@ -93,6 +97,7 @@ class BEParameter:
     p_sequence: float
     n_test: int
     n_reference: int
+    carryover: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """The fields as a dictionary with the enumerations as strings.
@@ -122,6 +127,7 @@ class BEParameter:
             "p_sequence": self.p_sequence,
             "n_test": self.n_test,
             "n_reference": self.n_reference,
+            "carryover": ", ".join(self.carryover),
         }
 
 
@@ -383,6 +389,132 @@ def tost(
     )
 
 
+def carryover_table(
+    batch: Timecourses,
+    result: ParameterResult,
+    *,
+    threshold: float = 0.05,
+) -> pd.DataFrame:
+    r"""The pre-dose concentration of every subject against its own maximum.
+
+    ICH M13A (2024, 2.2.3.3), the FDA ANDA bioequivalence guidance and the EMA
+    bioequivalence guideline all draw the same line: a period whose pre-dose
+    concentration is more than 5 % of that subject's \(C_\mathrm{max}\) of the
+    same period carries drug from the previous period, and the subject "should
+    be dropped from the study evaluation of that period"; M13A adds that a
+    statistical test for carryover "is not considered relevant", so this
+    comparison replaces it.
+
+    The pre-dose value of a sample is the last value **strictly before** its
+    dose time. A sample recorded at the dose time counts as a pre-dose sample
+    for an extravascular route only, where it is drawn before the dose is
+    swallowed; after an intravenous bolus or during an infusion the value at
+    the dose time is the post-dose value of this period and says nothing about
+    the previous one (reading it would flag every subject with a fraction of
+    1). A sample whose schedule carries no value before the dose has no
+    pre-dose value: `predose` is `NaN` and the sample is not flagged.
+
+    Args:
+        batch: the timecourses of the period, one sample per subject
+        result: the analysis of that batch, for \(C_\mathrm{max}\)
+
+    Keyword Args:
+        threshold: the share of \(C_\mathrm{max}\) above which the sample is
+            flagged, 0.05 of the three guidances
+
+    Returns:
+        One row per sample with the sample dimensions, `predose`, `cmax`,
+        `fraction` and `flagged`.
+
+    Raises:
+        ValueError: if the result carries no `cmax`, or if the batch and the
+            result do not have the same samples.
+    """
+    if "cmax" not in result.ds.data_vars:
+        raise ValueError("the result carries no 'cmax'")
+    dims = tuple(str(d) for d in batch.sample_dims)
+    n_rows = batch.n_samples
+    if result.ds["cmax"].size != n_rows:
+        raise ValueError(
+            f"the batch has {n_rows} samples and the result "
+            f"{result.ds['cmax'].size}; they must be the same analysis"
+        )
+    t = batch.times.reshape(n_rows, batch.n_time)
+    c = batch.values.reshape(n_rows, batch.n_time)
+    dose_time = batch.first_dose_time
+    time = (
+        np.zeros(n_rows)
+        if dose_time is None
+        else np.asarray(dose_time, dtype=np.float64).reshape(n_rows)
+    )
+    route = batch.route
+    # a sample at the dose time is a pre-dose sample of an extravascular period
+    # only; after a bolus or during an infusion it carries the post-dose value
+    at_dose = route is None or not route.is_iv
+    with np.errstate(invalid="ignore"):
+        measured = np.isfinite(c) & np.isfinite(t)
+        candidate = measured & (
+            (t <= time[:, None]) if at_dose else (t < time[:, None])
+        )
+    has_predose = candidate.any(axis=1)
+    order = np.where(candidate, t, -np.inf).argmax(axis=1)
+    predose = np.where(
+        has_predose, np.take_along_axis(c, order[:, None], 1)[:, 0], np.nan
+    )
+    cmax = np.asarray(result.ds["cmax"].to_numpy(), dtype=np.float64).reshape(n_rows)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fraction = predose / cmax
+        flagged = np.isfinite(fraction) & (fraction > threshold)
+    columns: dict[str, Any] = {}
+    for name in dims:
+        values = (
+            batch.ds[name].to_numpy()
+            if name in batch.ds.coords
+            else np.arange(batch.ds.sizes[name])
+        )
+        grid = np.broadcast_to(
+            values.reshape([-1 if other == name else 1 for other in dims]),
+            batch.sample_shape,
+        )
+        columns[name] = np.asarray(grid).reshape(n_rows)
+    columns["predose"] = predose
+    columns["cmax"] = cmax
+    columns["fraction"] = fraction
+    columns["flagged"] = flagged
+    return pd.DataFrame(columns)
+
+
+def carryover_labels(
+    batch: Timecourses,
+    result: ParameterResult,
+    *,
+    dim: str,
+    threshold: float = 0.05,
+) -> list[str]:
+    """The labels of the subjects `carryover_table` flags.
+
+    Args:
+        batch: the timecourses of the period
+        result: the analysis of that batch
+
+    Keyword Args:
+        dim: the sample dimension whose labels name the subjects
+        threshold: the share of Cmax above which a sample is flagged
+
+    Returns:
+        The labels, as strings, in the order of the samples.
+
+    Raises:
+        ValueError: if `dim` is no sample dimension of the batch, or as
+            `carryover_table`.
+    """
+    table = carryover_table(batch, result, threshold=threshold)
+    if dim not in table.columns:
+        dims = [str(d) for d in batch.sample_dims]
+        raise ValueError(f"'{dim}' is not a sample dimension {dims} of the batch")
+    return [str(label) for label in table.loc[table["flagged"], dim]]
+
+
 def bioequivalence(
     test: ParameterResult,
     reference: ParameterResult,
@@ -392,13 +524,27 @@ def bioequivalence(
     limits: tuple[float, float] = (0.8, 1.25),
     ci_level: float = 0.90,
     design: Design | str | None = None,
+    include_excluded: bool = False,
+    carryover: Literal["ignore", "flag", "exclude"] = "ignore",
+    carryover_threshold: float = 0.05,
+    test_batch: Timecourses | None = None,
+    reference_batch: Timecourses | None = None,
     **indexers: Any,
 ) -> BEResult:
     """Average bioequivalence of the parameters of two results.
 
     Every parameter is taken with `ParameterResult.sample(name, dim, **indexers)`
     from both results and tested with `tost`; the study is bioequivalent
-    when every parameter is.
+    when every parameter is. A subject which a result marks `excluded`
+    (`pkpdutils.nca.NCAResult.exclude`) is left out unless `include_excluded`
+    asks for it.
+
+    With the timecourses of the two periods (`test_batch`, `reference_batch`)
+    the pre-dose concentrations are read as well (`carryover_table`):
+    `carryover="flag"` names the subjects above the threshold in
+    `BEParameter.carryover` and `carryover="exclude"` drops them from the
+    analysis of every parameter, which is what ICH M13A (2024) and the FDA ANDA
+    guidance ask for.
 
     Args:
         test: the result of the test formulation.
@@ -409,29 +555,99 @@ def bioequivalence(
         ci_level: level of the intervals.
         design: the design, as the member or as its string, detected from
             the samples by default.
+        include_excluded: analyse the excluded subjects as well.
+        carryover: what to do with a subject whose pre-dose concentration
+            exceeds `carryover_threshold` of its own Cmax: `"ignore"` nothing,
+            `"flag"` name it in `BEParameter.carryover`, `"exclude"` drop it
+            from the analysis and name it there as well.
+        carryover_threshold: the share of Cmax which counts as carryover.
+        test_batch: the timecourses the test result was computed from, needed
+            for the carryover check.
+        reference_batch: the timecourses of the reference result.
         **indexers: coordinate label per remaining sample dimension.
 
     Returns:
         The result.
 
     Raises:
-        ValueError: for an unknown design, or as `tost`.
+        ValueError: for an unknown design, for a carryover check without the
+            batches, or as `tost`.
     """
     if design is not None:
         design = coerce(design, Design)
-    results = {
-        name: tost(
-            test.sample(name, dim, **indexers),
-            reference.sample(name, dim, **indexers),
+    if carryover not in ("ignore", "flag", "exclude"):
+        raise ValueError(
+            f"'carryover' must be 'ignore', 'flag' or 'exclude', got '{carryover}'"
+        )
+    flagged: tuple[str, ...] = ()
+    if carryover != "ignore":
+        if test_batch is None and reference_batch is None:
+            raise ValueError(
+                f"carryover='{carryover}' needs the timecourses of the periods, "
+                "give 'test_batch' and 'reference_batch'"
+            )
+        labels: list[str] = []
+        for batch, analysis in (
+            (test_batch, test),
+            (reference_batch, reference),
+        ):
+            if batch is not None:
+                labels.extend(
+                    carryover_labels(
+                        batch, analysis, dim=dim, threshold=carryover_threshold
+                    )
+                )
+        flagged = tuple(dict.fromkeys(labels))
+        if flagged:
+            logger.info(
+                "carryover: %d subjects above %.1f %% of their Cmax (%s)",
+                len(flagged),
+                carryover_threshold * 100.0,
+                carryover,
+            )
+    results: dict[str, BEParameter] = {}
+    for name in parameters:
+        sample_test = test.sample(
+            name, dim, include_excluded=include_excluded, **indexers
+        )
+        sample_reference = reference.sample(
+            name, dim, include_excluded=include_excluded, **indexers
+        )
+        if flagged and carryover == "exclude":
+            sample_test = _without_labels(sample_test, flagged)
+            sample_reference = _without_labels(sample_reference, flagged)
+        parameter = tost(
+            sample_test,
+            sample_reference,
             limits=limits,
             ci_level=ci_level,
             design=design,
         )
-        for name in parameters
-    }
+        results[name] = replace(parameter, carryover=flagged) if flagged else parameter
     return BEResult(
         parameters=results,
         bioequivalent=all(p.bioequivalent for p in results.values()),
         limits=(float(limits[0]), float(limits[1])),
         ci_level=ci_level,
     )
+
+
+def _without_labels(sample: ParameterSample, labels: Sequence[str]) -> ParameterSample:
+    """The sample without the individuals of the given labels.
+
+    Args:
+        sample: the sample of individual values.
+        labels: the labels to drop, as strings.
+
+    Returns:
+        The sample without them, unchanged when it carries no labels.
+    """
+    if sample.labels is None:
+        return sample
+    drop = set(labels)
+    keep = np.array(
+        [str(label) not in drop for label in sample.labels.tolist()], dtype=bool
+    )
+    if keep.all():
+        return sample
+    return sample.select(keep)

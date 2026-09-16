@@ -8,7 +8,7 @@ conditions an analysis reports per sample instead of raising or warning.
 """
 
 from enum import IntFlag, StrEnum
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -157,6 +157,11 @@ class NCAFlag(IntFlag):
     #: the terminal phase spans fewer than two half-lives
     #: (`lambda_z_span < 2`); lambda_z and its half-life are poorly determined
     SPAN_LOW = 1024
+    #: a threshold of `Acceptance` is not met; the sample is not accepted
+    NOT_ACCEPTED = 2048
+    #: a named partial area (`NCAOptions.partial_aucs`) reaches beyond the last
+    #: measurable value and was completed with the terminal regression
+    PARTIAL_EXTRAPOLATED = 4096
 
 
 def decode_flags(value: int) -> list[str]:
@@ -298,6 +303,92 @@ class BLQRules(BaseModel):
         return cls(first=BLQAction.KEEP, middle=BLQAction.DROP, last=BLQAction.KEEP)
 
 
+class Acceptance(BaseModel):
+    r"""Thresholds a sample has to meet for its terminal phase to be accepted.
+
+    A regulatory analysis does not report every terminal regression it can
+    compute: the adjusted \(R^2\) of the regression, the extrapolated share of
+    \(\mathrm{AUC}_{0\text{-}\infty}\), the number of half-lives the window
+    covers and the number of points of the regression are checked against
+    thresholds, and the samples which fail them are reported separately or left
+    out of the summary statistics. PKanalix ships the four thresholds of
+    `Acceptance.pkanalix` as its defaults and restricts its summary statistics
+    to the individuals which meet them; Phoenix WinNonlin has the same three
+    continuous criteria with an `Accepted`/`Not_Accepted` flag and ships no
+    thresholds; PKNCA spells them as the exclusion rules
+    `exclude_nca_min.hl.adj.r.squared()`, `exclude_nca_max.aucinf.pext()`,
+    `exclude_nca_span_ratio()` and `exclude_nca_count_conc_measured()`.
+
+    Every threshold is `None` by default, so the default analysis accepts every
+    sample, and a threshold which is set is checked only where the sample
+    carries the value (a sample without a terminal phase has no adjusted
+    \(R^2\), so it fails the criterion).
+
+    Attributes:
+        r2_adj_min: smallest adjusted \(R^2\) of the terminal regression
+            (`lambda_z_r2_adj`)
+        extrapolation_max: largest extrapolated fraction
+            \((\mathrm{AUC}_{0\text{-}\infty,\mathrm{pred}} -
+            \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) /
+            \mathrm{AUC}_{0\text{-}\infty,\mathrm{pred}}\), the predicted
+            variant PKanalix and Phoenix check
+        span_min: smallest number of half-lives the terminal window covers
+            (`lambda_z_span`)
+        n_points_min: smallest number of points of the terminal regression
+            (`lambda_z_n_points`)
+        exclude: whether a sample which is not accepted is also marked
+            `excluded`, which keeps it out of the summary statistics and of the
+            statistics of `pkpdutils.stats`
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    r2_adj_min: float | None = Field(default=None, ge=0.0, le=1.0)
+    extrapolation_max: float | None = Field(default=None, gt=0.0, le=1.0)
+    span_min: float | None = Field(default=None, gt=0.0)
+    n_points_min: int | None = Field(default=None, ge=2)
+    exclude: bool = False
+
+    @property
+    def any_threshold(self) -> bool:
+        """Whether a threshold is set at all."""
+        return any(
+            value is not None
+            for value in (
+                self.r2_adj_min,
+                self.extrapolation_max,
+                self.span_min,
+                self.n_points_min,
+            )
+        )
+
+    @classmethod
+    def pkanalix(cls, *, exclude: bool = False) -> "Acceptance":
+        r"""The default thresholds of PKanalix.
+
+        Adjusted \(R^2\) of at least 0.98, at most 20 % extrapolated area, a
+        span of at least 3 half-lives and at least 3 points of the regression.
+
+        Args:
+            exclude: whether a sample which fails a threshold is also excluded.
+
+        Returns:
+            The thresholds.
+        """
+        return cls(
+            r2_adj_min=0.98,
+            extrapolation_max=0.20,
+            span_min=3.0,
+            n_points_min=3,
+            exclude=exclude,
+        )
+
+
+#: the key of `TerminalPhase.windows` which names every sample the mapping
+#: does not name itself
+WINDOW_DEFAULT_KEY: str = "*"
+
+
 class TerminalPhase(BaseModel):
     """Selection of the points of the terminal log-linear regression.
 
@@ -316,6 +407,19 @@ class TerminalPhase(BaseModel):
         min_adj_r2: minimal adjusted R² a regression must reach, `None` for no limit
         tie_tolerance: a window with more points wins over the best adjusted R²
             when its adjusted R² is within this tolerance of the best
+        windows: the terminal window `(t_first, t_last)` of single samples,
+            keyed by the sample label (the label of a batch with one sample
+            dimension, the tuple of labels of a batch with several, and the
+            string `"*"` for every sample which the mapping does not name). A
+            sample with a window regresses the points inside it, in the times
+            of the analysis (relative to its reference dose), as
+            `TerminalMethod.MANUAL` does with indices; every other sample
+            follows `method`. This is the per-profile window of the interactive
+            tools (Phoenix `Lambda_z_lower`/`Lambda_z_upper`, the "Check
+            lambda_z" tab of PKanalix), and
+            `pkpdutils.nca.NCAResult.terminal_windows` writes the windows of a
+            result back in this form, so that a reviewed analysis is re-run
+            unchanged
     """
 
     model_config = ConfigDict(frozen=True)
@@ -327,6 +431,7 @@ class TerminalPhase(BaseModel):
     points: tuple[int, ...] | None = None
     min_adj_r2: float | None = Field(default=None, ge=0.0, le=1.0)
     tie_tolerance: float = Field(default=1e-4, ge=0.0)
+    windows: dict[Any, tuple[float, float]] | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -348,6 +453,12 @@ class TerminalPhase(BaseModel):
                 raise ValueError(
                     f"'points' has {len(self.points)} indices, 'min_points' is {self.min_points}"
                 )
+        for key, window in (self.windows or {}).items():
+            if not window[1] > window[0]:
+                raise ValueError(
+                    f"the terminal window {window} of '{key}' must be "
+                    "(t_first, t_last) with t_last > t_first"
+                )
         return self
 
 
@@ -365,6 +476,16 @@ class NCAOptions(BaseModel):
             `BLQHandling` values or a `BLQRules` rule set by position
         c0_method: estimate of C(0) after an intravenous bolus
         extrapolation_warning: fraction of AUC(0-inf) above which `EXTRAPOLATION_HIGH` is set
+        acceptance: thresholds of the terminal phase every sample is checked
+            against (`Acceptance`); the result carries `accepted` and, where
+            `Acceptance.exclude` is set, `excluded`
+        partial_aucs: named partial areas, name to `(t_start, t_end)` in the
+            time unit of the batch, relative to the first dose of the protocol.
+            Every one of them becomes a variable of the result with the unit of
+            `auc_last`; an interval which reaches beyond the last measurable
+            value is completed with the terminal regression and the sample is
+            flagged `NCAFlag.PARTIAL_EXTRAPOLATED`. `AUC(0-72)` of a drug with
+            a long half-life is `{"auc_0_72": (0.0, 72.0)}` (ICH M13A 2024)
         tau: length of the last dosing interval, `None` to take it from the
             dosing protocol (the distance of the last two doses); it is needed
             for a steady state curve given with its last dose only and it
@@ -406,6 +527,8 @@ class NCAOptions(BaseModel):
     blq: BLQHandling | BLQRules = BLQHandling.NAN
     c0_method: C0Method = C0Method.LOG_BACK_EXTRAPOLATION
     extrapolation_warning: float = Field(default=0.2, gt=0.0, lt=1.0)
+    acceptance: Acceptance = Acceptance()
+    partial_aucs: dict[str, tuple[float, float]] = Field(default_factory=dict)
     tau: float | None = Field(default=None, gt=0.0)
     intervals: bool = True
     effect_threshold: float | None = None
@@ -418,6 +541,27 @@ class NCAOptions(BaseModel):
     bootstrap_spread: BootstrapSpread = BootstrapSpread.SE
     bootstrap_distribution: BootstrapDistribution = BootstrapDistribution.NORMAL
     delta_step: float = Field(default=0.01, gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def _validate_partial_aucs(self) -> Self:
+        """Check that every named partial area is a proper interval.
+
+        Returns:
+            This instance, unchanged.
+
+        Raises:
+            ValueError: for an empty name or an interval which does not end
+                after it starts.
+        """
+        for name, (t_start, t_end) in self.partial_aucs.items():
+            if not name:
+                raise ValueError("a partial area needs a name")
+            if not t_end > t_start:
+                raise ValueError(
+                    f"the partial area '{name}' is ({t_start}, {t_end}), "
+                    "it must be (t_start, t_end) with t_end > t_start"
+                )
+        return self
 
     @property
     def blq_rules(self) -> BLQRules:

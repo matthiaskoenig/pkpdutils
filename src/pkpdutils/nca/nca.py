@@ -18,7 +18,9 @@ WinNonlin NCA, see `docs/nca.md`:
 - `CL = Dose / AUC(0-inf)`, `Vz = CL / lambda_z`, `Vss = CL MRT` (intravenous)
 """
 
+import itertools
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -38,6 +40,8 @@ from pkpdutils.nca.options import (
     C0_BACK_EXTRAPOLATION,
     C0_FIRST_VALUE,
     C0_NONE,
+    WINDOW_DEFAULT_KEY,
+    Acceptance,
     AUCMethod,
     BLQAction,
     BLQRules,
@@ -46,6 +50,7 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
     TerminalMethod,
+    TerminalPhase,
     UncertaintyMethod,
 )
 from pkpdutils.nca.result import (
@@ -62,7 +67,13 @@ from pkpdutils.parallel import (
     resolve_workers,
     split_rows,
 )
-from pkpdutils.result import base_name, check_coordinate_collision, sample_coordinates
+from pkpdutils.result import (
+    SUMMARY_SUFFIXES,
+    UNCERTAINTY_SUFFIXES,
+    base_name,
+    check_coordinate_collision,
+    sample_coordinates,
+)
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -74,6 +85,15 @@ SPAN_MINIMUM: float = 2.0
 #: variables of a result which are integer codes and not measurements; a row
 #: group which does not report one of them carries its 0 (`merge_rows`)
 INTEGER_VARIABLES: frozenset[str] = frozenset({"flags", "c0_method"})
+
+#: variables of a result which are booleans and not measurements
+BOOLEAN_VARIABLES: frozenset[str] = frozenset({"accepted", "excluded"})
+
+#: variables of a result which carry text
+TEXT_VARIABLES: frozenset[str] = frozenset({"excluded_reason"})
+
+#: `excluded_reason` of a sample which `Acceptance(exclude=True)` excluded
+ACCEPTANCE_REASON: str = "acceptance criteria"
 
 #: unit expression per parameter, see `pkpdutils.nca.result.parameter_unit`
 PARAMETER_UNITS: dict[str, str] = {
@@ -149,6 +169,9 @@ PARAMETER_UNITS: dict[str, str] = {
     "time_above_tau": "{time}",
     "n_doses": "dimensionless",
     "tau": "{time}",
+    "accepted": "dimensionless",
+    "excluded": "dimensionless",
+    "excluded_reason": "dimensionless",
     "flags": "dimensionless",
     **INTERVAL_UNITS,
 }
@@ -517,6 +540,7 @@ def compute_parameters(
     route: Route | None,
     options: NCAOptions,
     lloq: np.ndarray | None = None,
+    windows: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Single dose parameters of every row of `(N, n)` time and value arrays.
 
@@ -533,6 +557,9 @@ def compute_parameters(
         options: the options
         lloq: limit of quantification per row `(N,)`, `None` for none;
             `NCAOptions.lloq` wins over it (`resolve_lloq`)
+        windows: the terminal window `(t_first, t_last)` of single rows
+            `(N, 2)` in the times of the analysis, `NaN` for a row without one
+            (`TerminalPhase.windows`, `sample_windows`)
 
     Returns:
         One `(N,)` array per parameter (see `PARAMETER_UNITS`) and `flags`.
@@ -642,6 +669,7 @@ def compute_parameters(
         options.terminal,
         manual_mask=manual_mask,
         exclude=exclude,
+        windows=windows,
     )
     flags |= np.where(has_data, fit.flags, 0)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -741,6 +769,84 @@ def compute_parameters(
             out["cmax_dn"] = cmax / amount
     out["flags"] = flags
     return out
+
+
+def reserved_variables(values: dict[str, np.ndarray]) -> set[str]:
+    """Every name the result of an analysis can carry, for the name of a partial area.
+
+    A named partial area (`NCAOptions.partial_aucs`) becomes a variable of the
+    result and may not take a name the analysis writes itself. At the point
+    where the areas are computed the parameters are known, while `flags`, `n`,
+    the status variables, the uncertainty variables of a group batch and the
+    summary variables of `pkpdutils.result.ParameterResult.summarize` are
+    written afterwards, so their names are derived here.
+
+    Args:
+        values: the parameters of the rows so far
+
+    Returns:
+        The names of the parameters, of `flags` and `n`, of the boolean and
+        text variables and of every derived variable of a parameter
+        (`pkpdutils.result.UNCERTAINTY_SUFFIXES` and `SUMMARY_SUFFIXES`).
+    """
+    names = set(values) | {"flags", "n"} | BOOLEAN_VARIABLES | TEXT_VARIABLES
+    return names | {
+        f"{name}{suffix}"
+        for name in names
+        for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES)
+    }
+
+
+def evaluate_acceptance(
+    values: dict[str, np.ndarray], acceptance: Acceptance, *, n_rows: int
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Which rows meet every threshold of `Acceptance`, and the flag of the others.
+
+    A threshold which is `None` is not checked; a row which does not carry the
+    value of a threshold which is set (a row without a terminal phase has no
+    adjusted \(R^2\) and no span) fails it. Without a single threshold every
+    row is accepted, which is the default analysis.
+
+    The extrapolated fraction is checked on the predicted variant,
+    \((\mathrm{AUC}_{0\text{-}\infty,\mathrm{pred}} -
+    \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) /
+    \mathrm{AUC}_{0\text{-}\infty,\mathrm{pred}}\), as PKanalix and Phoenix
+    WinNonlin do, while the warning flag `NCAFlag.EXTRAPOLATION_HIGH` of
+    `NCAOptions.extrapolation_warning` reads the observed variant
+    `auc_extrap_fraction`.
+
+    Args:
+        values: the parameters of the rows, which carry `lambda_z_r2_adj`,
+            `lambda_z_span`, `lambda_z_n_points`, `auc_last` and `auc_inf_pred`
+        acceptance: the thresholds
+
+    Keyword Args:
+        n_rows: number of rows `N`
+
+    Returns:
+        The accepted rows `(N,)` and the flags of the rows which are not
+        (`NCAFlag.NOT_ACCEPTED`).
+    """
+    accepted = np.ones(n_rows, dtype=bool)
+    if not acceptance.any_threshold:
+        return accepted, np.zeros(n_rows, dtype=np.int64)
+    nan = np.full(n_rows, np.nan)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        auc_last = values.get("auc_last", nan)
+        auc_inf_pred = values.get("auc_inf_pred", nan)
+        extrapolated = (auc_inf_pred - auc_last) / auc_inf_pred
+        checks = (
+            (acceptance.r2_adj_min, values.get("lambda_z_r2_adj", nan), True),
+            (acceptance.extrapolation_max, extrapolated, False),
+            (acceptance.span_min, values.get("lambda_z_span", nan), True),
+            (acceptance.n_points_min, values.get("lambda_z_n_points", nan), True),
+        )
+        for threshold, value, at_least in checks:
+            if threshold is None:
+                continue
+            met = value >= threshold if at_least else value <= threshold
+            accepted &= np.isfinite(value) & met
+    return accepted, np.where(accepted, 0, NCAFlag.NOT_ACCEPTED).astype(np.int64)
 
 
 def reference_dose(
@@ -949,13 +1055,24 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
 
     Args:
         args: the times, the values, the dose arrays over the dose dimension,
-            the route, the options, the mask of the multiple dose rows and the
-            limit of quantification per row.
+            the route, the options, the mask of the multiple dose rows, the
+            limit of quantification per row and the terminal window per row.
 
     Returns:
         The parameters of the rows of the chunk, in their order.
     """
-    t, c, dose_amount, dose_time, dose_duration, route, options, multiple, lloq = args
+    (
+        t,
+        c,
+        dose_amount,
+        dose_time,
+        dose_duration,
+        route,
+        options,
+        multiple,
+        lloq,
+        windows,
+    ) = args
     if multiple.any() and not multiple.all():
         groups = [~multiple, multiple]
         order = np.concatenate([np.flatnonzero(mask) for mask in groups])
@@ -971,6 +1088,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
                     options,
                     multiple[mask],
                     None if lloq is None else lloq[mask],
+                    None if windows is None else windows[mask],
                 )
             )
             for mask in groups
@@ -994,6 +1112,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
             route=route,
             options=options,
             lloq=lloq,
+            windows=windows,
         )
     amount, time, duration = reference_dose(
         dose_amount, dose_time, dose_duration, last=False
@@ -1007,6 +1126,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
         route=route,
         options=options,
         lloq=lloq,
+        windows=windows,
     )
 
 
@@ -1020,6 +1140,7 @@ def run_rows(
     route: Route | None,
     options: NCAOptions,
     lloq: np.ndarray | None = None,
+    windows: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
 
@@ -1060,6 +1181,8 @@ def run_rows(
         options: the options
         lloq: limit of quantification per row `(N,)`, `None` for none;
             `NCAOptions.lloq` wins over it (`resolve_lloq`)
+        windows: the terminal window of single rows `(N, 2)`, `NaN` for a row
+            without one (`TerminalPhase.windows`, `sample_windows`)
 
     Returns:
         One `(N,)` array per parameter and `flags`, and one `(N, K)` array per
@@ -1085,6 +1208,7 @@ def run_rows(
             options,
             multiple[rows],
             None if lloq is None else lloq[rows],
+            None if windows is None else windows[rows],
         )
         for rows in chunks
     ]
@@ -1171,6 +1295,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     route = timecourses.route
     batch_lloq = timecourses.lloq
     lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
+    windows = sample_windows(timecourses, options.terminal)
 
     values = run_rows(
         t,
@@ -1181,11 +1306,40 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         route=route,
         options=options,
         lloq=lloq,
+        windows=windows,
     )
 
     # `flags` is the last variable of the result, the uncertainty variables and
     # `n` go before it
     flags = values.pop("flags")
+
+    units: dict[str, str] = {}
+    if options.partial_aucs:
+        collision = sorted(set(options.partial_aucs) & reserved_variables(values))
+        if collision:
+            raise ValueError(
+                f"the partial areas {collision} carry the name of a variable of "
+                "the result; name them differently"
+            )
+        first_time, reference_time = dose_times(
+            dose_amount, dose_time, dose_duration, options, n_rows=n_rows
+        )
+        areas, extrapolated = named_partial_aucs(
+            t - first_time[:, None],
+            c,
+            values,
+            route=route,
+            options=options,
+            shift=reference_time - first_time,
+        )
+        values.update(areas)
+        units.update(
+            dict.fromkeys(options.partial_aucs, PARAMETER_UNITS["auc_partial"])
+        )
+        flags = flags | np.where(extrapolated, NCAFlag.PARTIAL_EXTRAPOLATED, 0).astype(
+            flags.dtype
+        )
+
     method = options.resolve_uncertainty(timecourses.has_uncertainty)
     if method is UncertaintyMethod.BOOTSTRAP:
         values.update(bootstrap(timecourses, options, values))
@@ -1200,6 +1354,18 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         if n_subjects is None
         else np.asarray(n_subjects, dtype=np.float64).reshape(n_rows)
     )
+
+    accepted, not_accepted = evaluate_acceptance(
+        values, options.acceptance, n_rows=n_rows
+    )
+    flags = flags | not_accepted
+    values["accepted"] = accepted
+    excluded = ~accepted if options.acceptance.exclude else np.zeros(n_rows, dtype=bool)
+    values["excluded"] = excluded
+    if excluded.any():
+        # the reason is a text variable and only a result which excludes a
+        # sample carries it; `NCAResult.exclude` adds it when it marks one
+        values["excluded_reason"] = np.where(excluded, ACCEPTANCE_REASON, "")
     values["flags"] = flags
 
     n_flagged = int((flags != 0).sum())
@@ -1209,6 +1375,12 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             n_flagged,
             n_rows,
         )
+    if excluded.any():
+        logger.info(
+            "NCA: %d of %d samples are excluded, see NCAResult.exclude()",
+            int(excluded.sum()),
+            n_rows,
+        )
     return _to_result(
         values,
         timecourses,
@@ -1216,6 +1388,48 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         dose=reference_dose_amount(
             dose_amount, dose_time, dose_duration, options, n_rows=n_rows
         ),
+        units=units,
+    )
+
+
+def dose_times(
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    dose_duration: np.ndarray | None,
+    options: NCAOptions,
+    *,
+    n_rows: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The time of the first and of the reference dose of every row.
+
+    The named partial areas are relative to the first dose of the protocol
+    while the point parameters of a row are relative to its reference dose (the
+    last dose of a multiple dose row, `reference_dose_amount`), so the two
+    times are what translates between the two frames.
+
+    Args:
+        dose_amount: dose amounts `(N, n_dose)`, `None` without doses
+        dose_time: dose times `(N, n_dose)`, `None` without doses
+        dose_duration: infusion durations `(N, n_dose)`, `None` for none
+        options: the options, `tau` is used by `is_multiple_dose`
+
+    Keyword Args:
+        n_rows: number of rows `N`
+
+    Returns:
+        The time of the first dose and the time of the reference dose per row,
+        both 0 where the row carries no dose.
+    """
+    if dose_time is None:
+        zero = np.zeros(n_rows)
+        return zero, zero
+    _, first, _ = reference_dose(dose_amount, dose_time, dose_duration, last=False)
+    _, last, _ = reference_dose(dose_amount, dose_time, dose_duration, last=True)
+    assert first is not None and last is not None
+    multiple = is_multiple_dose(dose_amount, dose_time, options, n_rows=n_rows)
+    return (
+        np.nan_to_num(first, nan=0.0),
+        np.nan_to_num(np.where(multiple, last, first), nan=0.0),
     )
 
 
@@ -1261,6 +1475,7 @@ def _to_result(
     shape: tuple[int, ...],
     *,
     dose: np.ndarray | None = None,
+    units: Mapping[str, str] | None = None,
 ) -> NCAResult:
     """Build the result dataset over the sample dimensions of the batch.
 
@@ -1278,6 +1493,10 @@ def _to_result(
             result as the coordinate `dose_amount` so that a parameter can be
             normalized by it afterwards (`NCAResult.dose_normalized`); `None`
             for a batch without doses
+        units: the unit expression of the variables whose name the analysis
+            only knows at run time (the named partial areas of
+            `NCAOptions.partial_aucs`); every other variable takes the
+            expression of `unit_expression`
 
     Returns:
         The result.
@@ -1295,14 +1514,21 @@ def _to_result(
         )
     data_vars: dict[str, Any] = {}
     n_intervals = 0
+    overrides = dict(units or {})
     for name, array in values.items():
         unit, factor = parameter_unit(
-            unit_expression(name),
+            overrides.get(name) or unit_expression(name),
             unit=timecourses.unit,
             time_unit=timecourses.time_unit,
             dose_unit=timecourses.dose_unit,
         )
-        if array.ndim > 1:
+        if name in BOOLEAN_VARIABLES or name in TEXT_VARIABLES:
+            data_vars[name] = (
+                timecourses.sample_dims,
+                array.reshape(shape),
+                {"units": unit},
+            )
+        elif array.ndim > 1:
             # the per-interval parameters carry the extra dimension `interval`
             n_intervals = array.shape[1]
             data_vars[name] = (
@@ -1398,6 +1624,210 @@ def _insert_dose_value(
     )
 
 
+def area_between(
+    t: np.ndarray,
+    c: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+    *,
+    route: Route | None,
+    options: NCAOptions,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Area of every row between two times, with the bounds interpolated.
+
+    The core of `partial_auc` and of the named partial areas of
+    `NCAOptions.partial_aucs`: the values at the two bounds are interpolated
+    with the trapezoid rule of `options.auc_method`
+    (`pkpdutils.nca.auc.interpolate_at`), the value at the dose is added when
+    the route allows it (`_insert_dose_value`) and the area is summed with the
+    same rule.
+
+    Args:
+        t: times `(N, n)`, relative to the dose of the interval
+        c: values `(N, n)`
+        start: start of the interval per row `(N,)`
+        end: end of the interval per row `(N,)`
+
+    Keyword Args:
+        route: route of the batch, which decides the value at the dose
+        options: the options, `auc_method` and `c0_method` are used
+
+    Returns:
+        The area per row and the rows whose observed range covers both bounds;
+        the area of a row which is not covered is meaningless.
+    """
+    tp, cp, n_valid = pack_valid(t, c)
+    tp, cp, n_valid = _insert_dose_value(tp, cp, n_valid, route=route, options=options)
+    c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
+    c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)
+    tp, cp, n_valid = insert_point(tp, cp, n_valid, end, c_end)
+    area, _ = auc_aumc(tp, cp, n_valid, options.auc_method, t_start=start, t_end=end)
+    return area, np.isfinite(c_start) & np.isfinite(c_end)
+
+
+def named_partial_aucs(
+    t: np.ndarray,
+    c: np.ndarray,
+    values: dict[str, np.ndarray],
+    *,
+    route: Route | None,
+    options: NCAOptions,
+    shift: np.ndarray | None = None,
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    r"""The named partial areas of `NCAOptions.partial_aucs` of every row.
+
+    The area between the two times of the interval, both relative to the first
+    dose of the protocol. An interval which reaches beyond the last measurable
+    value is completed with the terminal regression, as Phoenix WinNonlin does
+    for a partial area past `Tlast`: the tail from \(t_\mathrm{last}\) to
+    \(t_\mathrm{end}\) of
+
+    $$\hat C(t) = \hat C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}
+    \quad\text{is}\quad
+    \frac{\hat C_\mathrm{last}}{\lambda_z}
+    \left(1 - e^{-\lambda_z (t_\mathrm{end} - t_\mathrm{last})}\right),$$
+
+    and the row is reported in the returned mask
+    (`NCAFlag.PARTIAL_EXTRAPOLATED`); without a terminal phase such a row is
+    `NaN`. `AUC(0-72)`, the primary exposure of a drug with a long half-life in
+    ICH M13A (2024), and the `pAUC` of the modified release guidances are
+    intervals of this kind.
+
+    Args:
+        t: times `(N, n)`, relative to the first dose of the protocol
+        c: values `(N, n)`
+        values: the parameters of the rows so far, which carry `tlast`,
+            `clast_pred` and `lambda_z`
+
+    Keyword Args:
+        route: route of the batch
+        options: the options, `partial_aucs` and `auc_method` are used
+        shift: the time of the reference dose of every row relative to the
+            first dose `(N,)`, which puts `tlast` into the times of `t`;
+            `None` for a single dose analysis, where they are the same
+
+    Returns:
+        One `(N,)` array per named area and the rows whose area was completed
+        with the terminal regression; a row which reaches beyond the last
+        measurable value without a terminal phase is `NaN` and is not among
+        them, since nothing was extrapolated.
+    """
+    n_rows = t.shape[0]
+    nan = np.full(n_rows, np.nan)
+    offset = np.zeros(n_rows) if shift is None else np.nan_to_num(shift, nan=0.0)
+    tlast = values.get("tlast", nan) + offset
+    clast_pred = values.get("clast_pred", nan)
+    lambda_z = values.get("lambda_z", nan)
+    out: dict[str, np.ndarray] = {}
+    extrapolated = np.zeros(n_rows, dtype=bool)
+    for name, (t_start, t_end) in options.partial_aucs.items():
+        start = np.full(n_rows, float(t_start))
+        end = np.full(n_rows, float(t_end))
+        with np.errstate(invalid="ignore"):
+            observed_end = np.minimum(end, tlast)
+            has_observed = observed_end > start
+            beyond = end > tlast
+        # the rows without an observed part would ask for an empty interval;
+        # they are computed with the full interval and discarded afterwards
+        area, covered = area_between(
+            t,
+            c,
+            start,
+            np.where(has_observed, observed_end, end),
+            route=route,
+            options=options,
+        )
+        observed = np.where(has_observed, np.where(covered, area, np.nan), 0.0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tail_start = np.maximum(start, tlast)
+            tail = (
+                clast_pred
+                / lambda_z
+                * (
+                    np.exp(-lambda_z * (tail_start - tlast))
+                    - np.exp(-lambda_z * (end - tlast))
+                )
+            )
+        total = observed + np.where(beyond, tail, 0.0)
+        out[name] = np.where(np.isfinite(tlast), total, np.nan)
+        # a row without a terminal phase has no tail to add: its area is `NaN`
+        # and nothing was extrapolated, so it is not flagged either
+        extrapolated |= beyond & np.isfinite(tail)
+    return out, extrapolated
+
+
+def sample_windows(timecourses: Timecourses, phase: TerminalPhase) -> np.ndarray | None:
+    """The terminal window of every row of a batch, `NaN` for a row without one.
+
+    `TerminalPhase.windows` is keyed by the sample label: the label of a batch
+    with one sample dimension, the tuple of labels of a batch with several, and
+    the string `"*"` for every sample the mapping does not name.
+
+    Args:
+        timecourses: the batch
+        phase: the terminal phase options, `windows` is read
+
+    Returns:
+        The windows `(N, 2)` in the order of the rows of the analysis, or
+        `None` when no window is given.
+
+    Raises:
+        ValueError: if a key of `windows` is no label of the batch (and is not
+            `"*"`).
+    """
+    if not phase.windows:
+        return None
+    labels = sample_keys(timecourses.ds, timecourses.sample_dims)
+    known = set(labels)
+    unknown = [
+        key for key in phase.windows if key != WINDOW_DEFAULT_KEY and key not in known
+    ]
+    if unknown:
+        raise ValueError(
+            f"the terminal windows {sorted(map(str, unknown))} name no sample of "
+            f"the batch; its samples are {sorted(map(str, known))}"
+        )
+    default = phase.windows.get(WINDOW_DEFAULT_KEY)
+    out = np.full((len(labels), 2), np.nan)
+    for row, label in enumerate(labels):
+        window = phase.windows.get(label, default)
+        if window is not None:
+            out[row] = window
+    return out
+
+
+def sample_keys(ds: xr.Dataset, sample_dims: tuple[str, ...]) -> list[Any]:
+    """The label of every sample of a dataset, in the row order of the analysis.
+
+    The label of a batch with one sample dimension is the value of its
+    coordinate (the integer position without one), the label of a batch with
+    several is the tuple of the values, in the order of the dimensions. The
+    values are python objects, so that they compare equal to the keys a user
+    writes (`TerminalPhase.windows`, `NCAResult.terminal_windows`).
+
+    Args:
+        ds: the dataset of the batch or of a result
+        sample_dims: the sample dimensions, in the order the samples are
+            enumerated
+
+    Returns:
+        One label per sample, in C order of `sample_dims`; a batch without
+        sample dimensions gives one label `()`.
+    """
+    per_dim = [
+        (
+            ds[dim].to_numpy().tolist()
+            if dim in ds.coords
+            else list(range(int(ds.sizes[dim])))
+        )
+        for dim in sample_dims
+    ]
+    if len(sample_dims) == 1:
+        return list(per_dim[0])
+    return [tuple(combination) for combination in itertools.product(*per_dim)]
+
+
 def partial_auc(
     timecourses: Timecourses,
     t_start: float,
@@ -1455,18 +1885,15 @@ def partial_auc(
     if first_dose_time is not None:
         # the area is relative to the first dose of the protocol
         t = t - np.asarray(first_dose_time, dtype=np.float64).reshape(n_rows)[:, None]
-    tp, cp, n_valid = pack_valid(t, c)
-    start = np.full(n_rows, float(t_start))
-    end = np.full(n_rows, float(t_end))
-    tp, cp, n_valid = _insert_dose_value(
-        tp, cp, n_valid, route=timecourses.route, options=options
+    area, covered = area_between(
+        t,
+        c,
+        np.full(n_rows, float(t_start)),
+        np.full(n_rows, float(t_end)),
+        route=timecourses.route,
+        options=options,
     )
-    c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
-    c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
-    tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)
-    tp, cp, n_valid = insert_point(tp, cp, n_valid, end, c_end)
-    area, _ = auc_aumc(tp, cp, n_valid, options.auc_method, t_start=start, t_end=end)
-    area = np.where(np.isfinite(c_start) & np.isfinite(c_end), area, np.nan)
+    area = np.where(covered, area, np.nan)
     unit, factor = parameter_unit(
         PARAMETER_UNITS["auc_partial"],
         unit=timecourses.unit,

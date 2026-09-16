@@ -15,6 +15,7 @@ from pkpdutils.stats.bioequivalence import (
     BEResult,
     Design,
     bioequivalence,
+    carryover_table,
     tost,
 )
 from pkpdutils.stats.ddi import (
@@ -96,6 +97,7 @@ __all__ = [
     "TestMethod",
     "TestResult",
     "bioequivalence",
+    "carryover_table",
     "coerce",
     "cohen_d",
     "compare",

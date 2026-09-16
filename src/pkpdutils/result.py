@@ -186,6 +186,10 @@ SUMMARY_SUFFIXES: tuple[str, ...] = (
 )
 
 
+#: the boolean variable which marks a sample the analyses and the statistics
+#: leave out (`pkpdutils.nca.NCAResult.exclude`, `Acceptance(exclude=True)`)
+EXCLUDED_VARIABLE: str = "excluded"
+
 #: the summary variables every statistic of `summary_table` reads, as the
 #: suffixes of the parameter (`""` is the parameter itself, the mean)
 TABLE_STATISTICS: dict[str, tuple[str, ...]] = {
@@ -306,6 +310,11 @@ class ParameterResult:
     #: their extra dimension (the `interval_*` parameters of a multiple dose
     #: analysis: the mean trough per dosing interval over the subjects)
     summarized_point_variables: ClassVar[frozenset[str]] = frozenset()
+    #: variables describing the status of a sample rather than a quantity of
+    #: it: the boolean `accepted` and `excluded` and the text
+    #: `excluded_reason` of an NCA. They are no parameters, carry no unit and
+    #: no statistics, and are reported as columns of `to_dataframe` only
+    status_variables: ClassVar[frozenset[str]] = frozenset()
     #: the parameters `rich_table` shows by default with one row per sample,
     #: in this order, the ones a reader looks for first; a subclass names its
     #: headline parameters, an empty tuple shows every parameter
@@ -345,16 +354,56 @@ class ParameterResult:
 
     @property
     def parameters(self) -> list[str]:
-        """Names of the parameters (the data variables except `flags`, `n`, the statistics, the derived and the point variables)."""
+        """Names of the parameters (the data variables except `flags`, `n`, the statistics, the status, the derived and the point variables)."""
         point = set(self.point_variables)
         return [
             str(name)
             for name in self.ds.data_vars
             if name not in ("flags", "n")
             and str(name) not in self.statistic_variables
+            and str(name) not in self.status_variables
             and base_name(str(name)) is None
             and name not in point
         ]
+
+    @property
+    def status(self) -> list[str]:
+        """Names of the status variables present in the result (`status_variables`)."""
+        return [
+            str(name)
+            for name in self.ds.data_vars
+            if str(name) in self.status_variables
+        ]
+
+    @property
+    def excluded(self) -> xr.DataArray | None:
+        """The boolean `excluded` variable of the result, `None` without one.
+
+        A sample which is marked here is left out of `summarize`,
+        `summary_table`, `sample` and every statistic which reads a result,
+        unless `include_excluded=True` asks for it.
+        """
+        if EXCLUDED_VARIABLE not in self.ds.data_vars:
+            return None
+        return self.ds[EXCLUDED_VARIABLE].astype(bool)
+
+    def _keep(self, include_excluded: bool) -> xr.DataArray | None:
+        """The samples an analysis reads: `None` when every sample is read.
+
+        Args:
+            include_excluded: whether the excluded samples are read as well.
+
+        Returns:
+            The boolean array of the samples to keep over the sample
+            dimensions, `None` when the result marks none or every sample is
+            read.
+        """
+        if include_excluded:
+            return None
+        excluded = self.excluded
+        if excluded is None or not bool(excluded.any()):
+            return None
+        return ~excluded
 
     @property
     def statistics(self) -> list[str]:
@@ -379,12 +428,14 @@ class ParameterResult:
 
     @property
     def _variables(self) -> list[str]:
-        """Names of the scalar data variables except `flags`, in the order of the dataset."""
+        """Names of the numeric scalar data variables except `flags`, in the order of the dataset."""
         point = set(self.point_variables)
         return [
             str(name)
             for name in self.ds.data_vars
-            if name != "flags" and name not in point
+            if name != "flags"
+            and name not in point
+            and str(name) not in self.status_variables
         ]
 
     def units(self, name: str) -> str:
@@ -467,7 +518,12 @@ class ParameterResult:
         }
 
     def sample(
-        self, name: str, dim: str | None = None, **indexers: Any
+        self,
+        name: str,
+        dim: str | None = None,
+        *,
+        include_excluded: bool = False,
+        **indexers: Any,
     ) -> "ParameterSample":
         """A parameter as a `ParameterSample` for the statistics of `pkpdutils.stats`.
 
@@ -480,10 +536,16 @@ class ParameterResult:
         present else `n` as the number of individuals, and `x_geomean`,
         `x_geocv` when present.
 
+        A sample which the result marks `excluded`
+        (`pkpdutils.nca.NCAResult.exclude`) is left out, so that every
+        statistic of `pkpdutils.stats` which reads a result reads the same
+        individuals as the summary of it.
+
         Args:
             name: name of the parameter.
             dim: the sample dimension the values run over, `None` for a
                 summary sample.
+            include_excluded: read the excluded samples as well.
             **indexers: coordinate label per remaining sample dimension.
 
         Returns:
@@ -501,6 +563,11 @@ class ParameterResult:
         if dim is not None and dim not in self.sample_dims:
             raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
         selected = self.ds.sel(indexers) if indexers else self.ds
+        keep = self._keep(include_excluded)
+        if keep is not None and dim is not None:
+            kept = keep.sel(indexers) if indexers else keep
+            if tuple(str(d) for d in kept.dims) == (dim,):
+                selected = selected.isel({dim: np.flatnonzero(kept.to_numpy())})
         remaining = [d for d in selected["flags"].dims if d != dim]
         if remaining:
             raise ValueError(
@@ -666,6 +733,11 @@ class ParameterResult:
     def to_dataframe(self) -> pd.DataFrame:
         """One row per sample: the sample coordinates, every scalar variable and the decoded flags.
 
+        Every sample is a row, the excluded ones included, and the status
+        variables of the result (`status_variables`: `accepted`, `excluded` and
+        `excluded_reason` of an NCA) are columns between the parameters and the
+        flags.
+
         The point variables (the data and the predictions of a fit, the
         correlation matrix) are left out: they carry a dimension beyond the
         sample dimensions, and `xarray.Dataset.to_dataframe` of the whole
@@ -677,15 +749,18 @@ class ParameterResult:
         Returns:
             The dataframe.
         """
+        status = self.status
         if not self.sample_dims:
             row: dict[str, Any] = {
                 name: float(self.ds[name].values) for name in self._variables
             }
+            for name in status:
+                row[name] = self.ds[name].values.item()
             row["flags"] = "|".join(self.decode_flags(int(self.ds["flags"].values)))
             return pd.DataFrame([row])
-        df = self.ds[[*self._variables, "flags"]].to_dataframe().reset_index()
+        df = self.ds[[*self._variables, *status, "flags"]].to_dataframe().reset_index()
         df["flags"] = ["|".join(self.decode_flags(int(v))) for v in df["flags"]]
-        columns = [*self.sample_dims, *self._variables, "flags"]
+        columns = [*self.sample_dims, *self._variables, *status, "flags"]
         return df[columns]
 
     def flag_table(self) -> pd.DataFrame:
@@ -723,6 +798,7 @@ class ParameterResult:
         layout: Literal[
             "parameters_rows", "parameters_columns", "long"
         ] = "parameters_rows",
+        include_excluded: bool = False,
     ) -> pd.DataFrame:
         """The publication parameter table of this result, see `pkpdutils.result.summary_table`.
 
@@ -740,6 +816,7 @@ class ParameterResult:
             unit_style: the long form of pint or its short symbols.
             layout: parameters as rows, as columns, or one row per parameter,
                 group and statistic.
+            include_excluded: report the excluded samples as well.
 
         Returns:
             The table, every cell a formatted string.
@@ -758,6 +835,7 @@ class ParameterResult:
             units=units,
             unit_style=unit_style,
             layout=layout,
+            include_excluded=include_excluded,
         )
 
     def _new(self, ds: xr.Dataset) -> Self:
@@ -773,7 +851,9 @@ class ParameterResult:
         """
         return type(self)(ds)
 
-    def summarize(self, dim: str, ci_level: float = 0.95) -> Self:
+    def summarize(
+        self, dim: str, ci_level: float = 0.95, *, include_excluded: bool = False
+    ) -> Self:
         """Summarize the parameters of individual samples over one sample dimension.
 
         For every parameter `x` the summary carries the arithmetic mean `x`,
@@ -809,9 +889,17 @@ class ParameterResult:
         apply to every sample (no terminal phase, no dose) therefore has
         `x_n < n`.
 
+        A sample which the result marks `excluded`
+        (`pkpdutils.nca.NCAResult.exclude`, `Acceptance(exclude=True)`) enters
+        no statistic and is not counted, neither in `n` nor in `x_n`, and its
+        flags are not part of the union; `include_excluded=True` summarizes
+        every sample. The status variables themselves (`status_variables`) are
+        dropped, as the derived and the statistic variables are.
+
         Args:
             dim: the sample dimension to reduce
             ci_level: level of the confidence interval of the mean
+            include_excluded: summarize the excluded samples as well
 
         Returns:
             The summary over the remaining sample dimensions.
@@ -822,6 +910,7 @@ class ParameterResult:
         if dim not in self.sample_dims:
             raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
         alpha = 1.0 - ci_level
+        keep = self._keep(include_excluded)
         data_vars: dict[str, Any] = {}
         summarized = [
             *self.parameters,
@@ -832,7 +921,13 @@ class ParameterResult:
             ),
         ]
         for name in summarized:
-            da = self.ds[name].transpose(..., dim)
+            da = self.ds[name]
+            if keep is not None:
+                # an excluded sample is dropped from every statistic by making
+                # it a missing value, which works whatever further dimensions
+                # the variable carries
+                da = da.where(keep)
+            da = da.transpose(..., dim)
             values = da.to_numpy().astype(np.float64)
             dims = tuple(str(d) for d in da.dims if d != dim)
             units = self.units(name)
@@ -912,16 +1007,28 @@ class ParameterResult:
                     )
                 data_vars[f"{name}_geomean"] = (dims, geomean, {"units": units})
                 data_vars[f"{name}_geocv"] = (dims, geocv, {"units": "dimensionless"})
+        kept = (
+            None
+            if keep is None
+            else keep.broadcast_like(self.ds["flags"]).transpose(..., dim).to_numpy()
+        )
         flags = self.ds["flags"].transpose(..., dim)
         remaining = tuple(str(d) for d in flags.dims if d != dim)
         data_vars["n"] = (
             remaining,
-            np.full(flags.shape[:-1], float(self.ds.sizes[dim])),
+            (
+                np.full(flags.shape[:-1], float(self.ds.sizes[dim]))
+                if kept is None
+                else kept.sum(axis=-1).astype(np.float64)
+            ),
             {"units": "dimensionless"},
         )
+        flag_values = flags.to_numpy().astype(np.int64)
+        if kept is not None:
+            flag_values = np.where(kept, flag_values, 0)
         data_vars["flags"] = (
             remaining,
-            np.bitwise_or.reduce(flags.to_numpy().astype(np.int64), axis=-1),
+            np.bitwise_or.reduce(flag_values, axis=-1),
             {"units": "dimensionless"},
         )
         # the dimension coordinates of the remaining sample dimensions and of
@@ -940,7 +1047,11 @@ class ParameterResult:
 
 
 def _table_groups(
-    result: ParameterResult, dim: str, by: Sequence[str]
+    result: ParameterResult,
+    dim: str,
+    by: Sequence[str],
+    *,
+    include_excluded: bool = False,
 ) -> list[tuple[dict[str, Any], ParameterResult]]:
     """The summaries of a result, one per group of the grouping coordinates.
 
@@ -948,6 +1059,7 @@ def _table_groups(
         result: the result of the individual samples.
         dim: the sample dimension the statistics are taken over.
         by: coordinates along `dim`, empty for one group of everything.
+        include_excluded: summarize the excluded samples as well.
 
     Returns:
         The group labels (coordinate name to value, empty without `by`) and the
@@ -958,7 +1070,7 @@ def _table_groups(
         ValueError: if a coordinate of `by` is not a coordinate along `dim`.
     """
     if not by:
-        return [({}, result.summarize(dim))]
+        return [({}, result.summarize(dim, include_excluded=include_excluded))]
     along = sorted(
         str(name)
         for name, coord in result.ds.coords.items()
@@ -981,7 +1093,10 @@ def _table_groups(
         positions = [i for i, other in enumerate(keys) if other == key]
         subset = result._new(result.ds.isel({dim: positions}))
         groups.append(
-            (dict(zip(by, key, strict=True)), subset.summarize(dim)),
+            (
+                dict(zip(by, key, strict=True)),
+                subset.summarize(dim, include_excluded=include_excluded),
+            ),
         )
     return groups
 
@@ -1038,6 +1153,7 @@ def summary_table(
     layout: Literal[
         "parameters_rows", "parameters_columns", "long"
     ] = "parameters_rows",
+    include_excluded: bool = False,
 ) -> pd.DataFrame:
     """The parameter table of a publication: one row per parameter, formatted.
 
@@ -1081,6 +1197,10 @@ def summary_table(
             column per statistic), `"parameters_columns"` (the transpose: one
             column per parameter, one row per statistic and group) or
             `"long"` (one row per parameter, group and statistic).
+        include_excluded: report the excluded samples as well; by default a
+            sample which the result marks `excluded`
+            (`pkpdutils.nca.NCAResult.exclude`) enters no statistic of the
+            table and is not counted in `n`.
 
     Returns:
         The table, every cell a string.
@@ -1121,7 +1241,9 @@ def summary_table(
             "'NCAResult.intervals()' of the summary"
         )
     group_columns = [by] if isinstance(by, str) else list(by or [])
-    groups = _table_groups(result, dim, group_columns)
+    groups = _table_groups(
+        result, dim, group_columns, include_excluded=include_excluded
+    )
 
     records: list[dict[str, Any]] = []
     for labels, summary in groups:

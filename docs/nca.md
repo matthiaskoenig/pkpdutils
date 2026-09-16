@@ -165,7 +165,7 @@ A protocol of more than one dose additionally reports the parameters of every si
 
 For effect timecourses the same interval carries `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg` and `interval_time_above` instead. The interval variables are point variables (an extra dimension) and are excluded from `to_dataframe`.
 
-Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points), `DELTA_WINDOW_CHANGE` (the delta method skipped points at which the terminal window moved, see [Uncertainty](uncertainty.md)), `INCOMPLETE_INTERVAL` (the last dosing interval is not covered by the data; its parameters and the steady state parameters are `NaN`), `EXTRAPOLATED_TROUGH` (the trough of at least one dosing interval of a bolus was regressed because the sample at the dose time carries the post-dose value), `SPAN_LOW` (the terminal phase covers fewer than two half-lives, `lambda_z_span < 2`).
+Flags: `POSITIVE_SLOPE` (the terminal regression does not decline; \(\lambda_z\) and everything derived from it is `NaN`), `TOO_FEW_POINTS` (no window with the minimal number of points), `EXTRAPOLATION_HIGH`, `NO_MAX` (the maximum is the last point), `NO_ABSORPTION` (the maximum is the first point of an extravascular curve), `BLQ_TRUNCATED`, `NO_DATA` (fewer than two points), `DELTA_WINDOW_CHANGE` (the delta method skipped points at which the terminal window moved, see [Uncertainty](uncertainty.md)), `INCOMPLETE_INTERVAL` (the last dosing interval is not covered by the data; its parameters and the steady state parameters are `NaN`), `EXTRAPOLATED_TROUGH` (the trough of at least one dosing interval of a bolus was regressed because the sample at the dose time carries the post-dose value), `SPAN_LOW` (the terminal phase covers fewer than two half-lives, `lambda_z_span < 2`), `NOT_ACCEPTED` (a threshold of `NCAOptions.acceptance` is not met, see "Acceptance criteria and exclusions" below), `PARTIAL_EXTRAPOLATED` (a named partial area reaches beyond the last measurable value and was completed with the terminal regression, see "Partial areas").
 
 ## API
 
@@ -347,6 +347,154 @@ print(normalized["auc_last_dn"].attrs["units"])
 hour / liter
 ```
 
+### Acceptance criteria and exclusions
+
+A regulatory analysis does not report every terminal regression it can compute. `Acceptance` (`NCAOptions.acceptance`) holds the four thresholds the tools check: the adjusted \(R^2\) of the regression (`r2_adj_min`), the extrapolated share of \(\mathrm{AUC}_{0\text{-}\infty}\) on the predicted variant (`extrapolation_max`), the half-lives the window covers (`span_min`) and the number of points of the regression (`n_points_min`). Every one of them is `None` by default, so the default analysis accepts every sample; `Acceptance.pkanalix()` is the set PKanalix ships (0.98, 20 %, 3 half-lives, 3 points) and Phoenix WinNonlin checks the same three continuous criteria without shipping thresholds. The result carries the boolean `accepted` and a sample which fails one is flagged `NOT_ACCEPTED`. The criteria read the point parameters of a sample, the ones computed from its reference dose (`lambda_z_r2_adj`, `lambda_z_span`, `lambda_z_n_points` and the areas of that slice); the per-interval and the steady state parameters (`interval_*`, `auc_tau`, `cavg`, `ctrough`) are not checked and are reported whatever the verdict.
+
+```python
+from pkpdutils import Acceptance
+
+checked = nca(
+    batch, options=options.model_copy(update={"acceptance": Acceptance.pkanalix()})
+)
+print(
+    int(checked["accepted"].sum()), "of", checked["accepted"].size, "samples accepted"
+)
+
+strict = Acceptance(
+    r2_adj_min=0.98, extrapolation_max=0.2, n_points_min=5, exclude=True
+)
+reviewed = nca(batch, options=options.model_copy(update={"acceptance": strict}))
+print(
+    reviewed.to_dataframe()[
+        [
+            "dose",
+            "individual",
+            "lambda_z_r2_adj",
+            "lambda_z_n_points",
+            "accepted",
+            "excluded",
+        ]
+    ]
+    .head(4)
+    .to_string(index=False)
+)
+print(reviewed.flag_table()["NOT_ACCEPTED"].sum(), "samples carry NOT_ACCEPTED")
+print(
+    reviewed.summary_table(
+        "individual", parameters=["cmax", "thalf"], stats=("n", "geomean", "geocv")
+    ).to_string(index=False)
+)
+```
+
+```text
+12 of 12 samples accepted
+ dose individual  lambda_z_r2_adj  lambda_z_n_points  accepted  excluded
+ 50.0         s1         0.999952                3.0     False      True
+ 50.0         s2         0.999524                4.0     False      True
+ 50.0         s3         0.999866                4.0     False      True
+ 50.0         s4         0.999900                6.0      True     False
+5 samples carry NOT_ACCEPTED
+parameter              unit  dose n geomean  geocv
+     cmax milligram / liter  50.0 1   0.818
+    thalf              hour  50.0 1    2.37
+     cmax milligram / liter 100.0 3    1.90 12.7 %
+    thalf              hour 100.0 3    3.06 24.7 %
+     cmax milligram / liter 200.0 3    3.66 8.22 %
+    thalf              hour 200.0 3    3.07 28.0 %
+```
+
+`Acceptance(exclude=True)` writes the boolean `excluded` as well, and `NCAResult.exclude(mask=None, *, reason="", **indexers)` marks further samples by hand, either with a boolean array over the sample dimensions or with the labels of one sample. An excluded sample stays in the result - `to_dataframe` reports every row, with the columns `accepted`, `excluded` and `excluded_reason` between the parameters and the flags - and is left out of `summarize`, `summary_table`, `ParameterResult.sample`, `ddi_table` and `bioequivalence`, each of which takes `include_excluded=True` to read the whole batch again. `ratio` and `ratio_table` have no keyword of their own: they read the `ParameterSample` objects `ParameterResult.sample` builds, so the exclusion reaches them through it. This is the record-level and subject-level exclusion a submission documents; CDISC ADNCA carries the subject-level flags and PKNCA spells the same criteria as its `exclude_nca_*` rules.
+
+```python
+by_hand = result.exclude(dose=50.0, individual="s2", reason="protocol deviation")
+print(
+    by_hand.to_dataframe()[
+        ["dose", "individual", "cmax", "excluded", "excluded_reason"]
+    ]
+    .head(3)
+    .to_string(index=False)
+)
+print(
+    by_hand.summary_table(
+        "individual", parameters=["cmax"], stats=("n", "geomean")
+    ).to_string(index=False)
+)
+```
+
+```text
+ dose individual     cmax  excluded    excluded_reason
+ 50.0         s1 0.890678     False
+ 50.0         s2 0.874586      True protocol deviation
+ 50.0         s3 1.146958     False
+parameter              unit  dose n geomean
+     cmax milligram / liter  50.0 3   0.942
+     cmax milligram / liter 100.0 4    1.87
+     cmax milligram / liter 200.0 4    3.69
+```
+
+### Partial areas
+
+`NCAOptions.partial_aucs` names the partial areas of the analysis, each an interval `(t_start, t_end)` relative to the first dose of the protocol, and every one of them becomes a variable of the result with the unit of `auc_last`: a parameter like any other, summarized, tabulated and plotted with the rest. \(\mathrm{AUC}_{0\text{-}72}\) is the primary exposure ICH M13A[^ich_m13a] asks for when the half-life is long, and a `pAUC` between two times is what the modified release guidelines require in every phase. An interval which reaches beyond the last measurable value is completed with the terminal regression, \(\hat C_\mathrm{last} e^{-\lambda_z (t - t_\mathrm{last})}\), whose tail is \(\hat C_\mathrm{last}(1 - e^{-\lambda_z (t_\mathrm{end} - t_\mathrm{last})}) / \lambda_z\) (the convention of Phoenix[^phoenix]), and the sample is flagged `PARTIAL_EXTRAPOLATED`; without a terminal phase it is `NaN`. A name which collides with a variable the result carries - a parameter, `flags`, `n`, `accepted`, `excluded` or a derived variable such as `cmax_sd` - raises. The uncertainty of a group batch is computed on the replicates by the core, which knows no named area, so a named area of a batch of group curves carries no `_sd`, `_se` or `_ci_*` and `summarize` reports no `x_geomean`/`x_geocv` for it; `partial_auc` on the replicates of a bootstrap is the way to an interval of a partial area. `partial_auc(batch, t_start, t_end)` also stays for the ad hoc question and reads the values as they are.
+
+```python
+areas = nca(
+    batch,
+    options=options.model_copy(
+        update={"partial_aucs": {"auc_0_2": (0.0, 2.0), "auc_0_72": (0.0, 72.0)}}
+    ),
+)
+print(
+    areas.to_dataframe()[
+        ["dose", "individual", "auc_0_2", "auc_0_72", "auc_last", "flags"]
+    ]
+    .head(3)
+    .to_string(index=False)
+)
+print(areas["auc_0_2"].attrs["units"])
+```
+
+```text
+ dose individual  auc_0_2  auc_0_72  auc_last                flags
+ 50.0         s1 1.451162  5.459001  5.380521 PARTIAL_EXTRAPOLATED
+ 50.0         s2 1.408312  4.174724  4.116689 PARTIAL_EXTRAPOLATED
+ 50.0         s3 1.780409  7.362280  7.175732 PARTIAL_EXTRAPOLATED
+hour * milligram / liter
+```
+
+### Terminal windows per sample
+
+One batch-wide rule rarely survives a review of the profiles, which is why every interactive tool has a way to set the window of a single profile (Phoenix `Lambda_z_lower`/`Lambda_z_upper`, the "Check lambda_z" tab of PKanalix). `TerminalPhase.windows` is that mapping: the sample label to `(t_first, t_last)` in the times of the analysis, the label being the coordinate value of a batch with one sample dimension, the tuple of values of a batch with several and the string `"*"` for every sample the mapping does not name. A sample with a window regresses the points inside it, every other sample follows `method`.
+
+`NCAResult.terminal_windows()` writes the windows of a result back in the same form, so a reviewed analysis is re-run unchanged from the windows of the review: the round trip reproduces every parameter of the result it came from.
+
+```python
+windows = result.terminal_windows()
+print(windows[(50.0, "s1")])
+tuned = nca(
+    batch,
+    options=options.model_copy(
+        update={
+            "terminal": TerminalPhase(windows={**windows, (50.0, "s1"): (4.0, 24.0)})
+        }
+    ),
+)
+print(
+    tuned.to_dataframe()[
+        ["dose", "individual", "lambda_z_t_first", "lambda_z_n_points", "thalf"]
+    ]
+    .head(2)
+    .to_string(index=False)
+)
+```
+
+```text
+(8.0, 24.0)
+ dose individual  lambda_z_t_first  lambda_z_n_points    thalf
+ 50.0         s1               4.0                5.0 3.052479
+ 50.0         s2               6.0                4.0 2.414383
+```
+
 ### The parameter table of a publication
 
 `summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, `layout` transposes the table or unfolds it into one row per parameter, group and statistic, and `unit_style="short"` writes the units in the short symbols of pint (`mg/l` instead of `milligram / liter`). On the console, `pkpdutils.console.print_table(table, title=...)` renders the frame as a rich table, and `console.print(result)` renders a result itself (`NCAResult.rich_table(parameters=..., transpose=...)`): one row per variable with a column per sample for a handful of samples, one row per sample with the parameters in the header (`cmax [mg/l]`) for many, three significant digits, the flags by name.
@@ -390,6 +538,42 @@ geometric = result.summary_table(
 | cl_f | liter / hour | 200.0 | 4 | 10.0 | 2.39 | 23.9 % | 9.79 | 26.0 % | 10.5 | 6.98 | 12.0 |
 
 The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`. A parameter read from the sampling grid, such as \(t_\mathrm{max}\), carries no standard deviation and no geometric statistics, so those cells stay empty. `by` groups the samples by a coordinate along the dimension the statistics are taken over, which is what a study with one sample dimension and a dose group coordinate needs, see the first walk-through of [Workflows](workflows.md).
+
+### The tables of a regulatory report
+
+ICH M13A[^ich_m13a] (2.2.2.2) names what the pharmacokinetic section of a bioequivalence report carries, and the FDA guidance for ANDAs[^fda_anda] repeats the list. `pkpdutils.nca.report` assembles the three pieces from the result of the analysis:
+
+- `M13A_STATISTICS` is the set of summary statistics the guidance names, in its order (`n`, geometric mean, geometric CV, median, arithmetic mean, standard deviation, minimum, maximum), for `summary_table(result, dim, stats=M13A_STATISTICS)`;
+- `acceptability_table(result, dim)` reports \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), \(\mathrm{AUC}_{0\text{-}\infty}\) and their ratio per subject and returns the verdict of the rule that the study is questioned when the ratio falls below 80 % in more than 20 % of the observations (`threshold` and `share` move both numbers);
+- `methods_line(options, result)` writes the sentence of the methods section: the trapezoid rule, the rule which selected the terminal phase and the number of points it used.
+
+```python
+from pkpdutils.nca import M13A_STATISTICS, acceptability_table, methods_line
+
+m13a = summary_table(
+    result, "individual", parameters=["auc_inf_obs", "cmax"], stats=M13A_STATISTICS
+)
+print(m13a.head(2).to_string(index=False))
+table, acceptable = acceptability_table(result, "individual", dose=100.0)
+print(table.to_string(index=False))
+print(acceptable)
+print(methods_line(options, result))
+```
+
+```text
+  parameter                     unit  dose n geomean  geocv median  mean    sd   min  max
+auc_inf_obs hour * milligram / liter  50.0 4    5.07 28.0 %   4.76  5.22  1.51  4.08 7.29
+       cmax        milligram / liter  50.0 4   0.925 14.9 %  0.883 0.933 0.146 0.818 1.15
+individual  auc_last  auc_inf_obs    ratio  below
+        s1 10.808676    10.864122 0.994896  False
+        s2  8.213553     8.223094 0.998840  False
+        s3 14.182827    14.410426 0.984206  False
+        s4  8.278163     8.287248 0.998904  False
+True
+The areas were computed with the linear up / logarithmic down trapezoidal method. The terminal log-linear phase was selected as the points of the largest adjusted coefficient of determination and estimated by log-linear regression using 3 to 7 data points.
+```
+
+The pre-dose carryover check of the same report is on the [Bioequivalence](bioequivalence.md#carryover) page, which reads the timecourses rather than the parameters.
 
 Multiple dosing and steady state: a curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without any further option, `nca_single` and `nca` the same way. `superposition` predicts such a curve from a single dose curve and a protocol; the prediction carries a sample right before every later dose (the trough) and takes a fine `grid` of times for a smooth figure:
 
@@ -485,4 +669,5 @@ Large batches are analysed in chunks of at most `NCAOptions(chunk_rows=5000)` ro
 [^purves]: Purves RD. *J Pharmacokinet Biopharm.* 1992;20(3):211-226. See [References](references.md#non-compartmental-analysis).
 [^fda_poppk]: U.S. Food and Drug Administration. *Population Pharmacokinetics.* 2022. See [References](references.md#regulatory-guidance).
 [^ich_m13a]: International Council for Harmonisation. *ICH M13A: Bioequivalence for Immediate-Release Solid Oral Dosage Forms.* 2024. See [References](references.md#regulatory-guidance).
+[^fda_anda]: U.S. Food and Drug Administration. *Bioequivalence Studies With Pharmacokinetic Endpoints for Drugs Submitted Under an ANDA.* 2026. See [References](references.md#regulatory-guidance).
 [^pknca]: Denney W, Duvvuri S, Buckeridge C. Simple, automatic noncompartmental analysis: the PKNCA R package. *J Pharmacokinet Pharmacodyn.* 2015;42:S65. See [References](references.md#data-formats).

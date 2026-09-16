@@ -300,6 +300,7 @@ def ddi_table(
     digits: int = 3,
     ci_level: float = 0.90,
     paired: bool | None = None,
+    include_excluded: bool = False,
     **indexers: Any,
 ) -> pd.DataFrame:
     """The interaction table of a publication: one row per parameter, formatted.
@@ -322,6 +323,8 @@ def ddi_table(
         ci_level: level of the intervals, 0.90 as in bioequivalence.
         paired: pair the samples, `None` pairs when both carry the same
             labels, as in `pkpdutils.stats.ratio`.
+        include_excluded: read the samples a result marks `excluded`
+            (`pkpdutils.nca.NCAResult.exclude`) as well.
         **indexers: coordinate label per remaining sample dimension.
 
     Returns:
@@ -337,8 +340,8 @@ def ddi_table(
     records: list[dict[str, Any]] = []
     for name in parameters:
         result = ratio(
-            test.sample(name, dim, **indexers),
-            reference.sample(name, dim, **indexers),
+            test.sample(name, dim, include_excluded=include_excluded, **indexers),
+            reference.sample(name, dim, include_excluded=include_excluded, **indexers),
             ci_level=ci_level,
             paired=paired,
         )
