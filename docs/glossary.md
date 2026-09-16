@@ -24,7 +24,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and maximum | value·time/dose, value/dose | [NCA](nca.md) |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over a dosing interval | value·time | [NCA](nca.md) |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, trough and average over the interval | value | [NCA](nca.md) |
-| `fluctuation`, `swing` | | peak–trough fluctuation and swing over the interval | – | [NCA](nca.md) |
+| `fluctuation`, `swing` | | peak-trough fluctuation and swing over the interval | – | [NCA](nca.md) |
 | `accumulation_ratio` | \(R_\mathrm{pred}\) | accumulation at steady state, predicted from \(\lambda_z\) | – | [NCA](nca.md) |
 | `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first dosing interval of a protocol | – | [NCA](nca.md) |
 | `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | clearance at steady state (`_f`: extravascular) | l/h | [NCA](nca.md) |

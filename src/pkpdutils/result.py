@@ -859,9 +859,21 @@ def _table_groups(
     """
     if not by:
         return [({}, result.summarize(dim))]
+    along = sorted(
+        str(name)
+        for name, coord in result.ds.coords.items()
+        if tuple(str(d) for d in coord.dims) == (dim,) and str(name) != dim
+    )
     for name in by:
+        if name != dim and name in result.sample_dims:
+            raise ValueError(
+                f"'{name}' is a sample dimension of the result, not a coordinate "
+                f"along '{dim}': the table already carries one row per '{name}' "
+                "and names its value in a column of its own; 'by' groups the "
+                f"samples of '{dim}' by one of its coordinates {along}"
+            )
         if name not in result.ds.coords or tuple(result.ds[name].dims) != (dim,):
-            raise ValueError(f"'{name}' is not a coordinate along '{dim}'")
+            raise ValueError(f"'{name}' is not a coordinate along '{dim}': {along}")
     columns = [result.ds[name].to_numpy() for name in by]
     keys = list(zip(*columns, strict=True))
     groups: list[tuple[dict[str, Any], ParameterResult]] = []

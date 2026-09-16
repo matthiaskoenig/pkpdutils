@@ -393,6 +393,27 @@ def test_plot_troughs_draws_into_the_given_ax_and_without_a_spread() -> None:
     matplotlib.pyplot.close(fig)
 
 
+def test_plot_troughs_names_the_statistic_in_the_title() -> None:
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    assert plot_troughs(result).axes[0].get_title() == "mean ± sd over individual"
+    assert (
+        plot_troughs(result, spread="se", by="arm").axes[0].get_title()
+        == "mean ± se over individual"
+    )
+    assert (
+        plot_troughs(result, spread=None).axes[0].get_title() == "mean over individual"
+    )
+    # a result of a single curve draws that curve, there is no statistic
+    single = nca_single(
+        multiple_dose_tc(n_doses=3), options=NCAOptions(auc_method=AUCMethod.LOG)
+    )
+    assert plot_troughs(single).axes[0].get_title() == ""
+    # and `plot_intervals` draws one line per sample, not a reduction
+    assert plot_intervals(result, "interval_ctrough").axes[0].get_title() == ""
+    matplotlib.pyplot.close("all")
+
+
 def test_plot_troughs_raises_without_intervals_and_for_an_unknown_axis() -> None:
     tc = oral()
     with pytest.raises(ValueError):

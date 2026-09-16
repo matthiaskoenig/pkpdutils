@@ -10,7 +10,7 @@ from matplotlib.figure import Figure
 from pkpdutils.plot._common import axis_label, figure_of, log_scale, unit_label
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.result import ParameterResult
-from pkpdutils.stats.sample import ParameterSample, Scale, summarize
+from pkpdutils.stats.sample import ParameterSample, Scale, coerce, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def plot_parameters(
     *,
     by: str | None = None,
     log_y: bool = False,
-    scale: Scale = Scale.LOG,
+    scale: Scale | str = Scale.LOG,
     ci_level: float = 0.95,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
@@ -52,7 +52,8 @@ def plot_parameters(
             group named after the parameter without it.
         log_y: logarithmic y axis; without a positive value across every group
             the axis stays linear (logged at debug level).
-        scale: scale of the mean and its interval.
+        scale: scale of the mean and its interval, the member or its string
+            (`Scale.LOG`, `"log"`).
         ci_level: level of the interval.
         ax: axes to draw on, a new figure by default; a caller-supplied `ax`
             keeps its figure's own layout engine, so long tick labels can
@@ -64,8 +65,10 @@ def plot_parameters(
         The figure.
 
     Raises:
-        ValueError: if `by` is not a coordinate along `dim`.
+        ValueError: if `by` is not a coordinate along `dim` or `scale` is not
+            a `Scale`.
     """
+    scale = coerce(scale, Scale)
     sample = result.sample(name, dim, **indexers)
     assert sample.values is not None
     if by is None:

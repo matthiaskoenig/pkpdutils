@@ -388,6 +388,44 @@ def test_summary_table_method_and_errors() -> None:
         r.summary_table("s", by="missing")
 
 
+def test_summary_table_by_another_sample_dimension_explains_itself() -> None:
+    # the `(dose, individual)` shape of a dose escalation: `dose` is a column
+    # of the table already, `by` groups the samples of `dim` by a coordinate
+    ds = xr.Dataset(
+        {
+            "a": (
+                ("dose", "individual"),
+                np.arange(6.0).reshape(2, 3),
+                {"units": "mg"},
+            ),
+            "flags": (
+                ("dose", "individual"),
+                np.zeros((2, 3), dtype=np.int64),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={
+            "dose": [50, 100],
+            "individual": ["s1", "s2", "s3"],
+            "sex": ("individual", ["F", "M", "F"]),
+        },
+    )
+    r = MyResult(ds)
+    with pytest.raises(ValueError) as error:
+        r.summary_table("individual", by="dose")
+    message = str(error.value)
+    assert "'dose' is a sample dimension of the result" in message
+    assert "one row per 'dose'" in message and "column of its own" in message
+    assert "coordinates ['sex']" in message
+    # an unknown name names the coordinates which do group
+    with pytest.raises(ValueError, match=r"coordinate along 'individual': \['sex'\]"):
+        r.summary_table("individual", by="nope")
+    # and the coordinate itself groups the table
+    table = r.summary_table("individual", by="sex", parameters=["a"], stats=("mean",))
+    assert list(table["sex"]) == ["F", "F", "M", "M"]
+    assert list(table["dose"]) == [50, 100, 50, 100]
+
+
 def test_summary_table_rejects_a_point_variable() -> None:
     with pytest.raises(ValueError, match="beyond the sample dimensions"):
         make().summary_table("s", parameters=["y_pred"])

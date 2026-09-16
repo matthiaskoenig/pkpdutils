@@ -85,7 +85,7 @@ print(shifted.dosing.first.time)  # -36.0
 | --- | --- | --- |
 | `value` | `(*sample, time)` | the values, `NaN` for missing points |
 | `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
-| `n` | `(*sample)` | number of subjects of group data (optional), one number per sample; an `n` which varies over the time points of a curve is reduced to its maximum with a warning |
+| `n` | `(*sample)` or `(*sample, time)` | the counts behind the values of group data (optional): one number per sample, or one per time point when a count varies over the curve (the group curve of a ragged batch); `n_subjects` reads the number of subjects of a sample back either way |
 | `dose_amount`, `dose_time`, `dose_duration` | `(*sample, dose_index)` | the dosing protocol of every sample (optional), the doses at the front of the row and the remaining columns `NaN`; `dose_duration` is `NaN` without infusion |
 | `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
 | `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
@@ -303,11 +303,11 @@ print(normalized.ds["value"].attrs["units"])
 test 2
 reference 2
 [2.273 2.068 1.71  1.17  0.549 0.258 0.027]
-[0.016 0.029 0.048 0.066 0.062 0.043 0.009] 2.0
+[0.016 0.029 0.048 0.066 0.062 0.043 0.009] [2. 2. 2. 2. 2. 2. 2.]
 1 / liter
 ```
 
-`mean(dim, spread="sd" | "se", min_n=1)` averages the samples which have a finite value at a time point, carries their standard deviation and standard error (the statistic `spread` names is the one computed from the curves, the other follows from \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\)) and the number of subjects `n`, and sets a point covered by fewer than `min_n` samples to `NaN`. The samples need a shared sampling grid; a ragged batch is placed on the union of its grids first, and `relative_to_dose` aligns samples which were dosed at different times. The group curve carries the dosing protocol of its samples when they share one and the protocol of the first sample with a warning when they do not; it is a `Timecourses` again, so `nca` propagates its spread to the parameters, see [Uncertainty](uncertainty.md).
+`mean(dim, spread="sd" | "se", min_n=1)` averages the samples which have a finite value at a time point, carries their standard deviation and standard error and the count `n` of every time point, and sets a point covered by fewer than `min_n` samples to `NaN`. The count is the one of its own time point, so \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\) holds everywhere, also on a ragged group whose late points carry fewer subjects than its early ones; `n_subjects` is the number of subjects of the group, the largest of the counts. The samples need a shared sampling grid; a ragged batch is placed on the union of its grids first, and `relative_to_dose` aligns samples which were dosed at different times. The group curve carries the dosing protocol of its samples when they share one and the protocol of the first sample with a warning when they do not; it is a `Timecourses` again, so `nca` propagates its spread to the parameters, see [Uncertainty](uncertainty.md).
 
 From a simulation: a dataset with a `_time` dimension and scan dimensions, with `xres` the `XResult` of a [sbmlsim](https://matthiaskoenig.github.io/sbmlsim) simulation and `ds` an `xarray.Dataset` shaped like one (`examples/timecourses.py` builds such a dataset in `batch_from_simulation`):
 

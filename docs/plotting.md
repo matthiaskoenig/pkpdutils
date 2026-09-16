@@ -149,6 +149,10 @@ fig = plot_troughs(ss_result, by="arm")  # mean +- sd per arm
 fig = plot_troughs(ss_result, x="interval", spread="se")
 ```
 
+Over a batch the title names the statistic and the dimension it was taken over (`mean ± sd over individual`); a result of a single curve draws that curve's troughs and carries no title, as in the ten dose regimen of `examples/steady_state.py`:
+
+![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
+
 ## Fits
 
 `plot_fit` draws one sample of a [fit](fitting.md): the data with error bars when the fit had standard deviations, the fitted curve on a fine grid, the model name, the parameters as `name = value +- se` and the flags in the title, and the weighted residuals against \(x\) in a second panel below. `plot_goodness_of_fit` plots the predicted against the observed values of every sample with the identity line and the \(R^2\) per sample, and `plot_dose_proportionality` shows the exposure against the dose on log-log axes with the power fit, the acceptance wedge of the criterion and the verdict in the title.

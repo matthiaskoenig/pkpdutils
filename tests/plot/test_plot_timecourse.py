@@ -217,6 +217,45 @@ def test_plot_mean_timecourse_panels_bands_and_legend() -> None:
     matplotlib.pyplot.close(fig)
 
 
+def test_plot_mean_timecourse_labels_a_group_of_strings_without_a_unit() -> None:
+    # a `dose` coordinate of names is a label, not an amount: the dose unit of
+    # the batch used to be appended to it ("low mg (n = 2)")
+    time = np.array([0.0, 1.0, 2.0, 4.0])
+    values = np.stack([(1.0 + i) * np.exp(-0.3 * time) for i in range(4)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={
+            "individual": [f"s{j}" for j in range(4)],
+            "dose": ("individual", ["low", "low", "high", "high"]),
+        },
+        dose={"amount": np.full(4, 100.0), "unit": "mg"},
+        route=Route.ORAL,
+        substance="caffeine",
+    )
+    fig = plot_mean_timecourse(batch, by="dose")
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "low (n = 2)",
+        "high (n = 2)",
+    ]
+    matplotlib.pyplot.close(fig)
+    # and the same for the panel titles and the legend title of `plot_timecourse`
+    faceted = plot_timecourse(batch, facet="dose", by="individual")
+    assert [ax.get_title() for ax in faceted.axes] == ["dose = low", "dose = high"]
+    matplotlib.pyplot.close(faceted)
+    grouped = plot_timecourse(batch, by="dose")
+    grouped_legend = grouped.axes[0].get_legend()
+    assert grouped_legend is not None
+    assert grouped_legend.get_title().get_text() == "dose"
+    assert [text.get_text() for text in grouped_legend.get_texts()] == ["low", "high"]
+    matplotlib.pyplot.close(grouped)
+
+
 def test_plot_mean_timecourse_without_individuals_and_without_a_band() -> None:
     batch = escalation()
     fig = plot_mean_timecourse(

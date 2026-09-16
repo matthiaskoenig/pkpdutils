@@ -935,7 +935,16 @@ def write_events(
     durations = timecourses.dose_duration
     sd = timecourses.sd
     se = timecourses.se
-    n = timecourses.n
+    # the event format carries one number of subjects per subject; a batch
+    # which counts every time point on its own (the group curve of a ragged
+    # batch) is written with the number of subjects of the group
+    if timecourses.n is not None and timecourses.ds["n"].dims != (dim,):
+        logger.debug(
+            "'%s' varies over the time points of a curve, the event records "
+            "carry the number of subjects of every curve",
+            n_col,
+        )
+    n = timecourses.n_subjects
 
     rows: list[dict[str, Any]] = []
     for index in range(n_samples):

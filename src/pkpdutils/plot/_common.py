@@ -204,6 +204,21 @@ def format_value(value: Any) -> str:
     return str(value)
 
 
+def is_number(value: Any) -> bool:
+    """Whether a coordinate value is a number, so that a unit belongs to it.
+
+    Args:
+        value: the value, a number, a numpy scalar or anything else.
+
+    Returns:
+        `True` for an integer or a floating point number, a numpy scalar of
+        one included; `False` for a boolean, a string and everything else.
+    """
+    if isinstance(value, np.generic):
+        value = value.item()
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def value_with_unit(
     ds: xr.Dataset,
     name: str,
@@ -218,6 +233,10 @@ def value_with_unit(
     (the `dose` of a batch, whose unit is the dose unit of the batch); a
     dimensionless coordinate and one without a unit give the value alone.
 
+    Only a number carries a unit: a coordinate whose values are the names of
+    the groups (`dose` as `"low"` and `"high"`, an arm, a treatment) is a
+    label, so it is written as it is instead of as `low mg`.
+
     Args:
         ds: the dataset the coordinate is read from.
         name: name of the coordinate.
@@ -231,7 +250,7 @@ def value_with_unit(
         The value, followed by its unit when there is one.
     """
     text = format_value(value)
-    if name not in ds.coords:
+    if name not in ds.coords or not is_number(value):
         return text
     unit = str(ds.coords[name].attrs.get("units", "")) or (
         (units or {}).get(name) or ""

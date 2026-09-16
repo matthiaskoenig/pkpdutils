@@ -5,7 +5,7 @@
 
 ## Background
 
-A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug–drug interactions and meta-analysis.
+A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug-drug interactions and meta-analysis.
 
 All data structures are [xarray](https://xarray.dev) datasets with [pint](https://pint.readthedocs.io) units, so many timecourses, e.g. all individuals of a study or all runs of a simulation scan, are analysed in one vectorized call.
 

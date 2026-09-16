@@ -389,7 +389,11 @@ and the steady state parameters of the last interval over the four subjects:
 | ctrough | milligram / liter | 4 | 1.28 | 0.339 | 26.6 % |
 | fluctuation | dimensionless | 4 | 1.15 | 0.197 | 17.2 % |
 
-The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. `troughs.png` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. `plot_intervals` of the same result draws one line per subject instead, the figure `examples/formats.py` writes for the same batch read back from its event records:
+The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. `troughs.png` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. The same figure over a longer regimen, the ten doses of `examples/steady_state.py`, is the plateau itself:
+
+![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
+
+`plot_intervals` of the same result draws one line per subject instead, the figure `examples/formats.py` writes for the same batch read back from its event records:
 
 ![The trough concentration of every dosing interval of four subjects](images/formats.png)
 

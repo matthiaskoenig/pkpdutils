@@ -96,12 +96,15 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     [![The predicted curve of ten doses every twelve hours](images/steady_state.png)](images/steady_state.png)
 
-    A single dose curve superposed into a regimen of ten doses, the parameters of every dosing interval and the steady state parameters of the last one.
+    [![The trough of every dosing interval, rising into the steady state plateau](images/steady_state_troughs.png)](images/steady_state_troughs.png)
+
+    A single dose curve superposed into a regimen of ten doses, the parameters of every dosing interval and the steady state parameters of the last one, with the trough of every interval running into its plateau.
 
     ```python
     from examples.steady_state import single
     from pkpdutils import AUCMethod, Dose, Dosing, NCAOptions, Route, nca_single
     from pkpdutils.nca import superposition
+    from pkpdutils.plot import plot_troughs
 
     dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
     protocol = Dosing.regimen(dose, interval=12, n_doses=10)
@@ -109,6 +112,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     predicted = superposition(single, protocol, options=options)
     result = nca_single(predicted, options=options)
     print(result.to_quantities()["auc_tau"])
+    plot_troughs(result, x="interval").savefig("steady_state_troughs.png", dpi=120)
     ```
 
     [steady_state.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/steady_state.py) &middot; [Non-compartmental analysis](nca.md)

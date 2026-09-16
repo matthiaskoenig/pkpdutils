@@ -406,7 +406,9 @@ def plot_troughs(
 
     Over a batch the samples are reduced to the mean of every interval with
     its spread as error bars, per group when `by` names a coordinate; a
-    result of a single curve draws that curve's values.
+    result of a single curve draws that curve's values. The title names the
+    statistic of the markers and the dimension it was taken over (`mean ± sd
+    over individual`), and stays empty where no reduction is drawn.
 
     Args:
         result: the result of a multiple dose analysis.
@@ -494,6 +496,14 @@ def plot_troughs(
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xlabel(x_label)
     ax.set_ylabel(axis_label("trough", unit_label(result.units("interval_ctrough"))))
+    # the statistic of the markers, named once for the figure and only where
+    # there is one: a group of a single sample draws that sample's troughs
+    reduced = [dim for dim in sample_dims if dim != by]
+    if reduced and n_rows > len(groups):
+        over = ", ".join(reduced)
+        ax.set_title(
+            f"mean over {over}" if spread is None else f"mean ± {statistic} over {over}"
+        )
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small", title=by, title_fontsize="small")
     return fig

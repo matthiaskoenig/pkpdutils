@@ -156,7 +156,8 @@ def _group_legend_title(batch: Timecourses, by: str | None) -> str | None:
     """The title of the legend of a grouped figure, `dose [mg]`.
 
     The unit of the grouping coordinate is written once into the title of the
-    legend, rather than into every entry of it.
+    legend, rather than into every entry of it. A coordinate whose values are
+    labels (`dose` as `"low"` and `"high"`) carries no unit.
 
     Args:
         batch: the batch the coordinate belongs to.
@@ -169,9 +170,10 @@ def _group_legend_title(batch: Timecourses, by: str | None) -> str | None:
         return None
     unit = ""
     if by in batch.ds.coords:
+        numeric = np.issubdtype(batch.ds[by].dtype, np.number)
         unit = (
             str(batch.ds[by].attrs.get("units", ""))
-            or (batch.dose_unit if by == "dose" else "")
+            or (batch.dose_unit if by == "dose" and numeric else "")
             or ""
         )
     return axis_label(by, unit_label(unit) if unit else "")
@@ -186,8 +188,9 @@ def _facet_value(batch: Timecourses, facet: str, value: Any) -> str:
         value: the value of the panel.
 
     Returns:
-        The value, followed by the unit of the coordinate when there is one
-        (the dose unit of the batch for `dose`).
+        The value, followed by the unit of the coordinate when the value is a
+        number and the coordinate has one (the dose unit of the batch for
+        `dose`); a label (`"low"`) is written as it is.
     """
     units = {"dose": batch.dose_unit} if "dose" in batch.ds.coords else {}
     return value_with_unit(batch.ds, facet, value, units=units)
