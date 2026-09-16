@@ -195,3 +195,40 @@ def test_a_sample_without_a_finite_value_gives_a_nan_result() -> None:
     assert np.isnan(result.effect)
     assert np.isnan(result.p_value)
     assert result.n_a == 0
+
+
+def test_the_reported_level_is_the_one_the_interval_achieves() -> None:
+    """The null distribution is discrete, so the coverage is reported back."""
+    result = hodges_lehmann(
+        sample(TEST, labels=LABELS), sample(REFERENCE, labels=LABELS)
+    )
+    # four pairs: the extreme Walsh averages cover 1 - 2 P(W <= 0) = 1 - 2/16
+    assert result.ci_level == pytest.approx(0.875)
+    assert (result.ci_low, result.ci_high) == (1.0, 8.0)
+
+
+def test_the_achieved_level_of_a_larger_sample_is_close_to_the_requested_one() -> None:
+    """Twelve pairs at a requested 0.90 achieve the level of the 18th rank."""
+    differences = np.array(
+        [0.5, -0.25, 1.0, 0.75, -0.5, 1.25, 0.25, 2.0, 1.5, -0.75, 0.0, 1.75]
+    )
+    base = np.full(12, 4.0)
+    labels = np.array([f"s{i:02d}" for i in range(12)])
+    result = hodges_lehmann(
+        sample(base + differences, labels=labels), sample(base, labels=labels)
+    )
+    counts = _signed_rank_counts(12)
+    expected = 1.0 - 2.0 * float((np.cumsum(counts) / counts.sum())[17])
+    assert result.ci_level == pytest.approx(expected)
+    assert 0.90 < result.ci_level < 0.91
+
+
+def test_the_requested_level_is_reported_above_the_exact_limit() -> None:
+    """Without the exact distribution there is no exact coverage to report."""
+    rng = np.random.default_rng(4)
+    labels = np.array([f"s{i:03d}" for i in range(60)])
+    reference = rng.uniform(1.0, 5.0, 60)
+    result = hodges_lehmann(
+        sample(reference + 0.4, labels=labels), sample(reference, labels=labels)
+    )
+    assert result.ci_level == 0.90

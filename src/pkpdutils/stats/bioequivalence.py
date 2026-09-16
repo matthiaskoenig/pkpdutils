@@ -88,9 +88,12 @@ EMA_SCALING_K: float = 0.760
 EMA_SCALING_CV_MIN: float = 0.30
 
 #: the within-subject CV of the reference at which the widening stops, 50 %
+#: (EMA 2010, 4.1.10: "the extent of the widening is defined based upon the
+#: within-subject variability ... with an upper cap of 50 %")
 EMA_SCALING_CV_CAP: float = 0.50
 
 #: the widest limits the EMA allows, reached at `EMA_SCALING_CV_CAP`
+#: (EMA 2010, 4.1.10: "the maximum widening ... is 69.84-143.19 %")
 EMA_ABEL_LIMITS: tuple[float, float] = (0.6984, 1.4319)
 
 #: the tightened limits of a narrow therapeutic index drug, 90.00-111.11 %
@@ -105,18 +108,22 @@ POINT_ESTIMATE_LIMITS: tuple[float, float] = (0.8000, 1.2500)
 #: scales, the switching condition of RSABE (FDA progesterone guidance 2011)
 FDA_SWR_CUTOFF: float = 0.294
 
-#: the regulatory standard deviation of the FDA scaled criterion
+#: the regulatory standard deviation of the FDA scaled criterion, `sigma_W0`
+#: (FDA progesterone guidance 2011)
 FDA_SIGMA_W0: float = 0.25
 
-#: the bioequivalence limit the FDA scaled criterion is built from
+#: the bioequivalence limit the FDA scaled criterion is built from,
+#: \(\theta = (\ln \Delta / \sigma_{w0})^2\) with \(\Delta = 1.25\)
+#: (FDA progesterone guidance 2011)
 FDA_DELTA: float = 1.25
 
 #: the regulatory standard deviation of the FDA narrow therapeutic index
 #: criterion (FDA warfarin guidance)
 FDA_NTI_SIGMA_W0: float = 0.10
 
-#: the bioequivalence limit of the FDA narrow therapeutic index criterion,
-#: \(1 / 0.9\), whose implied limits at \(\sigma_{wR} = 0.10\) are 90.00-111.11 %
+#: the bioequivalence limit of the FDA narrow therapeutic index criterion
+#: (FDA warfarin guidance), \(\Delta = 1/0.9\), whose implied limits at
+#: \(\sigma_{wR} = 0.10\) are 90.00-111.11 %
 FDA_NTI_DELTA: float = 1.11111
 
 #: the largest upper 90 % bound of \(s_{wT} / s_{wR}\) the FDA accepts for a
@@ -125,6 +132,9 @@ FDA_NTI_SD_RATIO_MAX: float = 2.500
 
 #: the scaling rules of `tost` and `bioequivalence`
 Scaling = Literal["none", "ema", "fda", "fda_nti", "ema_nti"]
+
+#: the parameters whose limits the EMA widens: the peak alone, never an area
+DEFAULT_SCALED_PARAMETERS: tuple[str, ...] = ("cmax",)
 
 
 @dataclass(frozen=True)
@@ -159,8 +169,9 @@ class BEParameter:
             its replicates; `NaN` unless the design is `REPLICATE`
         cv_intra_t: within-subject CV of the test formulation alone; `NaN`
             unless the test is replicated too
-        scaled: whether the acceptance limits or the criterion were derived
-            from the variability of the reference (`scaling`)
+        scaled: whether the acceptance rule was derived from the variability
+            of the reference or replaced by a narrow therapeutic index rule
+            (`scaling`), so that `limits` is no longer the requested one
         limits_scaled: the derived limits, `None` for an unscaled analysis and
             for the criterion of the FDA, which has no limits; `limits` always
             carries the limits the verdict was taken against
@@ -252,7 +263,10 @@ class BEResult:
     Attributes:
         parameters: parameter name to its result
         bioequivalent: whether every parameter is bioequivalent
-        limits: the acceptance limits
+        limits: the acceptance limits which were **requested**, the `limits`
+            argument of `bioequivalence`; a reference-scaled or tightened rule
+            derives its own limits per parameter, which are in
+            `BEParameter.limits` and `BEParameter.limits_scaled`
         ci_level: the level of the intervals
     """
 
@@ -607,6 +621,9 @@ def _replicate_observations(
             coordinate or one label per subject.
         reference: the reference sample, the same way.
 
+    A subject who misses a period of their sequence is kept and named in a log
+    line at info level; the design is fitted unbalanced.
+
     Returns:
         The log values, the subject, the period, the sequence and whether the
         observation is a test administration, one entry per observation.
@@ -674,6 +691,24 @@ def _replicate_observations(
                 f"sequence '{sequence}' has '{sequence[period - 1]}' in period "
                 f"{period}, the sample says '{letter}'"
             )
+    incomplete = sorted(
+        {
+            str(subject)
+            for subject in np.unique(subjects)
+            if int((subjects == subject).sum())
+            < len(str(sequences[subjects == subject][0]))
+        }
+    )
+    if incomplete:
+        # the least squares fit handles an unbalanced design, but the reader
+        # should know that the study is one before reading its numbers
+        logger.info(
+            "%d of %d subjects miss a period of their sequence (%s); the "
+            "unbalanced design is fitted as it is",
+            len(incomplete),
+            int(np.unique(subjects).size),
+            ", ".join(incomplete),
+        )
     return log_positive(values, test.name), subjects, periods, sequences, is_test
 
 
@@ -863,8 +898,11 @@ def abel_limits(cv_intra_r: float) -> tuple[float, float]:
     \qquad s_{wR} = \sqrt{\ln(1 + \mathrm{CV}_{wR}^2)},$$
 
     with \(k = 0.760\); the CV is capped at 50 % before it is used, so that
-    the limits never leave 69.84-143.19 % (EMA 2010, 4.1.10). Below a CV of
-    30 % the EMA does not widen at all and the limits stay 80.00-125.00 %.
+    the limits never leave 69.84-143.19 % (EMA 2010, 4.1.10). At or below a CV
+    of 30 % the EMA does not widen at all and the limits stay 80.00-125.00 %,
+    which is the switching condition `PowerTOST::scABEL` uses as well: the
+    formula would give 80.003-124.995 % just above 30 % and so return limits
+    slightly narrower than the unscaled ones.
 
     Args:
         cv_intra_r: the within-subject coefficient of variation of the
@@ -880,7 +918,7 @@ def abel_limits(cv_intra_r: float) -> tuple[float, float]:
         raise ValueError(
             f"'cv_intra_r' must be a non-negative number, got {cv_intra_r}"
         )
-    if cv_intra_r < EMA_SCALING_CV_MIN:
+    if cv_intra_r <= EMA_SCALING_CV_MIN:
         return POINT_ESTIMATE_LIMITS
     s_wr = float(np.sqrt(np.log1p(min(cv_intra_r, EMA_SCALING_CV_CAP) ** 2)))
     upper = float(np.exp(EMA_SCALING_K * s_wr))
@@ -983,7 +1021,10 @@ def _sd_ratio_upper(s2_wt: float, df_wt: float, s2_wr: float, df_wr: float) -> f
 
 
 def _apply_scaling(
-    parameter: BEParameter, scaling: Scaling | str, fit: _ReplicateFit | None
+    parameter: BEParameter,
+    scaling: Scaling | str,
+    fit: _ReplicateFit | None,
+    scaled_parameters: Sequence[str] = DEFAULT_SCALED_PARAMETERS,
 ) -> BEParameter:
     """Apply a reference-scaled or tightened acceptance rule to a result.
 
@@ -991,6 +1032,7 @@ def _apply_scaling(
         parameter: the unscaled result.
         scaling: the rule.
         fit: the replicate fit, `None` for a design without replicates.
+        scaled_parameters: the parameters whose limits the EMA widens.
 
     Returns:
         The result under the rule.
@@ -1014,14 +1056,15 @@ def _apply_scaling(
             "reference formulation, which only a replicate design estimates"
         )
     if scaling == "ema":
-        # the EMA widens the limits of Cmax alone, never those of an area
-        if parameter.name != "cmax":
+        # the EMA widens the limits of the peak alone, never those of an area
+        if parameter.name not in scaled_parameters:
             logger.debug(
-                "the EMA widens the limits of 'cmax' only, '%s' stays unscaled",
+                "the EMA widens the limits of %s only, '%s' stays unscaled",
+                list(scaled_parameters),
                 parameter.name,
             )
             return parameter
-        if parameter.cv_intra_r < EMA_SCALING_CV_MIN:
+        if parameter.cv_intra_r <= EMA_SCALING_CV_MIN:
             return parameter
         return _with_limits(
             parameter, abel_limits(parameter.cv_intra_r), point_estimate=True
@@ -1040,7 +1083,14 @@ def _apply_scaling(
         sigma_w0=FDA_NTI_SIGMA_W0 if narrow else FDA_SIGMA_W0,
         delta=FDA_NTI_DELTA if narrow else FDA_DELTA,
     )
-    within = bool(POINT_ESTIMATE_LIMITS[0] <= parameter.gmr <= POINT_ESTIMATE_LIMITS[1])
+    # the point estimate of the scaled rule is the one the criterion is built
+    # on, the subject-level mean of the within-subject differences, and not the
+    # formulation effect of the analysis of variance; the two differ on an
+    # unbalanced design and the FDA takes both conditions on the same number
+    point_estimate = float(np.exp(fit.difference))
+    within = bool(
+        POINT_ESTIMATE_LIMITS[0] <= point_estimate <= POINT_ESTIMATE_LIMITS[1]
+    )
     passed = bool(criterion <= 0.0) and within
     sd_ratio = float("nan")
     if narrow:
@@ -1067,6 +1117,7 @@ def tost(
     ci_level: float = 0.90,
     design: Design | str | None = None,
     scaling: Scaling | str = "none",
+    scaled_parameters: Sequence[str] = DEFAULT_SCALED_PARAMETERS,
 ) -> BEParameter:
     r"""Two one-sided tests of the geometric mean ratio against the acceptance limits.
 
@@ -1083,7 +1134,10 @@ def tost(
     variance of `_replicate` (EMA Method A) and reports `cv_intra_r`,
     `cv_intra_t` and the `anova` table with the ratio; `n_test` and
     `n_reference` count the administrations there, not the subjects, since a
-    subject carries several of each.
+    subject carries several of each. A subject who misses a period is kept and
+    the unbalanced design is fitted as it is, which is what the least squares
+    fit is for; the subjects with fewer administrations than their sequence
+    asks for are named in a log line at info level.
 
     `scaling` replaces the acceptance rule by one of the reference-scaled
     rules of the guidances:
@@ -1099,7 +1153,23 @@ def tost(
     Every rule but `"ema_nti"` needs the within-subject variability of the
     reference and therefore a replicate design. `limits` carries the limits
     the verdict was taken against, `limits_scaled` the derived ones and
-    `criterion` the bound of the FDA rule, which has no limits at all.
+    `criterion` the bound of the FDA rule, which has no limits at all;
+    `BEResult.limits` stays the limits which were requested.
+
+    The point estimate of the two rules of the FDA is
+    \(e^{\hat d}\) of the subject-level mean of the within-subject
+    differences, the estimate the criterion itself is built on, and not the
+    formulation effect `gmr` of the analysis of variance; the two agree on a
+    balanced design and differ on an unbalanced one, and the guidance takes
+    both conditions on the same number. `gmr` keeps reporting the effect of
+    the analysis of variance either way. The point estimate of the EMA rule is
+    `gmr`, which is the estimate its interval is built on.
+
+    `scaled_parameters` names the parameters whose limits the EMA widens,
+    `("cmax",)` by default; a steady state study whose peak is called
+    `cmax_ss` passes `scaled_parameters=("cmax_ss",)`. It has no effect on the
+    rules of the FDA, which scale every parameter, or on `"ema_nti"`, which
+    tightens every parameter it is asked for.
 
     Args:
         test: the test sample.
@@ -1109,6 +1179,7 @@ def tost(
         design: the design, as the member or as its string, detected from
             the samples by default.
         scaling: the acceptance rule, see the table above.
+        scaled_parameters: the parameters whose limits `"ema"` widens.
 
     Returns:
         The result of the parameter.
@@ -1202,7 +1273,7 @@ def tost(
         cv_intra_t=cv_intra_t,
         anova=anova,
     )
-    return _apply_scaling(parameter, scaling, fit)
+    return _apply_scaling(parameter, scaling, fit, scaled_parameters)
 
 
 def carryover_table(
@@ -1341,6 +1412,7 @@ def bioequivalence(
     ci_level: float = 0.90,
     design: Design | str | None = None,
     scaling: Scaling | str = "none",
+    scaled_parameters: Sequence[str] = DEFAULT_SCALED_PARAMETERS,
     include_excluded: bool = False,
     carryover: Literal["ignore", "flag", "exclude"] = "ignore",
     carryover_threshold: float = 0.05,
@@ -1379,6 +1451,9 @@ def bioequivalence(
             parameter it is asked for, which is why the EMA rule for
             \(C_\mathrm{max}\) ("when it is of particular importance") is
             expressed by naming `cmax` in `parameters` or leaving it out.
+        scaled_parameters: the parameters whose limits `scaling="ema"` widens,
+            `("cmax",)` by default; a steady state study passes
+            `("cmax_ss",)`.
         include_excluded: analyse the excluded subjects as well.
         carryover: what to do with a subject whose pre-dose concentration
             exceeds `carryover_threshold` of its own Cmax: `"ignore"` nothing,
@@ -1447,6 +1522,7 @@ def bioequivalence(
             ci_level=ci_level,
             design=design,
             scaling=scaling,
+            scaled_parameters=scaled_parameters,
         )
         results[name] = replace(parameter, carryover=flagged) if flagged else parameter
     return BEResult(

@@ -74,11 +74,11 @@ and the same for the test, which gives `cv_intra_r` and `cv_intra_t` through \(\
 
 \[\theta_U = e^{k\,s_{wR}}, \qquad \theta_L = 1/\theta_U, \qquad k = 0.760,\]
 
-for \(C_\mathrm{max}\) alone, only above \(\mathrm{CV}_{wR} = 30\) %, with \(\mathrm{CV}_{wR}\) capped at 50 % so that the limits never leave 69.84-143.19 %, and always with the point estimate inside 80.00-125.00 %. At exactly 30 % the formula gives back 80-125 %, so the rule is continuous. The FDA scales the criterion instead of the limits[^fda_rsabe]: above \(s_{wR} = 0.294\) it asks for the upper 95 % confidence bound of
+for \(C_\mathrm{max}\) alone, only above \(\mathrm{CV}_{wR} = 30\) %, with \(\mathrm{CV}_{wR}\) capped at 50 % so that the limits never leave 69.84-143.19 %, and always with the point estimate inside 80.00-125.00 %. At and below 30 % the limits stay 80-125 %, which is where the formula lands anyway, so the rule is continuous. The FDA scales the criterion instead of the limits[^fda_rsabe]: above \(s_{wR} = 0.294\) it asks for the upper 95 % confidence bound of
 
 \[(\mu_T - \mu_R)^2 - \theta\,\sigma_{wR}^2 \le 0, \qquad \theta = \left(\frac{\ln 1.25}{0.25}\right)^2,\]
 
-computed with Howe's approximation from the subject-level differences and the reference variance, together with the point estimate inside 80.00-125.00 %. Below the switching condition the unscaled analysis decides.
+computed with Howe's approximation from the subject-level differences and the reference variance, together with the point estimate inside 80.00-125.00 %. Below the switching condition the unscaled analysis decides. The point estimate of both rules of the FDA is \(e^{\hat d}\) of the same subject-level mean \(\hat d = \frac{1}{s}\sum_k \bar d_k\) the criterion is built on, not the formulation effect `gmr` of the analysis of variance: the two agree on a balanced design and differ on an unbalanced one, and the guidance takes both conditions on one number. `gmr` reports the effect of the analysis of variance either way.
 
 **Narrow therapeutic index.** The EMA tightens the limits of \(\mathrm{AUC}\) to 90.00-111.11 % (and of \(C_\mathrm{max}\) where it matters for safety or efficacy)[^ema_be]. The FDA scales instead, with \(\sigma_{w0} = 0.10\) and \(\Delta = 1/0.9\) in the same criterion, and adds two conditions[^fda_nti]: the unscaled 90 % interval within 80.00-125.00 % and the upper 90 % bound of \(s_{wT}/s_{wR}\), the equal-tailed \(F\) bound \(\sqrt{(s_{wT}^2/s_{wR}^2)\,F_{0.95}(\nu_R, \nu_T)}\), at most 2.500.
 
@@ -86,13 +86,13 @@ computed with Howe's approximation from the subject-level differences and the re
 
 \[1 - \beta = Q_\nu(-t_{1-\alpha,\nu}, \delta_2; 0, R) - Q_\nu(t_{1-\alpha,\nu}, \delta_1; 0, R), \qquad R = \frac{(\delta_1 - \delta_2)\sqrt{\nu}}{2\,t_{1-\alpha,\nu}},\]
 
-with Owen's Q function[^owen]. The design constants \(b_k\) and the degrees of freedom are the ones of `PowerTOST`[^powertost]: \(b_k = 2\) and \(\nu = n - 2\) for the 2x2 crossover, \(b_k = 4\) and \(\nu = n - 2\) for parallel groups, \(b_k = 1\) and \(\nu = 3n - 4\) for the four period replicate and \(b_k = 1.5\) and \(\nu = 2n - 3\) for the three period one.
+with Owen's Q function[^owen]. The design constants \(b_k\) and the degrees of freedom are the ones of `PowerTOST`[^powertost]: \(b_k = 2\) and \(\nu = n - 2\) for the 2x2 crossover, \(b_k = 4\) and \(\nu = n - 2\) for parallel groups, \(b_k = 1\) and \(\nu = 3n - 4\) for the four period replicate and \(b_k = 1.5\) and \(\nu = 2n - 3\) for the three period one. An odd \(n\) is the study with one subject more in one sequence, and its standard error is \(\sigma\sqrt{(b_k/4)(1/n_1 + 1/n_2)}\) with \(n_1 = \lceil n/2 \rceil\), \(n_2 = \lfloor n/2 \rfloor\), which is the balanced formula again when \(n\) is even.
 
 **Hodges-Lehmann.** The non-parametric comparison of \(t_\mathrm{max}\) is the median of the Walsh averages of the paired differences,
 
 \[\hat\Delta = \mathrm{median}\left\{\frac{d_i + d_j}{2} : i \le j\right\},\]
 
-with the interval taken from the order statistics of the same quantities at the quantile of the Wilcoxon null distribution[^hodges]; the unpaired version uses the pairwise differences and the Mann-Whitney distribution.
+with the interval taken from the order statistics of the same quantities at the quantile of the Wilcoxon null distribution[^hodges]; the unpaired version uses the pairwise differences and the Mann-Whitney distribution. That distribution is discrete, so the interval rarely covers exactly what was asked for: the `ci_level` of the result is the level it achieves, \(1 - 2 P(W \le w - 1)\).
 
 **Two one-sided tests.** For the limits \(\theta_L < 1 < \theta_U\),
 
@@ -113,7 +113,7 @@ each tested one-sided against \(t_{1-\alpha,\nu}\); `p_lower` and `p_upper` are 
 
 `gmr` and its interval are ratios, test over reference; `ratio_table` writes them as the percentages the guidances use. `p_period` and `p_sequence` are the p values of the period and the carryover effect of a crossover and are `NaN` in the other designs: a significant period effect is common and harmless, since the crossover balances it, while a significant sequence effect points at an incomplete washout and casts doubt on the study itself.
 
-`limits` always carries the limits the verdict was taken against, so a widened or tightened analysis reports them in `ratio_table` and `plot_ratio` without a second lookup; `limits_scaled` repeats them when they were derived and is `None` otherwise, including for the criterion of the FDA, which has no limits at all and reports `criterion` instead (at most zero for a bioequivalent formulation). `cv_intra_r` and `cv_intra_t` are `NaN` outside a replicate design, and `n_test` and `n_reference` count the administrations there rather than the subjects, since a subject carries several of each.
+`BEParameter.limits` always carries the limits the verdict was taken against, so a widened or tightened analysis reports them in `ratio_table` and `plot_ratio` without a second lookup; `limits_scaled` repeats them when they were derived and is `None` otherwise, including for the criterion of the FDA, which has no limits at all and reports `criterion` instead (at most zero for a bioequivalent formulation). `scaled` says that the rule was derived from the variability of the reference or replaced by a narrow therapeutic index rule, so that `limits` is no longer the one which was asked for. `BEResult.limits`, in contrast, is always the limits which were **requested**, the `limits` argument of the call, since one result holds several parameters which a scaled rule may judge differently. `cv_intra_r` and `cv_intra_t` are `NaN` outside a replicate design, and `n_test` and `n_reference` count the administrations there rather than the subjects, since a subject carries several of each.
 
 ## API
 
@@ -480,7 +480,9 @@ cmax         gmr 100.06 % [ 91.05, 109.95] limits  76.34 - 130.99 % scaled True 
 limits at CV 30 %, 40 %, 50 %: [(0.8, 1.25), (0.7462, 1.3402), (0.6984, 1.4319)]
 ```
 
-The area keeps its limits, the peak gets 76.34-130.99 % from a `cv_intra_r` of 36.7 %. `abel_limits` shows the whole rule: at the switching condition of 30 % the formula reproduces 80-125 %, at 40 % it gives 74.62-134.02 %, and at 50 % it reaches the cap 69.84-143.19 %, which is where it stays for any larger variability.
+The area keeps its limits, the peak gets 76.34-130.99 % from a `cv_intra_r` of 36.7 %. `abel_limits` shows the whole rule: at and below the switching condition of 30 % the limits stay 80-125 %, at 40 % they are 74.62-134.02 %, and at 50 % they reach the cap 69.84-143.19 %, which is where they stay for any larger variability.
+
+Which parameter the EMA widens is `scaled_parameters`, `("cmax",)` by default. A steady state study whose peak is called `cmax_ss` passes `scaled_parameters=("cmax_ss",)`; the rules of the FDA scale every parameter and ignore the keyword.
 
 `scaling="fda"` applies the reference-scaled average bioequivalence of the FDA instead. It scales the criterion rather than the limits, it applies to the area as well as to the peak, and it reports the upper 95 % confidence bound of the criterion in `criterion`, which has to be at most zero.
 
@@ -505,7 +507,7 @@ auc_inf_obs  gmr 101.50 % scaled True criterion -0.0631 bioequivalent True
 cmax         gmr 100.06 % scaled True criterion -0.0641 bioequivalent True
 ```
 
-Both parameters are scaled here because the reference varies by more than the switching condition \(s_{wR} = 0.294\) in both of them. A parameter below it falls back to the unscaled analysis: `scaled` is `False`, `criterion` is `None` and the 90 % interval decides, which is what the guidance asks for.
+Both parameters are scaled here because the reference varies by more than the switching condition \(s_{wR} = 0.294\) in both of them. A parameter below it falls back to the unscaled analysis: `scaled` is `False`, `criterion` is `None` and the 90 % interval decides, which is what the guidance asks for. The point estimate the FDA rule tests against 80.00-125.00 % is the subject-level mean of the within-subject differences, the same estimate the criterion is built on; on this balanced study it is the `gmr` printed above, on an unbalanced one it is not, and the guidance asks for one number for both conditions.
 
 ## Narrow therapeutic index
 
@@ -564,7 +566,7 @@ print(
 median difference 0.75 h [0.00, 1.25], p = 0.047, wilcoxon, paired True
 ```
 
-The test formulation of the 2x2 study above absorbs more slowly, and the estimate says by how much: the median subject reaches the peak three quarters of an hour later, with an interval which just touches zero. The samples are paired by their labels, so the estimator works on the Walsh averages of the within-subject differences; two samples without shared labels are compared with the pairwise differences and the Mann-Whitney distribution instead. \(t_\mathrm{max}\) is read from a sampling grid and is full of ties, which is why the interval is a pair of order statistics rather than a t interval.
+The test formulation of the 2x2 study above absorbs more slowly, and the estimate says by how much: the median subject reaches the peak three quarters of an hour later, with an interval which just touches zero. The samples are paired by their labels, so the estimator works on the Walsh averages of the within-subject differences; two samples without shared labels are compared with the pairwise differences and the Mann-Whitney distribution instead. \(t_\mathrm{max}\) is read from a sampling grid and is full of ties, which is why the interval is a pair of order statistics rather than a t interval, and why its `ci_level` is the level those order statistics really cover rather than the 0.90 which was asked for.
 
 ## Sample size
 

@@ -320,3 +320,117 @@ def test_a_scaling_which_needs_replicates_refuses_a_2x2_study() -> None:
         tost(test, reference, scaling="ema")
     with pytest.raises(ValueError, match="is not a scaling"):
         tost(test, reference, scaling="who")
+
+
+def without(sample: ParameterSample, index: int) -> ParameterSample:
+    """The sample without one administration, which unbalances the design."""
+    assert sample.values is not None and sample.labels is not None
+    keep = np.ones(sample.values.size, dtype=bool)
+    keep[index] = False
+    return ParameterSample(
+        values=sample.values[keep],
+        labels=sample.labels[keep],
+        coords={key: value[keep] for key, value in sample.coords.items()},
+        name=sample.name,
+        unit=sample.unit,
+    )
+
+
+def subject_difference(test: ParameterSample, reference: ParameterSample) -> float:
+    """The least squares mean of the within-subject differences, by hand."""
+    assert test.values is not None and reference.values is not None
+    subjects = np.unique(test.coords["subject"])
+    differences, sequences = [], []
+    for subject in subjects:
+        rows_t = test.coords["subject"] == subject
+        rows_r = reference.coords["subject"] == subject
+        differences.append(
+            float(
+                np.log(test.values[rows_t]).mean()
+                - np.log(reference.values[rows_r]).mean()
+            )
+        )
+        sequences.append(str(test.coords["sequence"][rows_t][0]))
+    d, sequence = np.array(differences), np.array(sequences)
+    return float(np.mean([d[sequence == s].mean() for s in np.unique(sequence)]))
+
+
+def test_the_two_point_estimates_agree_on_a_balanced_replicate() -> None:
+    """The formulation effect and the subject-level difference are the same there."""
+    samples = build()
+    result = tost(samples["T"], samples["R"])
+    expected = subject_difference(samples["T"], samples["R"])
+    assert result.gmr == pytest.approx(float(np.exp(expected)), abs=1e-12)
+
+
+def test_the_fda_rule_takes_its_point_estimate_from_the_subject_differences() -> None:
+    """On an unbalanced design the two estimates diverge and the criterion wins.
+
+    The study is scaled so that the subject-level estimate sits just below
+    80 % while the formulation effect of the analysis of variance sits above
+    it; the FDA takes both of its conditions on the estimate the criterion is
+    built on, so the study fails.
+    """
+    samples = build(cv_r=0.45, cv_t=0.30)
+    # subject s00 misses one of its two test administrations
+    unbalanced = without(samples["T"], 0)
+    reference = samples["R"]
+    estimate = float(np.exp(subject_difference(unbalanced, reference)))
+    plain = tost(unbalanced, reference)
+    assert plain.gmr != pytest.approx(estimate, abs=1e-6)
+    assert plain.gmr > estimate
+
+    factor = 0.7999 / estimate
+    assert unbalanced.values is not None
+    shifted = ParameterSample(
+        values=unbalanced.values * factor,
+        labels=unbalanced.labels,
+        coords=unbalanced.coords,
+        name=unbalanced.name,
+        unit=unbalanced.unit,
+    )
+    result = tost(shifted, reference, scaling="fda")
+    assert float(np.exp(subject_difference(shifted, reference))) == pytest.approx(
+        0.7999
+    )
+    assert result.gmr == pytest.approx(plain.gmr * factor)
+    assert result.gmr > 0.80  # the reported effect still lies inside the limits
+    assert result.criterion is not None and result.criterion <= 0.0
+    assert result.bioequivalent is False
+
+
+def test_the_limits_at_the_switching_condition_are_the_unscaled_ones() -> None:
+    """At a CV of exactly 30 % the EMA does not widen (PowerTOST `CVswitch`)."""
+    assert abel_limits(0.30) == (0.8, 1.25)
+    assert abel_limits(0.2999) == (0.8, 1.25)
+    # just above it the formula takes over and the limits grow
+    assert abel_limits(0.35)[1] > 1.25
+    assert abel_limits(0.35)[0] < 0.80
+
+
+def test_the_scaled_parameter_of_the_ema_rule_can_be_named() -> None:
+    """A steady state peak is widened when `scaled_parameters` names it."""
+    samples = build(cv_r=0.40)
+    steady = {
+        letter: ParameterSample(
+            values=samples[letter].values,
+            labels=samples[letter].labels,
+            coords=samples[letter].coords,
+            name="cmax_ss",
+            unit="milligram / liter",
+        )
+        for letter in "TR"
+    }
+    default = tost(steady["T"], steady["R"], scaling="ema")
+    assert default.scaled is False
+    assert default.limits == (0.8, 1.25)
+    named = tost(
+        steady["T"], steady["R"], scaling="ema", scaled_parameters=("cmax_ss",)
+    )
+    assert named.scaled is True
+    assert named.limits == pytest.approx(abel_limits(0.40))
+    # naming another parameter leaves `cmax` alone again
+    peak = tost(
+        samples["T"], samples["R"], scaling="ema", scaled_parameters=("cmax_ss",)
+    )
+    assert peak.scaled is False

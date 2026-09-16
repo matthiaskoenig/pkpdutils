@@ -616,6 +616,25 @@ def _order_statistic(counts: np.ndarray, alpha: float) -> int:
     return int(np.searchsorted(cdf, alpha, side="left"))
 
 
+def _achieved_level(counts: np.ndarray, rank: int) -> float:
+    r"""The coverage of the interval of the `rank`-th order statistics.
+
+    The null distribution of a rank statistic is discrete, so an interval of
+    order statistics rarely has exactly the requested level: its coverage is
+    \(1 - 2 P(W \le w - 1)\), which R reports as the achieved
+    `conf.level` of `wilcox.test`.
+
+    Args:
+        counts: the counts of the null distribution.
+        rank: the rank of the order statistic, at least 1.
+
+    Returns:
+        The coverage of the interval.
+    """
+    cdf = np.cumsum(counts) / counts.sum()
+    return float(1.0 - 2.0 * cdf[rank - 1])
+
+
 def _normal_order_statistic(mean: float, sd: float, alpha: float) -> int:
     """The same rank from the normal approximation of the null distribution.
 
@@ -713,6 +732,15 @@ def hodges_lehmann(
     sample with ties is scipy's tie-corrected one and the interval is
     conservative.
 
+    The null distribution is discrete, so an interval of order statistics
+    rarely has exactly the requested coverage: the `ci_level` of the result is
+    the level the interval **achieves**, \(1 - 2 P(W \le w - 1)\), which is
+    what R reports as the `conf.level` of `wilcox.test`. A sample too small for
+    the requested level gets the two extreme order statistics, and `ci_level`
+    then says how little they cover (four pairs at a requested 0.90 achieve
+    0.875); above `EXACT_MAX_N`, where the exact distribution is not
+    enumerated, the requested level is reported as it is.
+
     Args:
         a: the first sample, individual values.
         b: the second sample, individual values.
@@ -720,15 +748,16 @@ def hodges_lehmann(
     Keyword Args:
         paired: whether the values belong to the same individuals; detected
             from the labels of the samples by default (`labels_match`).
-        ci_level: level of the distribution free interval, 0.90 as for the
-            bioequivalence interval.
+        ci_level: the level asked for, 0.90 as for the bioequivalence
+            interval; the level the interval achieves is reported back in
+            `TestResult.ci_level`.
 
     Returns:
         The result, with the estimate in `effect`, the interval in `ci_low`
-        and `ci_high`, the rank statistic in `statistic` and the p value of
-        the rank test in `p_value`; `df` is `NaN`, the estimator has none.
-        A single pair, or a pair of single values, has an estimate but no
-        interval (`NaN`).
+        and `ci_high`, its achieved coverage in `ci_level`, the rank statistic
+        in `statistic` and the p value of the rank test in `p_value`; `df` is
+        `NaN`, the estimator has none. A single pair, or a pair of single
+        values, has an estimate but no interval (`NaN`).
 
     Raises:
         ValueError: for summary data, for a `ci_level` outside `(0, 1)`, or
@@ -750,9 +779,10 @@ def hodges_lehmann(
         n_a = n_b = int(x.size)
         differences = x - y
         estimates = _walsh_averages(differences)
+        counts = _signed_rank_counts(n_a) if n_a <= EXACT_MAX_N else None
         rank = (
-            _order_statistic(_signed_rank_counts(n_a), alpha)
-            if n_a <= EXACT_MAX_N
+            _order_statistic(counts, alpha)
+            if counts is not None
             else _normal_order_statistic(
                 n_a * (n_a + 1) / 4.0,
                 float(np.sqrt(n_a * (n_a + 1) * (2 * n_a + 1) / 24.0)),
@@ -782,9 +812,12 @@ def hodges_lehmann(
                 a,
             )
         estimates = np.sort((x[:, None] - y[None, :]).ravel())
+        counts = (
+            _mann_whitney_counts(n_a, n_b) if max(n_a, n_b) <= EXACT_MAX_N else None
+        )
         rank = (
-            _order_statistic(_mann_whitney_counts(n_a, n_b), alpha)
-            if max(n_a, n_b) <= EXACT_MAX_N
+            _order_statistic(counts, alpha)
+            if counts is not None
             else _normal_order_statistic(
                 n_a * n_b / 2.0,
                 float(np.sqrt(n_a * n_b * (n_a + n_b + 1) / 12.0)),
@@ -804,8 +837,12 @@ def hodges_lehmann(
         rank = 1
     if rank <= estimates.size // 2:
         ci = (float(estimates[rank - 1]), float(estimates[estimates.size - rank]))
+        # the null distribution is discrete: report the coverage the interval
+        # of these order statistics really has, as R does
+        achieved = ci_level if counts is None else _achieved_level(counts, rank)
     else:
         ci = (nan, nan)
+        achieved = ci_level
     sd_a = float(x.std(ddof=1)) if n_a > 1 else nan
     sd_b = float(y.std(ddof=1)) if n_b > 1 else nan
     d, g = cohen_d(float(x.mean()), sd_a, n_a, float(y.mean()), sd_b, n_b)
@@ -816,7 +853,7 @@ def hodges_lehmann(
         effect=effect,
         ci_low=ci[0],
         ci_high=ci[1],
-        ci_level=ci_level,
+        ci_level=achieved,
         scale=Scale.LINEAR,
         alternative=Alternative.TWO_SIDED,
         paired=is_paired,

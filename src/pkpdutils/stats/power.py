@@ -79,7 +79,17 @@ class TOSTDesign:
     def se(self, sigma: float, n: int) -> float:
         r"""The standard error of the log ratio of a study of `n` subjects.
 
-        \(\mathrm{se} = \sigma\sqrt{b_k / n}\).
+        The design is assumed to have two sequences (or two groups) of
+        \(n_1 = \lceil n/2 \rceil\) and \(n_2 = \lfloor n/2 \rfloor\) subjects,
+
+        $$\mathrm{se} = \sigma\sqrt{b_{k,ni}
+        \left(\frac{1}{n_1} + \frac{1}{n_2}\right)}, \qquad b_{k,ni} = b_k/4,$$
+
+        which is \(\sigma\sqrt{b_k/n}\) for an even `n` and the standard error
+        of the study with one subject more in one sequence for an odd one.
+        \(b_{k,ni}\) is the unbalanced design constant of `PowerTOST`
+        (`known.designs()`: 1/2, 1, 1/4 and 3/8 for the four designs here),
+        which is a quarter of \(b_k\) in every one of them.
 
         Args:
             sigma: the standard deviation of the log values.
@@ -88,7 +98,8 @@ class TOSTDesign:
         Returns:
             The standard error.
         """
-        return float(sigma * np.sqrt(self.bk / n))
+        first, second = (n + 1) // 2, n // 2
+        return float(sigma * np.sqrt(self.bk / 4.0 * (1.0 / first + 1.0 / second)))
 
 
 #: the designs, with the constants of `PowerTOST::known.designs()`
@@ -253,9 +264,10 @@ def power_tost(
     $$1 - \beta = Q_\nu(-t, \delta_2; 0, R) - Q_\nu(t, \delta_1; 0, R),$$
 
     the exact probability that both one-sided tests reject (Owen 1965; the
-    algorithm of `PowerTOST::power.TOST`). The study is assumed balanced, so
-    an odd `n` of a crossover is the balanced approximation of the study with
-    one subject more in one sequence, which is slightly optimistic.
+    algorithm of `PowerTOST::power.TOST`). An odd `n` is split into the two
+    sequences (or groups) of \(\lceil n/2 \rceil\) and \(\lfloor n/2 \rfloor\)
+    subjects the study would have, which widens the standard error a little
+    against the balanced formula, as `PowerTOST` does for a dropout.
 
     Args:
         cv: the within-subject coefficient of variation as a fraction (the

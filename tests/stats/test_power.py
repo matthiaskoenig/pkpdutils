@@ -173,3 +173,35 @@ def test_sample_size_gives_up_at_max_n() -> None:
     """A study which cannot be run says so instead of searching forever."""
     with pytest.raises(ValueError, match="does not reach the power"):
         sample_size_tost(cv=0.6, gmr=0.82, max_n=40)
+
+
+#: the unbalanced (one dropout) column of the replicate table of the vignette
+#: and `power.TOST(CV = 0.3, n = 39)` of the manual, all of them studies with
+#: one subject more in one sequence
+UNBALANCED_REFERENCE = [
+    (0.30, 39, "2x2", 0.8056171, 1e-7),
+    (0.30, 29, "2x2x3", 0.8069, 1e-4),
+    (0.30, 19, "2x2x4", 0.7992, 1e-4),
+]
+
+
+@pytest.mark.parametrize(
+    ("cv", "n", "design", "expected", "tolerance"), UNBALANCED_REFERENCE
+)
+def test_an_odd_sample_size_is_the_unbalanced_study_of_powertost(
+    cv: float, n: int, design: str, expected: float, tolerance: float
+) -> None:
+    """An odd `n` splits into the two sequences the study would really have."""
+    assert power_tost(cv=cv, n=n, design=design) == pytest.approx(
+        expected, abs=tolerance
+    )
+
+
+def test_the_unbalanced_standard_error_is_below_the_balanced_one() -> None:
+    """One subject more in one sequence is worth less than a balanced pair."""
+    design = DESIGNS["2x2"]
+    assert design.se(0.3, 40) == pytest.approx(0.3 * np.sqrt(2.0 / 40.0))
+    assert design.se(0.3, 39) > design.se(0.3, 40)
+    assert design.se(0.3, 39) < design.se(0.3, 38)
+    # the balanced formula would be optimistic for an odd size
+    assert design.se(0.3, 39) > 0.3 * np.sqrt(2.0 / 39.0)
