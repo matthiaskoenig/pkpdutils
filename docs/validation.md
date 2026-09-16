@@ -78,7 +78,7 @@ result = nca(batch, options=options)
 
 The indomethacin analysis is the same call with `route=Route.IV_BOLUS`, `unit="ug/mL"`, a dose of 25 mg and `exclude_cmax=False`; the infusion case is that call with `route=Route.IV_INFUSION` and a `dose_duration` of 0.25 h, the run the report makes with `adm="Infusion", dur=0.25`.
 
-The infusion case is what validates two conventions of an infusion which the bolus case cannot: the zero inserted at the dose time of a curve whose first sample comes later, and the mean residence time corrected by half the duration. The indomethacin profiles start at 0.25 h, so `auc_last` of subject 1 is 1.741 with the inserted zero and 1.554 without it, and its `mrt` is 3.663 h with the correction and 3.788 h without; both agree with WinNonlin to machine precision.
+The infusion case is what validates three conventions of an infusion which the bolus case cannot: the zero inserted at the dose time of a curve whose first sample comes later, the mean residence time corrected by half the duration, and the terminal regression which may not start at or before the end of the infusion (subject 4 is the subject where the last one decides: eleven points from 0.25 h as a bolus, ten from 0.5 h as an infusion). The indomethacin profiles start at 0.25 h, so `auc_last` of subject 1 is 1.741 with the inserted zero and 1.554 without it, and its `mrt` is 3.663 h with the correction and 3.788 h without; both agree with WinNonlin to machine precision.
 
 ## The comparison
 
@@ -194,24 +194,24 @@ One row per case and parameter, the largest relative deviation over the subjects
 | indometh | Phoenix WinNonlin | linear | `clast` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `auc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `auc_all` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_obs` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_pred` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_extrap_fraction` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_obs` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_pred` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_extrap_fraction` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `aumc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `aumc_inf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `mrt` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_r2` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_r2_adj` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_n_points` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_t_first` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `aumc_inf` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `mrt` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2_adj` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_n_points` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_t_first` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `lambda_z_t_last` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `thalf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `thalf` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `cmax_dn` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_dn` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `cl` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `vz` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `vss` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_dn` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `cl` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vz` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vss` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | theoph | PKNCA | linear_log | `clast` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `cmax` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `lambda_z` | 2 | 4.6e-07 | 1e-04 | pknca-theoph-vignette |
@@ -246,7 +246,7 @@ The tolerance of a WinNonlin number is the machine precision tolerance of 1e-6; 
 
 ## The known differences
 
-**The terminal window of the infusion run.** WinNonlin starts the terminal regression of subject 4 of the infusion case after the end of the infusion, at 0.5 h with ten points, where it starts at the observed maximum at 0.25 h with eleven points for the very same profile analysed as a bolus. `pkpdutils` has no rule which keeps the samples taken during an infusion out of the regression, so it regresses the same eleven points in both runs; every parameter which reads the terminal window follows (`lambda_z` by 6 %, `thalf` by 6 %, `vz` by 5 %, `auc_inf_obs` and `cl` by 0.4 %). The other five subjects and every parameter which does not read the window agree to machine precision. The fifteen entries of subject 4 are marked `xfail(strict=True)` in `tests/nca/test_validation.py`, which means the test suite fails if they ever start to agree without this page being updated.
+**The zero at the dose of an extravascular curve.** WinNonlin inserts a concentration of 0 at the dose time of an extravascular **and** of an infusion single dose curve whose first sample comes later. `pkpdutils` inserts it for an infusion only: the areas of an extravascular curve start at its first sample, as they always have, and changing that would move the regression reference of `pkdb_analysis` 0.3.1 (`tests/data/reference/nca_reference.json`), which is a decision about the analysis and not about this comparison. A partial area does insert the zero for an extravascular dose, since an interval which begins at the dose has to begin somewhere. Neither dataset exercises the difference: every theophylline subject carries a sample at the dose time, so nothing in the table below is affected, and the indomethacin profiles are analysed intravenously. The rule is stated on [Non-compartmental analysis](nca.md).
 
 **The end of a partial interval.** The PKNCA vignette prints `auclast` of 92.365442 for subject 1 over the interval 0 to 24 h, where `partial_auc(batch, 0.0, 24.0)` returns 146.01. The difference is the treatment of the end of the interval, not the arithmetic: PKNCA sums the trapezoids between the observations which fall inside the interval and stops at the last of them, which is at 12.12 h for this subject, while `partial_auc` interpolates the concentration at 24 h with the trapezoidal rule of the analysis and integrates to there. Over the window PKNCA actually integrated, `partial_auc(batch, 0.0, 12.12)` reproduces its number to 4.8e-9, and that is the comparison the reference file holds (the case `theoph-pknca-partial`). An analyst who wants the PKNCA convention passes the last observation inside the interval as `t_end`.
 

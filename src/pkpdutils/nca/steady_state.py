@@ -126,8 +126,9 @@ def complete_last_interval(
     the trough of the interval is the same regression at its end,
     \(C_\mathrm{trough} = C_\mathrm{last} e^{-\lambda_z (t_\mathrm{end} -
     t_\mathrm{last})}\), and the minimum of the interval is the smaller of the
-    observed minimum and that trough. The observed \(C_\mathrm{last}\) is
-    extrapolated with, as \(\mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}\) does.
+    observed minimum and that trough. The tail is extrapolated from the
+    observed \(C_\mathrm{last}\), which is what
+    \(\mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}\) extrapolates from as well.
     The completed columns replace the `NaN` columns of the last interval, so
     every parameter which reads them follows, and the share of the exposure
     which was extrapolated is reported as `auc_tau_extrap_fraction`
@@ -202,7 +203,7 @@ def complete_last_interval(
     keep = np.isfinite(area)
     completed[rows[~keep]] = False
     rows, tail, trough, area = rows[keep], tail[keep], trough[keep], area[keep]
-    observed = {name: values[keep] for name, values in observed.items()}
+    observed = {name: column[keep] for name, column in observed.items()}
     value_max = observed["interval_cmax"][:, 0]
     value_min = np.minimum(observed["interval_cmin"][:, 0], trough)
     average = area / tau[rows]

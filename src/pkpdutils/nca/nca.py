@@ -15,6 +15,20 @@ WinNonlin NCA, see `docs/nca.md`:
 - `AUC(0-inf) = AUC(0-tlast) + Clast / lambda_z` (observed or predicted `Clast`)
 - `AUMC(0-inf) = AUMC(0-tlast) + Clast tlast / lambda_z + Clast / lambda_z²`
 - `MRT = AUMC(0-inf) / AUC(0-inf)`, minus half the infusion duration
+- `thalf_eff = ln 2 * MRT`, the effective half-life. The formula is the one of
+  PKNCA (Denney et al. 2015), whose `pk.calc.thalf.eff` reads
+
+  ```r
+  #' @details thalf.eff is `log(2)*mrt`.
+  pk.calc.thalf.eff <- function(mrt) {
+    log(2)*mrt
+  }
+  ```
+
+  and whose interval columns `thalf.eff.obs`, `thalf.eff.pred` and
+  `thalf.eff.iv.*` all evaluate it with the mean residence time they name. It
+  is reported by every concentration analysis, single dose and multiple dose,
+  and it uses the `MRT` of the row, the infusion correction included
 - `CL = Dose / AUC(0-inf)`, `Vz = CL / lambda_z`, `Vss = CL MRT` (intravenous)
 """
 
@@ -595,9 +609,10 @@ def compute_parameters(
             (`TerminalPhase.windows`, `sample_windows`)
         single_dose: whether the rows are single dose curves. An infusion which
             starts at the dose is 0 there, so a zero is inserted at the dose
-            time of a single dose row whose first sample comes later
-            (`_insert_dose_value`); the same row of a steady state interval
-            starts at its trough and nothing is inserted
+            time of a single dose row whose first sample comes later (the
+            `insert_point` call of the `IV_INFUSION` branch below, which
+            `_insert_dose_value` does for a partial area); the same row of a
+            steady state interval starts at its trough and nothing is inserted
             (`pkpdutils.nca.steady_state.compute_steady_state` passes `False`)
 
     Returns:
@@ -627,6 +642,16 @@ def compute_parameters(
     )
     exclude = None if rules.terminal_regression else blq_packed
     tp, cp, n_valid = pack_valid(t, c)
+    if route is Route.IV_INFUSION and dose_duration is not None:
+        # the terminal regression of an infusion starts after the infusion: the
+        # concentration still rises while the drug is given, so no sample at or
+        # before the end of the infusion is a candidate (Phoenix WinNonlin,
+        # which starts the window at the first sample after `dose_duration`).
+        # The times are relative to the dose, so the end of the infusion is its
+        # duration; a row without one excludes nothing
+        with np.errstate(invalid="ignore"):
+            during = tp <= np.nan_to_num(dose_duration, nan=0.0)[:, None]
+        exclude = during if exclude is None else (exclude | during)
     n_rows, n = tp.shape
     idx = np.arange(n)[None, :]
     in_row = idx < n_valid[:, None]
@@ -738,7 +763,8 @@ def compute_parameters(
         mrt = aumc_inf / auc_inf_obs
         if route is Route.IV_INFUSION and dose_duration is not None:
             mrt = mrt - np.where(np.isnan(dose_duration), 0.0, dose_duration) / 2.0
-        # the effective half-life, PKNCA `pk.calc.thalf.eff`: `log(2) * mrt`
+        # the effective half-life, PKNCA `pk.calc.thalf.eff`, verbatim
+        # `log(2)*mrt` (see the module docstring)
         thalf_eff = np.log(2.0) * mrt
         flags |= np.where(
             extrap > options.extrapolation_warning, NCAFlag.EXTRAPOLATION_HIGH, 0

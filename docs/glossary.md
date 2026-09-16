@@ -15,7 +15,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum and its time | value, time | [NCA](nca.md) |
 | `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | [NCA](nca.md) |
 | `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\) | value | [NCA](nca.md) |
-| `tlag` | \(t_\mathrm{lag}\) | lag of the absorption: the last sample after the dose before the first measurable value (extravascular) | time | [NCA](nca.md) |
+| `tlag` | \(t_\mathrm{lag}\) | lag of the absorption: the last sample after the dose before the first measurable value (extravascular), 0 when the first sample at or after the dose is already measurable | time | [NCA](nca.md) |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 (bolus) | value | [NCA](nca.md) |
 | `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | [NCA](nca.md) |
 | `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes (bolus) | – | [NCA](nca.md) |

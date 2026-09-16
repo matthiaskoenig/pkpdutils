@@ -16,9 +16,11 @@ from pkpdutils import (
     NCAOptions,
     Route,
     Timecourse,
+    UncertaintyMethod,
     nca_single,
 )
 from pkpdutils.nca import superposition
+from pkpdutils.nca.uncertainty import terminal_independent
 
 K, C0, TAU = 0.2, 10.0, 12.0
 DOSE = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
@@ -180,3 +182,75 @@ def test_a_completed_interval_carries_no_incomplete_flag() -> None:
     # the per-interval variables of the completed interval are written as well
     frame = result.intervals()
     assert frame["interval_auc"].to_numpy()[-1] == pytest.approx(C0 / K, rel=1e-9)
+
+
+def test_terminal_independent_drops_the_completable_parameters() -> None:
+    # a completed interval carries a tail of the terminal regression, so the
+    # parameters of that interval depend on the window as soon as the
+    # completion is switched on
+    covered = terminal_independent(NCAOptions(tau_tolerance=0.0))
+    completable = terminal_independent(NCAOptions())
+    for name in ("auc_tau", "cmin_ss", "cmax_ss", "ctrough", "cavg"):
+        assert name in covered, name
+        assert name not in completable, name
+    # the parameters which never read the interval are unaffected
+    for name in ("auc_last", "cmax", "clast"):
+        assert name in covered and name in completable, name
+
+
+def group_curve(t_last: float = TAU, n_doses: int = 3) -> Timecourse:
+    """A group curve of `n_doses` boluses with a standard error per point."""
+    protocol = Dosing.regimen(DOSE, interval=TAU, n_doses=n_doses)
+    samples = np.array([0.0, 0.5, 1, 2, 4, 6, 8, 9, 10, 11, t_last])
+    time = np.unique(np.concatenate([d + samples for d in protocol.times]))
+    value = np.zeros_like(time)
+    for d in protocol.times:
+        value += np.where(
+            time >= d, C0 * np.exp(-K * np.clip(time - d, 0.0, None)), 0.0
+        )
+    return Timecourse(
+        time=time,
+        value=value,
+        se=0.1 * value,
+        n=8,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+        substance="x",
+    )
+
+
+def test_the_delta_method_skips_a_window_change_for_the_interval_parameters() -> None:
+    # a large step makes the terminal window flip at some points, which is what
+    # `NCAFlag.DELTA_WINDOW_CHANGE` reports
+    options = LOG.model_copy(
+        update={"uncertainty": UncertaintyMethod.DELTA, "delta_step": 0.9}
+    )
+    curve = group_curve()
+    completable = nca_single(curve, options=options)
+    covered = nca_single(
+        curve, options=options.model_copy(update={"tau_tolerance": 0.0})
+    )
+    assert "DELTA_WINDOW_CHANGE" in completable.flags()
+    # the same exposure, but its uncertainty no longer differentiates across
+    # the two regressions of a point at which the window flipped
+    assert float(completable["auc_tau"]) == pytest.approx(float(covered["auc_tau"]))
+    assert float(completable["auc_tau_se"]) != pytest.approx(
+        float(covered["auc_tau_se"])
+    )
+    assert float(completable["cavg_se"]) != pytest.approx(float(covered["cavg_se"]))
+    # a parameter which never reads the dosing interval is untouched
+    assert float(completable["auc_last_se"]) == pytest.approx(
+        float(covered["auc_last_se"])
+    )
+
+
+def test_a_group_curve_whose_last_interval_is_completed_carries_its_uncertainty() -> (
+    None
+):
+    options = LOG.model_copy(update={"uncertainty": UncertaintyMethod.DELTA})
+    result = nca_single(group_curve(t_last=0.95 * TAU), options=options)
+    assert np.isfinite(float(result["auc_tau"]))
+    assert float(result["auc_tau_extrap_fraction"]) > 0.0
+    assert np.isfinite(float(result["auc_tau_se"]))
+    assert "INCOMPLETE_INTERVAL" not in result.flags()

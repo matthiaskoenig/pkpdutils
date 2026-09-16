@@ -128,3 +128,15 @@ def test_too_few_intervals_give_no_estimate() -> None:
     result = nca_single(superposed(0.2, 2), options=LOG)
     assert np.isnan(float(time_to_steady_state(result).tss))
     assert np.isnan(float(time_to_steady_state(result, method="stepwise").tss))
+
+
+def test_the_frame_of_a_single_curve_result() -> None:
+    result = nca_single(superposed(0.2, 10), options=LOG)
+    frame = time_to_steady_state(result).to_dataframe()
+    # a result without sample dimensions is one row; the scalar coordinates of
+    # the result travel with it
+    assert len(frame) == 1
+    assert list(frame.columns) == ["dose_amount", "tss", "c_ss"]
+    assert frame["tss"].to_numpy()[0] == pytest.approx(np.log(10.0) / 0.2, rel=1e-6)
+    stepwise = time_to_steady_state(result, method="stepwise").to_dataframe()
+    assert list(stepwise.columns) == ["dose_amount", "tss"]

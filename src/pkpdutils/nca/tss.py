@@ -9,9 +9,13 @@ demonstrate the attainment of steady-state").
 
 A multiple dose analysis already reports the trough of every dosing interval
 (`interval_ctrough`, the value at the end of the interval, and `interval_cmin`,
-its smallest value) against the start of the interval, so the estimate is a
-curve through those troughs. `time_to_steady_state` offers the two estimators
-of PKNCA (`pk.tss.monoexponential`, `pk.tss.stepwise.linear`):
+its smallest value), so the estimate is a curve through those troughs. The
+trough of an interval is the value at its **end**, so `interval_end` is the
+time it was taken at and the time the troughs are read against;
+`interval_start` is what the stepwise estimate reports, the start of the
+interval from which the troughs no longer rise. `time_to_steady_state` offers
+the two estimators of PKNCA (`pk.tss.monoexponential`,
+`pk.tss.stepwise.linear`):
 
 - **monoexponential**: the troughs approach the plateau as
   \(C_\mathrm{trough}(t) = C_\mathrm{ss}\left(1 - e^{-k t}\right)\), which is
@@ -21,8 +25,8 @@ of PKNCA (`pk.tss.monoexponential`, `pk.tss.stepwise.linear`):
 - **stepwise**: no model. The troughs from interval \(i\) on are regressed
   linearly against time and the slope is tested against 0; the first interval
   from which the trend is no longer significant at `alpha` is where the
-  plateau starts. It is the conservative estimate of a study report, since it
-  asks only that the troughs stop rising.
+  plateau starts, and its start is the estimate. It is the conservative
+  estimate of a study report, since it asks only that the troughs stop rising.
 
 Both are estimates of a design quantity and not of a parameter of the drug: a
 study which stops before the plateau reports a time to steady state which is
@@ -42,6 +46,7 @@ from scipy.stats import t as student_t
 
 from pkpdutils.nca.intervals import INTERVAL_DIM
 from pkpdutils.nca.result import NCAResult
+from pkpdutils.nca.terminal import window_statistics
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +86,19 @@ class TSSResult:
 
         Returns:
             The sample coordinates, `tss` and, for the monoexponential
-            estimate, `c_ss`.
+            estimate, `c_ss`; the single row of a result of one curve
+            (`nca_single`, no sample dimensions) with its scalar coordinates.
         """
+        if self.tss.ndim == 0:
+            # a scalar cannot be turned into a frame by xarray; the one row is
+            # the scalar coordinates of the result plus the estimate
+            row: dict[str, Any] = {
+                str(name): coord.item() for name, coord in self.tss.coords.items()
+            }
+            row["tss"] = float(self.tss)
+            if self.c_ss is not None:
+                row["c_ss"] = float(self.c_ss)
+            return pd.DataFrame([row])
         frame = self.tss.rename("tss").to_dataframe().reset_index()
         if self.c_ss is not None:
             frame["c_ss"] = self.c_ss.to_numpy().reshape(-1)
@@ -140,45 +156,50 @@ def _monoexponential_row(
     return float(-np.log1p(-fraction) / k), plateau(k)
 
 
-def _stepwise_row(
-    time: np.ndarray, value: np.ndarray, start: np.ndarray, alpha: float
-) -> float:
-    """The first interval from which the troughs no longer trend, for one sample.
+def _stepwise(
+    time: np.ndarray,
+    value: np.ndarray,
+    start: np.ndarray,
+    valid: np.ndarray,
+    alpha: float,
+) -> np.ndarray:
+    """The first interval from which the troughs no longer trend, per sample.
 
     The troughs from position `i` on are regressed against time and the slope
     is tested against 0 with the two-sided t test of the regression (`n - 2`
     degrees of freedom); the first `i` whose p value is above `alpha` is the
     answer, the time to steady state being the start of that interval (PKNCA
-    `pk.tss.stepwise.linear`).
+    `pk.tss.stepwise.linear`). Every window of every sample is regressed at
+    once by `pkpdutils.nca.terminal.window_statistics`, which is the same
+    suffix-sum computation the terminal phase selection runs on.
 
     Args:
-        time: the times the troughs were taken at, increasing
-        value: the troughs
-        start: the start of the interval of every trough
+        time: the times the troughs were taken at `(N, K)`, increasing per row
+            with the valid entries packed to the front
+        value: the troughs `(N, K)`
+        start: the start of the interval of every trough `(N, K)`
+        valid: which entries are troughs `(N, K)`
         alpha: significance level of the trend test
 
     Returns:
-        The start of the first interval without a significant trend, `NaN`
-        when every window of at least three troughs still trends.
+        The start of the first interval without a significant trend per sample
+        `(N,)`, `NaN` when every window of at least three troughs still trends.
     """
-    for i in range(time.size - 2):
-        x, y = time[i:], value[i:]
-        n = x.size
-        centered = x - x.mean()
-        sxx = float(np.sum(centered * centered))
-        if sxx <= 0.0:
-            continue
-        slope = float(np.sum(centered * (y - y.mean())) / sxx)
-        intercept = float(y.mean() - slope * x.mean())
-        residual = y - (intercept + slope * x)
-        variance = float(np.sum(residual * residual)) / (n - 2)
-        if variance <= 0.0:
-            # an exact straight line: a slope of 0 is no trend, any other is
-            return float(start[i]) if slope == 0.0 else float("nan")
-        p_value = 2.0 * student_t.sf(abs(slope) / np.sqrt(variance / sxx), n - 2)
-        if p_value > alpha:
-            return float(start[i])
-    return float("nan")
+    stats = window_statistics(time, value, valid)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t_statistic = np.abs(stats["slope"]) / stats["se_slope"]
+        p_value = 2.0 * student_t.sf(t_statistic, stats["n"] - 2.0)
+        # an exact straight line has no residual scatter: a slope of 0 is no
+        # trend, any other slope is one, whatever the t statistic does there
+        exact = stats["se_slope"] == 0.0
+        no_trend = np.where(exact, stats["slope"] == 0.0, p_value > alpha)
+    no_trend = no_trend & np.isfinite(stats["n"])
+    first = no_trend.argmax(axis=1)
+    return np.where(
+        no_trend.any(axis=1),
+        np.take_along_axis(start, first[:, None], axis=1)[:, 0],
+        np.nan,
+    )
 
 
 def _troughs(
@@ -224,17 +245,20 @@ def time_to_steady_state(
     r"""Time to steady state from the troughs of the dosing intervals.
 
     The troughs of every sample (`interval_ctrough`, `interval_cmin` when the
-    analysis reports no trough) are read against the start of their interval
-    (`interval_start`) and the plateau is estimated with one of the two
-    methods of the module, which are those of PKNCA (`pk.tss`):
+    analysis reports no trough) are read against the end of their interval
+    (`interval_end`), the time the trough was taken at, and the plateau is
+    estimated with one of the two methods of the module, which are those of
+    PKNCA (`pk.tss`):
 
     - `"monoexponential"` fits
       \(C_\mathrm{trough}(t) = C_\mathrm{ss}\left(1 - e^{-k t}\right)\) by
       least squares and reports \(t_\mathrm{ss} = -\ln(1 - f) / k\), the time
-      to the fraction \(f\) of the plateau, together with the plateau;
+      to the fraction \(f\) of the plateau, together with the plateau; \(t\)
+      is measured from the start of the first dosing interval and the estimate
+      is reported in the times of the analysis;
     - `"stepwise"` regresses the troughs from every interval on linearly and
-      reports the start of the first interval from which the slope is no
-      longer significant at `alpha`.
+      reports `interval_start` of the first interval from which the slope is
+      no longer significant at `alpha`.
 
     Args:
         result: the result of a multiple dose analysis with per-interval
@@ -265,32 +289,37 @@ def time_to_steady_state(
         array = da.transpose(*sample_dims, INTERVAL_DIM).to_numpy()
         return array.reshape(-1, array.shape[-1])
 
-    values = troughs.transpose(*sample_dims, INTERVAL_DIM).to_numpy()
-    shape = values.shape[:-1]
     flat_values = rows(troughs)
     flat_starts = rows(starts)
     flat_ends = rows(ends)
-    tss = np.full(flat_values.shape[0], np.nan)
+    shape = troughs.transpose(*sample_dims, INTERVAL_DIM).shape[:-1]
+    # the intervals of a row which carry a trough, packed to the front of the
+    # row in their (increasing) interval order, as `pack_valid` packs a curve
+    finite = (
+        np.isfinite(flat_starts) & np.isfinite(flat_ends) & np.isfinite(flat_values)
+    )
+    order = np.argsort(~finite, axis=1, kind="stable")
+    start = np.take_along_axis(flat_starts, order, axis=1)
+    end = np.take_along_axis(flat_ends, order, axis=1)
+    value = np.take_along_axis(flat_values, order, axis=1)
+    valid = np.take_along_axis(finite, order, axis=1)
+    n_valid = finite.sum(axis=1)
+
     plateau = np.full(flat_values.shape[0], np.nan)
-    for row in range(flat_values.shape[0]):
-        finite = (
-            np.isfinite(flat_starts[row])
-            & np.isfinite(flat_ends[row])
-            & np.isfinite(flat_values[row])
-        )
-        start, end = flat_starts[row][finite], flat_ends[row][finite]
-        y = flat_values[row][finite]
-        order = np.argsort(end)
-        start, end, y = start[order], end[order], y[order]
-        if start.size == 0:
-            continue
-        if method == "monoexponential":
+    if method == "stepwise":
+        tss = _stepwise(end, value, start, valid, alpha)
+    else:
+        tss = np.full(flat_values.shape[0], np.nan)
+        for row in range(flat_values.shape[0]):
+            k = int(n_valid[row])
+            if k == 0:
+                continue
             # the model runs from the start of the dosing, and the trough of an
             # interval is the value at its end
-            estimate, plateau[row] = _monoexponential_row(end - start[0], y, fraction)
-            tss[row] = estimate + start[0]
-        else:
-            tss[row] = _stepwise_row(end, y, start, alpha)
+            estimate, plateau[row] = _monoexponential_row(
+                end[row, :k] - start[row, 0], value[row, :k], fraction
+            )
+            tss[row] = estimate + start[row, 0]
     n_missing = int(np.isnan(tss).sum())
     if n_missing:
         logger.info(

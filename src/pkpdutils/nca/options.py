@@ -392,6 +392,13 @@ WINDOW_DEFAULT_KEY: str = "*"
 class TerminalPhase(BaseModel):
     """Selection of the points of the terminal log-linear regression.
 
+    After an intravenous infusion the samples taken at or before the end of the
+    infusion (`t <= t_dose + dose_duration`) are no candidates of any window,
+    whatever `method` says: the concentration still rises while the drug is
+    given, so the first point a window may start at is the first sample
+    strictly after the infusion (Phoenix WinNonlin). It is the only rule of the
+    selection which the route decides.
+
     Attributes:
         method: the selection rule
         min_points: minimal number of points of a regression (at least 3)

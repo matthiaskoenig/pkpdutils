@@ -110,24 +110,24 @@ The comparison of `pkpdutils.nca` against the published reference values of `tes
 | indometh | Phoenix WinNonlin | linear | `clast` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `auc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `auc_all` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_obs` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_pred` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_extrap_fraction` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_obs` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_pred` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_extrap_fraction` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `aumc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `aumc_inf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `mrt` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_r2` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_r2_adj` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_n_points` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `lambda_z_t_first` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `aumc_inf` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `mrt` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2_adj` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_n_points` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_t_first` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `lambda_z_t_last` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `thalf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `thalf` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | indometh | Phoenix WinNonlin | linear | `cmax_dn` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `auc_inf_dn` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `cl` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `vz` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
-| indometh | Phoenix WinNonlin | linear | `vss` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_dn` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `cl` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vz` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vss` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | theoph | PKNCA | linear_log | `clast` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `cmax` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `lambda_z` | 2 | 4.6e-07 | 1e-04 | pknca-theoph-vignette |

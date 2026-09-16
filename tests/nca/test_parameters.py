@@ -288,3 +288,47 @@ def test_a_steady_state_infusion_interval_does_not_start_at_zero() -> None:
             )
         )
     )
+
+
+def test_the_terminal_window_of_an_infusion_starts_after_the_infusion() -> None:
+    # the concentration rises during the infusion, so no sample at or before
+    # its end is a candidate of a window (Phoenix WinNonlin)
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
+    c = np.array([1.0, 2.0, 1.6, 1.0, 0.4, 0.05])
+    options = NCAOptions(
+        auc_method=AUCMethod.LINEAR,
+        terminal=TerminalPhase(method=TerminalMethod.BEST_FIT, exclude_cmax=False),
+    )
+
+    def curve(duration: float) -> Timecourse:
+        return Timecourse(
+            time=t,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(
+                amount=100, unit="mg", route=Route.IV_INFUSION, duration=duration
+            ),
+            substance="drug",
+        )
+
+    short = nca_single(curve(0.25), options=options)
+    long_infusion = nca_single(curve(0.5), options=options)
+    # the 0.5 h infusion may not use the sample at 0.5 h, the 0.25 h one may
+    assert float(short["lambda_z_t_first"]) == 0.5
+    assert float(long_infusion["lambda_z_t_first"]) == 1.0
+    assert float(short["lambda_z_n_points"]) == 5.0
+    assert float(long_infusion["lambda_z_n_points"]) == 4.0
+    # a bolus of the same data regresses from the maximum on
+    bolus = nca_single(
+        Timecourse(
+            time=t,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+            substance="drug",
+        ),
+        options=options,
+    )
+    assert float(bolus["lambda_z_t_first"]) == 0.5

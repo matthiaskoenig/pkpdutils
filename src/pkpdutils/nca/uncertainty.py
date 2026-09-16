@@ -169,6 +169,39 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
+#: the steady state parameters of the last dosing interval, which do not depend
+#: on the terminal phase as long as the interval is covered by the data; a
+#: completed interval (`NCAOptions.tau_tolerance`) carries a tail of the
+#: terminal regression, so they depend on it then (`terminal_independent`)
+COMPLETABLE_PARAMETERS: frozenset[str] = frozenset(
+    {"auc_tau", "cmin_ss", "cmax_ss", "ctrough", "cavg"}
+)
+
+
+def terminal_independent(options: NCAOptions) -> frozenset[str]:
+    """The parameters which do not depend on the terminal phase, for these options.
+
+    `TERMINAL_INDEPENDENT_PARAMETERS` holds for an analysis which reads the
+    dosing interval as it was measured. With `NCAOptions.tau_tolerance` above 0
+    the exposure of a last interval which falls short of its end is completed
+    with the terminal regression
+    (`pkpdutils.nca.steady_state.complete_last_interval`), so `auc_tau` and the
+    four parameters which read the same interval depend on the terminal window
+    and are dropped from the set: the delta method then skips the points at
+    which the window flipped for them as well, rather than differentiating
+    across two regressions.
+
+    Args:
+        options: the options of the analysis
+
+    Returns:
+        The names of the parameters whose derivative may be taken at every
+        point, whatever the terminal window does there.
+    """
+    if options.tau_tolerance > 0.0:
+        return TERMINAL_INDEPENDENT_PARAMETERS - COMPLETABLE_PARAMETERS
+    return TERMINAL_INDEPENDENT_PARAMETERS
+
 
 def flatten_rows(a: np.ndarray | None, n_rows: int) -> np.ndarray | None:
     """A per row dose array of shape `(*sample_shape, n_dose)` as `(N, n_dose)`.
@@ -608,7 +641,7 @@ def delta(
     (`lambda_z_n_points` or `lambda_z_t_first` changes) makes the difference
     quotient a jump between two regressions instead of a derivative, which
     inflates the standard error of every terminal parameter. Such points are
-    skipped for every parameter outside `TERMINAL_INDEPENDENT_PARAMETERS` and
+    skipped for every parameter outside `terminal_independent(options)` and
     the row carries `NCAFlag.DELTA_WINDOW_CHANGE`, which says that the
     uncertainty of its terminal parameters is incomplete; use the bootstrap,
     which follows the window, for those rows.
@@ -668,6 +701,7 @@ def delta(
         else np.asarray(timecourses.n_subjects, dtype=np.float64).reshape(n_rows)
     )
     any_usable = usable.any(axis=1)
+    independent = terminal_independent(options)
     step = np.where(usable, h, 1.0)
     weight = np.where(usable, se, 0.0)
     window_changed = _window_changed(point, perturbed, n_rows, n_time) & usable
@@ -688,11 +722,7 @@ def delta(
         pert = perturbed[name].reshape(n_rows, n_time)
         # a point at which the terminal window flipped carries no derivative of
         # the parameters which depend on that window
-        keep = (
-            usable
-            if name in TERMINAL_INDEPENDENT_PARAMETERS
-            else usable & ~window_changed
-        )
+        keep = usable if name in independent else usable & ~window_changed
         with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
             derivative = np.where(keep, (pert - base[:, None]) / step, 0.0)
             var = np.sum((derivative * weight) ** 2, axis=1)
