@@ -616,8 +616,12 @@ def compute_parameters(
     auc_last = np.where(has_data & has_positive, auc_last, nan)
     aumc_last = np.where(has_data & has_positive, aumc_last, nan)
 
-    # to the last observation instead of the last positive one: the trailing
-    # zeros and the values a BLQ rule imputed are part of it
+    # AUCall = the area over every observation of the row, so the trailing
+    # zeros and the values a BLQ rule imputed are part of it, where AUClast
+    # ends at the last measurable value: "if the last concentration is
+    # positive, AUClast = AUCall; otherwise it includes the additional area
+    # from the last measurable concentration down to zero or negative
+    # observations" (Phoenix WinNonlin NCA, `AUCall`)
     auc_all, aumc_all = auc_aumc(tp_area, cp_area, n_area, options.auc_method)
     auc_all = np.where(has_data, auc_all, nan)
     aumc_all = np.where(has_data, aumc_all, nan)
@@ -629,9 +633,7 @@ def compute_parameters(
         original = np.zeros_like(c, dtype=bool)
         original[:, list(options.terminal.points)] = True
         # the packed position of the selected original points
-        valid = np.isfinite(t) & np.isfinite(c)
-        order = np.argsort(~valid, axis=1, kind="stable")
-        manual_mask = np.take_along_axis(original & valid, order, axis=1)
+        manual_mask = packed_mask(t, c, original)
     fit = terminal_fit(
         tp,
         cp,
@@ -646,6 +648,9 @@ def compute_parameters(
         lambda_z = -fit.slope
         thalf = np.log(2.0) / lambda_z
         auc_inf_obs = auc_last + clast / lambda_z
+        # Clast_pred = exp(Lambda_z_intercept - Lambda_z tlast), the terminal
+        # regression at the last measurable time (Phoenix WinNonlin NCA,
+        # `Clast_pred`), which `auc_inf_pred` extrapolates with
         clast_pred = np.exp(fit.intercept - lambda_z * tlast)
         auc_inf_pred = auc_last + clast_pred / lambda_z
         extrap = (auc_inf_obs - auc_last) / auc_inf_obs
@@ -700,9 +705,17 @@ def compute_parameters(
     if route is Route.IV_BOLUS:
         out["c0"] = c0
         out["c0_method"] = c0_method
-        # the segment from the dose to the first sample: the share of the
-        # exposure which the estimate of C0 contributes rather than the data
-        area, moment = segment_areas(tp_area, cp_area, n_area, options.auc_method)
+        # AUC_%Back_Ext = (area of the segment from the dose to the first
+        # sample) / AUC(0-inf), the share of the exposure the estimate of C0
+        # contributes rather than the data (Phoenix WinNonlin NCA,
+        # `AUC_%Back_Ext_obs`); 0 for a row with a sample at the dose, which
+        # has no such segment and needs no second pass over the areas
+        zero = np.zeros(n_rows)
+        area, moment = (
+            segment_areas(tp_area, cp_area, n_area, options.auc_method)
+            if insert.any()
+            else (zero[:, None], zero[:, None])
+        )
         with np.errstate(divide="ignore", invalid="ignore"):
             out["auc_back_extrap_fraction"] = np.where(
                 has_data, np.where(insert, area[:, 0], 0.0) / auc_inf_obs, nan

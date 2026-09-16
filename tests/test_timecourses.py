@@ -1630,3 +1630,11 @@ def test_lloq_must_be_constant_within_a_sample() -> None:
             unit="mg/l",
             lloq="lloq",
         )
+
+
+def test_lloq_per_time_point_is_rejected() -> None:
+    batch = Timecourses.from_timecourses(curves_with_limits(), dim="individual")
+    ds = batch.ds.drop_vars("lloq")
+    ds["lloq"] = (("individual", "time"), np.full((3, T.size), 0.1))
+    with pytest.raises(ValueError, match="one value per sample"):
+        _ = Timecourses(ds).lloq

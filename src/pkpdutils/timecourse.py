@@ -1031,18 +1031,24 @@ def _constant_per_sample(
         ValueError: if the column holds two different values within a sample,
             naming the sample.
     """
-    out = np.full(len(labels), np.nan)
-    for index in range(len(labels)):
+    # one pass over the rows, grouped by sample, rather than one scan of the
+    # column per sample: a study with a few thousand subjects goes through here
+    grouped = pd.Series(np.asarray(values, dtype=np.float64)).groupby(codes, sort=True)
+    varying = grouped.nunique(dropna=True) > 1
+    if bool(varying.any()):
+        index = int(varying.index[int(varying.to_numpy().argmax())])
         rows = values[codes == index]
         given = np.unique(rows[np.isfinite(rows)])
-        if given.size > 1:
-            raise ValueError(
-                f"sample {labels[index]}: the column '{name}' is not constant, "
-                f"found {given.tolist()}"
-            )
-        if given.size == 1:
-            out[index] = float(given[0])
-    return out
+        raise ValueError(
+            f"sample {labels[index]}: the column '{name}' is not constant, "
+            f"found {given.tolist()}"
+        )
+    # `first` skips the missing values, a sample without any value gives `NaN`
+    return (
+        grouped.first()
+        .reindex(range(len(labels)))
+        .to_numpy(dtype=np.float64, na_value=np.nan)
+    )
 
 
 def _frame_doses(
@@ -1852,11 +1858,21 @@ class Timecourses:
         of `pkpdutils.io` carry over (ADNCA `ALLOQ`). `NaN` for a sample whose
         assay names no limit; the analysis reads it when `NCAOptions.lloq`
         names no limit of its own.
+
+        Raises:
+            ValueError: if `lloq` carries a dimension which is not a sample
+                dimension, e.g. one limit per time point.
         """
         if LLOQ_VAR not in self.ds.variables:
             return None
         da = self.ds[LLOQ_VAR]
         sample_dims = self.sample_dims
+        extra = [str(d) for d in da.dims if str(d) not in sample_dims]
+        if extra:
+            raise ValueError(
+                f"'{LLOQ_VAR}' must carry one value per sample, not per time "
+                f"point; it has the dimensions {extra}"
+            )
         missing = [d for d in sample_dims if d not in da.dims]
         if missing:
             da = da.broadcast_like(self.ds["value"].isel({TIME_DIM: 0}, drop=True))

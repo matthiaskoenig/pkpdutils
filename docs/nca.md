@@ -30,11 +30,11 @@ The whole analysis of a batch, from the values to the result, with the multiple 
 
 ```mermaid
 flowchart TD
-  IN["Timecourses<br/>(N, n_time)"] --> BLQ["lloq (options or per sample)<br/>BLQRules per position<br/>drop / keep / impute, flag BLQ_TRUNCATED"]
-  BLQ --> MD{"more than one dose<br/>or NCAOptions.tau?"}
-  MD -->|no| PACK
+  IN["Timecourses<br/>(N, n_time)"] --> MD{"more than one dose<br/>or NCAOptions.tau?"}
+  MD -->|no| BLQ
   MD -->|yes| REF["reference dose<br/>drop the points before the last dose,<br/>times relative to it"]
-  REF --> PACK["pack_valid<br/>the valid points to the front of every row"]
+  REF --> BLQ["lloq (options or per sample)<br/>BLQRules per position<br/>drop / keep / impute, flag BLQ_TRUNCATED<br/>(point parameters only)"]
+  BLQ --> PACK["pack_valid<br/>the valid points to the front of every row"]
   PACK --> AUC["segment_areas<br/>linear / linear-up-log-down / log<br/>auc_last, aumc_last"]
   PACK --> PEAK["cmax, tmax, clast, tlast<br/>c0 back-extrapolated for a bolus"]
   PACK --> TERM["window_statistics<br/>every candidate window at once"]
@@ -43,7 +43,7 @@ flowchart TD
   AUC --> EXTRAP["auc_inf_obs / auc_inf_pred<br/>auc_extrap_fraction, mrt"]
   LZ --> EXTRAP
   EXTRAP --> DOSEP["cl / cl_f, vz / vz_f, vss<br/>auc_inf_dn, cmax_dn<br/>(single dose analysis only)"]
-  MD -->|yes| IV["compute_intervals<br/>interval_auc, interval_cmax,<br/>interval_ctrough per interval"]
+  MD -->|yes| IV["compute_intervals<br/>interval_auc, interval_cmax,<br/>interval_ctrough per interval<br/>(the raw values, no BLQ rule)"]
   IV --> SS["compute_steady_state<br/>the last complete interval<br/>auc_tau, cavg, fluctuation, cl_ss,<br/>accumulation_ratio(_obs)"]
   DOSEP --> OUT["NCAResult<br/>xarray.Dataset + attrs['units'] + flags"]
   PEAK --> OUT
@@ -118,17 +118,17 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `cmax`, `tmax` | \(C_\mathrm{max}\), \(t_\mathrm{max}\) | maximum observed value and its time | value, time | |
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum observed value and its time | value, time | |
 | `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | |
-| `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\), which `auc_inf_pred` extrapolates with | value | \(\lambda_z\) |
-| `tlag` | \(t_\mathrm{lag}\) | time of the last sample after the dose before the first measurable value | time | `ORAL` |
+| `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\), which `auc_inf_pred` extrapolates with[^phoenix] | value | \(\lambda_z\) |
+| `tlag` | \(t_\mathrm{lag}\) | time of the last sample after the dose before the first measurable value[^phoenix]; a sample below the limit of quantification is one only under a rule which keeps or imputes it (`BLQRules.ich_m13a()`, `pkanalix()`, `pumas()`), the default drops it and the lag is `NaN` | time | `ORAL` |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 | value | `IV_BOLUS` |
 | `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | `IV_BOLUS` |
 | `cmax_half`, `tmax_half` | | value closest to \(C_\mathrm{max}/2\) before the maximum and its time | value, time | `ORAL` |
 | `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area to the last measurable value | value·time | |
-| `auc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area to the last observation, the trailing zeros and the values a BLQ rule imputed included; equal to `auc_last` when the last observation is positive | value·time | |
+| `auc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area to the last observation, the trailing zeros and the values a BLQ rule imputed included; equal to `auc_last` when the last observation is positive[^phoenix] | value·time | |
 | `auc_inf_obs`, `auc_inf_pred` | \(\mathrm{AUC}_{0\text{-}\infty}\) | area extrapolated with the observed or predicted \(C_\mathrm{last}\) | value·time | \(\lambda_z\) |
 | `auc_extrap_fraction` | | \((\mathrm{AUC}_{0\text{-}\infty} - \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) / \mathrm{AUC}_{0\text{-}\infty}\) | – | \(\lambda_z\) |
 | `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes, 0 with a sample at the dose | – | `IV_BOLUS` |
-| `aumc_last`, `aumc_all`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation and to infinity | value·time² | \(\lambda_z\) for `_inf` |
+| `aumc_last`, `aumc_all`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation[^phoenix] and to infinity | value·time² | \(\lambda_z\) for `_inf` |
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
@@ -284,7 +284,7 @@ A value below the lower limit of quantification is not a measurement: the assay 
 - by **position**: `first` (before the first measurable value), `middle` (between two measurable values), `last` (after the last measurable value), as PKNCA[^pknca] and Pumas do;
 - by the **maximum**: `before_tmax` and `after_tmax`, as PKanalix does.
 
-A rule set uses one axis or the other, never both, and a position without a rule drops its values. An imputed value enters the areas, so `auc_all` is where the imputation shows; a value which `KEEP` keeps is treated the same way. Neither is a quantified value, so neither becomes \(C_\mathrm{last}\) and neither enters the terminal regression unless `terminal_regression=True` asks for it, which is what ICH M13A[^ich_m13a] requires: values below the limit are "treated as zero in PK parameter calculations" and "omitted from the calculation of kel and t1/2". The presets are `BLQRules.ich_m13a()`, `BLQRules.pkanalix()` and `BLQRules.pumas()`; the two classic values `BLQHandling.NAN` (the default, everything dropped) and `BLQHandling.ZERO_BEFORE_TMAX` stay and are the rule sets `NCAOptions.blq_rules` spells out.
+A rule set uses one axis or the other, never both, and a position without a rule drops its values. The rules reach the point parameters of a curve, the ones computed from the reference dose on; the per-interval and the steady state parameters (`interval_*`, `auc_tau`, `cavg`, `ctrough`, `cmin_ss`) are computed from the values as they were measured, so no rule changes them. An imputed value enters the areas, so `auc_all` is where the imputation shows; a value which `KEEP` keeps is treated the same way. Neither is a quantified value, so neither becomes \(C_\mathrm{last}\) and neither enters the terminal regression unless `terminal_regression=True` asks for it, which is what ICH M13A[^ich_m13a] requires: values below the limit are "treated as zero in PK parameter calculations" and "omitted from the calculation of kel and t1/2". The presets are `BLQRules.ich_m13a()`, `BLQRules.pkanalix()` and `BLQRules.pumas()`; the two classic values `BLQHandling.NAN` (the default, everything dropped) and `BLQHandling.ZERO_BEFORE_TMAX` stay and are the rule sets `NCAOptions.blq_rules` spells out.
 
 ```python
 import numpy as np
