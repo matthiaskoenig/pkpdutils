@@ -1,12 +1,15 @@
 """Non-compartmental analysis of one timecourse.
 
 Run from the root of the repository with `python -m examples.nca_single`.
-Writes `nca_single.png` into the working directory.
+Writes `nca_single.png` and `nca_terminal_windows.png` into the working
+directory.
 """
 
 import numpy as np
+import pandas as pd
 
 from pkpdutils import (
+    Acceptance,
     AUCMethod,
     Dose,
     NCAOptions,
@@ -16,8 +19,8 @@ from pkpdutils import (
     Timecourse,
     nca_single,
 )
-from pkpdutils.console import console
-from pkpdutils.plot import plot_nca
+from pkpdutils.console import console, print_table
+from pkpdutils.plot import plot_nca, plot_terminal_windows
 
 # caffeine after an oral dose, mean concentrations of a group
 tc = Timecourse(
@@ -51,7 +54,32 @@ if __name__ == "__main__":
     )
     console.print(old.to_dataframe().T)
 
+    console.rule("The candidate windows of the terminal phase")
+    # the selection of the terminal phase is a judgement call: keep every
+    # window the rule chose from and show it next to the curve
+    diagnostic = NCAOptions(
+        terminal=TerminalPhase(keep_candidates=True),
+        acceptance=Acceptance(r2_adj_min=0.98),
+    )
+    windows = nca_single(tc, options=diagnostic)
+    candidates = windows.ds[
+        ["candidate_t_first", "candidate_n_points", "candidate_r2_adj"]
+    ].to_dataframe()
+    print_table(
+        pd.DataFrame(
+            {
+                "first point [hr]": candidates["candidate_t_first"],
+                "points": candidates["candidate_n_points"].astype(int),
+                "adjusted R2": candidates["candidate_r2_adj"].map("{:.5f}".format),
+            }
+        ).reset_index(drop=True),
+        title="the candidate windows of the terminal regression",
+    )
+
     fig = plot_nca(tc, result)
     fig.savefig("nca_single.png", dpi=120)
-    console.print("written: nca_single.png")
+    plot_terminal_windows(tc, windows, options=diagnostic).savefig(
+        "nca_terminal_windows.png", dpi=120
+    )
+    console.print("written: nca_single.png, nca_terminal_windows.png")
     console.print(np.round(result["auc_inf_obs"].values, 3))

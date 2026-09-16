@@ -18,6 +18,9 @@ class PlotStyle:
         fit_color: color of regression lines and fitted curves
         auc_color: fill color of the area to the last measurable point
         extrapolation_color: fill color of the extrapolated area
+        partial_color: fill color of a named partial area
+            (`NCAOptions.partial_aucs`), drawn over the area to the last
+            measurable point by `pkpdutils.plot.draw_nca_panel`
         terminal_marker: marker of the points of the terminal regression
         alpha: transparency of filled areas
         linewidth: width of lines
@@ -43,6 +46,7 @@ class PlotStyle:
     fit_color: str = "#d55e00"
     auc_color: str = "#56b4e9"
     extrapolation_color: str = "#e69f00"
+    partial_color: str = "#cc79a7"
     terminal_marker: str = "s"
     alpha: float = 0.2
     linewidth: float = 1.5

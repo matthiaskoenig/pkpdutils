@@ -36,6 +36,10 @@ DOSE_COORDINATE = "dose_amount"
 #: name of the text variable carrying why a sample was excluded
 REASON_VARIABLE = "excluded_reason"
 
+#: attribute of the result dataset carrying the intervals of the named partial
+#: areas of the analysis (`NCAOptions.partial_aucs`, `NCAResult.partial_aucs`)
+PARTIAL_AUCS_ATTR = "partial_aucs"
+
 #: suffix of a dose normalized variable (`NCAResult.dose_normalized`)
 DOSE_NORMALIZED_SUFFIX = "_dn"
 
@@ -360,6 +364,25 @@ class NCAResult(ParameterResult):
             label: (float(t_first), float(t_last))
             for label, t_first, t_last in zip(labels, first, last, strict=True)
             if np.isfinite(t_first) and np.isfinite(t_last)
+        }
+
+    @property
+    def partial_aucs(self) -> dict[str, tuple[float, float]]:
+        """The named partial areas of the analysis with their intervals.
+
+        `NCAOptions.partial_aucs` as the analysis ran it, stored by `nca` in
+        the attributes of the dataset: the name of every area to its
+        `(t_start, t_end)`, both relative to the first dose of the protocol.
+        The figures read it to shade an area (`pkpdutils.plot.plot_nca`), and
+        it is empty for an analysis which computed none.
+
+        Returns:
+            Name to interval, empty without named areas.
+        """
+        stored = self.ds.attrs.get(PARTIAL_AUCS_ATTR) or {}
+        return {
+            str(name): (float(bounds[0]), float(bounds[1]))
+            for name, bounds in dict(stored).items()
         }
 
     @property

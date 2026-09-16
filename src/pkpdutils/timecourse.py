@@ -918,6 +918,13 @@ LLOQ_VAR = "lloq"
 #: proportionality study, the dose axis of a simulation scan)
 DOSE_DIM = "dose_index"
 
+#: name of the nominal (scheduled) time of every sample and time point of a
+#: `Timecourses` dataset, optional; the actual times stay the times of the
+#: batch and the analyses read them, the nominal grid is what a mean curve over
+#: the subjects of a study is taken on (ICH M13A 2.2.2.1,
+#: `pkpdutils.plot.plot_study_curves`)
+NOMINAL_TIMES_VAR = "nominal_time"
+
 
 def _sample_codes(
     df: pd.DataFrame, sample: Sequence[str]
@@ -1905,6 +1912,28 @@ class Timecourses:
         """Values as an array of shape `(*sample_shape, n_time)`."""
         return self.ds["value"].transpose(*self.sample_dims, TIME_DIM).to_numpy()
 
+    @property
+    def nominal_times(self) -> np.ndarray | None:
+        """The nominal (scheduled) time of every point, `None` without.
+
+        The optional variable `nominal_time` of shape `(*sample_shape,
+        n_time)`: the time the protocol of the study asked a sample to be taken
+        at, where `times` are the times it was taken at. The analyses read the
+        actual times; the nominal times are the grid a mean curve over the
+        subjects of a study is taken on (`pkpdutils.plot.plot_study_curves`),
+        since the actual times of two subjects never coincide. A batch whose
+        variable carries fewer dimensions (one nominal grid for every sample)
+        gets it broadcast to the shape of the values.
+        """
+        if NOMINAL_TIMES_VAR not in self.ds:
+            return None
+        da = self.ds[NOMINAL_TIMES_VAR]
+        if set(self.sample_dims) - {str(d) for d in da.dims}:
+            da = da.broadcast_like(self.ds["value"])
+        return np.asarray(
+            da.transpose(*self.sample_dims, TIME_DIM).to_numpy(), dtype=np.float64
+        )
+
     def _optional(self, name: str) -> np.ndarray | None:
         """Return a variable as an array transposed to `(*sample_dims[, time | dose])`, or `None` if absent.
 
@@ -2059,6 +2088,7 @@ class Timecourses:
         sd: Any | None = None,
         se: Any | None = None,
         n: Any | None = None,
+        nominal_time: Any | None = None,
         dose: Dose | Dosing | Mapping[str, Any] | None = None,
         route: Route | str | None = None,
         substance: str = "substance",
@@ -2079,6 +2109,10 @@ class Timecourses:
             n: the counts, one number, an array of shape `sample_shape` (one
                 count per sample) or an array of the shape of `values` (one
                 count per sample and time point)
+            nominal_time: the nominal (scheduled) time of every point, the
+                sampling grid of the protocol (1-D) or one nominal time per
+                sample and point (the shape of `values`); the actual `time`
+                stays what the analyses read
             dose: one `Dose` or one `Dosing` protocol for all samples, or a
                 mapping with `amount`, `unit` and optionally `time` and
                 `duration`; the arrays of the mapping have the shape
@@ -2145,6 +2179,25 @@ class Timecourses:
                     f"'{name}' has shape {arr.shape}, 'values' has shape {values_arr.shape}"
                 )
             data_vars[name] = (all_dims, arr, {"units": unit})
+        if nominal_time is not None:
+            nominal = np.asarray(nominal_time, dtype=np.float64)
+            if nominal.ndim == 1:
+                if nominal.size != n_time:
+                    raise ValueError(
+                        f"'nominal_time' has length {nominal.size}, 'values' has "
+                        f"shape {values_arr.shape}"
+                    )
+                nominal = np.broadcast_to(nominal, values_arr.shape)
+            elif nominal.shape != values_arr.shape:
+                raise ValueError(
+                    f"'nominal_time' has shape {nominal.shape}, 'values' has "
+                    f"shape {values_arr.shape}"
+                )
+            data_vars[NOMINAL_TIMES_VAR] = (
+                all_dims,
+                np.array(nominal, dtype=np.float64),
+                {"units": time_unit},
+            )
         if n is not None:
             # `n` is one count per sample, or one per sample and time point
             # when it has the shape of the values (the group curve of `mean`)
@@ -2374,6 +2427,7 @@ class Timecourses:
         sd: str | None = None,
         se: str | None = None,
         n: str | None = None,
+        nominal_time: str | None = None,
         lloq: str | None = None,
         dose_amount: str | None = None,
         dose_unit: str | None = None,
@@ -2403,6 +2457,10 @@ class Timecourses:
             n: name of the column with the number of subjects; the batch keeps
                 one number per sample, and the counts per time point when the
                 column varies within a sample
+            nominal_time: name of the column with the nominal (scheduled) time
+                of the point, in `time_unit`; it becomes the variable
+                `nominal_time` of the batch and the actual `time` column stays
+                what the analyses read
             lloq: name of the column with the limit of quantification, which
                 has to be constant within a sample; it becomes the coordinate
                 `lloq` along the sample dimension
@@ -2454,7 +2512,9 @@ class Timecourses:
         columns = {
             name: _numeric_column(df, name, codes=codes, labels=keys).to_numpy()
             for name in dict.fromkeys(
-                name for name in (time, value, sd, se, n, lloq) if name is not None
+                name
+                for name in (time, value, sd, se, n, nominal_time, lloq)
+                if name is not None
             )
         }
         times = columns[time]
@@ -2530,6 +2590,7 @@ class Timecourses:
             sd=spread["sd"],
             se=spread["se"],
             n=None if subjects is None else _batch_counts(subjects),
+            nominal_time=padded(nominal_time),
             dose=dose,
             route=route,
             substance=substance,
@@ -3006,7 +3067,9 @@ class Timecourses:
         uniform = bool(np.all(flat_shift == flat_shift[0]))
         ds = self._shifted_times(shift, uniform=uniform)
         offsets = xr.DataArray(shift, dims=self.sample_dims)
-        for name in ("dose_time",):
+        # the dose times and the nominal sampling times move with the actual
+        # times, so that every time of the batch keeps the same reference
+        for name in ("dose_time", NOMINAL_TIMES_VAR):
             if name in ds:
                 attrs = dict(ds[name].attrs)
                 ds[name] = ds[name] - offsets

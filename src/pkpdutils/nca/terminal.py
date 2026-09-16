@@ -15,12 +15,19 @@ end, so `window_statistics` returns `(N, n)` arrays without a loop over rows
 or windows.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
+import pandas as pd
 
 from pkpdutils.nca.auc import take_rows
 from pkpdutils.nca.options import NCAFlag, TerminalMethod, TerminalPhase
+
+#: dimension the candidate windows of the terminal regression live on
+CANDIDATE_DIM: str = "candidate"
+
+#: prefix of the variables which describe the candidate windows of a result
+CANDIDATE_PREFIX: str = "candidate_"
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,10 @@ class TerminalFit:
         t_last: time of the last point of the regression
         start: packed index of the first point of the window
         flags: `NCAFlag` bits `POSITIVE_SLOPE` and `TOO_FEW_POINTS`
+        candidates: every candidate window of every row with the columns `row`
+            (the index of the row), `start_time`, `n`, `r2_adj` and `slope`,
+            `None` unless `TerminalPhase.keep_candidates` asked for it
+            (`candidate_table`)
     """
 
     slope: np.ndarray
@@ -50,6 +61,7 @@ class TerminalFit:
     t_last: np.ndarray
     start: np.ndarray
     flags: np.ndarray
+    candidates: pd.DataFrame | None = None
 
 
 def _suffix_sum(a: np.ndarray) -> np.ndarray:
@@ -130,7 +142,8 @@ def terminal_fit(
             other row follows `phase.method`.
 
     Returns:
-        The fit per row.
+        The fit per row, with the table of every candidate window
+        (`candidate_table`) when `phase.keep_candidates` is set.
 
     Raises:
         ValueError: `phase.method` is `TerminalMethod.MANUAL` and `manual_mask` is `None`.
@@ -151,18 +164,82 @@ def terminal_fit(
         else np.isfinite(windows).all(axis=1)
     )
     if not given.any():
-        return _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
-    assert windows is not None
+        fit = _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
+    else:
+        assert windows is not None
+        with np.errstate(invalid="ignore"):
+            inside = regressable & (tp >= windows[:, :1]) & (tp <= windows[:, 1:2])
+        windowed = _fit_selected(tp, y, inside, phase, flags)
+        fit = (
+            # every row carries a window, the rule of the batch decides nothing
+            windowed
+            if given.all()
+            else _merge_fits(
+                _fit_by_method(
+                    tp, y, regressable, n_valid, tmax_idx, phase, manual_mask
+                ),
+                windowed,
+                given,
+            )
+        )
+    if not phase.keep_candidates:
+        return fit
+    return replace(fit, candidates=candidate_table(tp, y, regressable, tmax_idx, phase))
+
+
+def candidate_table(
+    tp: np.ndarray,
+    y: np.ndarray,
+    regressable: np.ndarray,
+    tmax_idx: np.ndarray,
+    phase: TerminalPhase,
+) -> pd.DataFrame:
+    """Every window the selection of the terminal phase may choose from.
+
+    A candidate is a window which starts at a point of the regression, holds at
+    least `phase.min_points` regressable points and, with
+    `phase.exclude_cmax`, starts after the maximum: the windows `BEST_FIT`
+    ranks by the adjusted R², and the same set for the other rules, which pick
+    one of them by a different criterion. A window whose first point cannot be
+    regressed is left out, since its statistics are those of the window
+    starting at the next regressable point (`_collect`). The slope is reported
+    as it is, so a window of a still rising curve is in the table with a
+    positive slope, which `BEST_FIT` never chooses.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`, `NaN` where there is none
+        regressable: the points which may enter a regression `(N, n)`
+        tmax_idx: packed index of the maximum per row
+        phase: the selection rule and its parameters
+
+    Returns:
+        One row per candidate window with the columns `row` (the index of the
+        row of the batch), `start_time` (the time of the first point of the
+        window), `n` (points of the window), `r2_adj` and `slope`; the rows
+        are ordered by row and by the start time within a row.
+    """
+    stats = window_statistics(tp, y, regressable)
+    first_allowed = (
+        tmax_idx + 1 if phase.exclude_cmax else np.zeros_like(tmax_idx)
+    ).astype(np.int64)
+    index = np.arange(tp.shape[1])[None, :]
     with np.errstate(invalid="ignore"):
-        inside = regressable & (tp >= windows[:, :1]) & (tp <= windows[:, 1:2])
-    windowed = _fit_selected(tp, y, inside, phase, flags)
-    if given.all():
-        # every row carries a window, the rule of the batch decides nothing
-        return windowed
-    return _merge_fits(
-        _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask),
-        windowed,
-        given,
+        candidate = (
+            regressable
+            & (index >= first_allowed[:, None])
+            & (stats["n"] >= phase.min_points)
+            & np.isfinite(stats["r2_adj"])
+        )
+    rows, columns = np.nonzero(candidate)
+    return pd.DataFrame(
+        {
+            "row": rows.astype(np.int64),
+            "start_time": tp[rows, columns],
+            "n": stats["n"][rows, columns].astype(np.int64),
+            "r2_adj": stats["r2_adj"][rows, columns],
+            "slope": stats["slope"][rows, columns],
+        }
     )
 
 

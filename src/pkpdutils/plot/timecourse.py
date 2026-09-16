@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
+import xarray as xr
 from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -24,7 +26,13 @@ from pkpdutils.plot._common import (
     value_with_unit,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.timecourse import Timecourse, Timecourses
+from pkpdutils.timecourse import (
+    NOMINAL_TIMES_VAR,
+    TIME_DIM,
+    TIMES_VAR,
+    Timecourse,
+    Timecourses,
+)
 
 #: the panels of `plot_mean_timecourse` and their titles
 _PANEL_TITLES = {"linear": "linear", "log": "semi-logarithmic"}
@@ -581,4 +589,177 @@ def plot_mean_timecourse(
         )
         if name == "log" and ax.get_yscale() == "log" and floor is not None:
             ax.set_ylim(bottom=floor)
+    return fig
+
+
+def nominal_grid(
+    batch: Timecourses, nominal_times: npt.ArrayLike | None = None
+) -> np.ndarray:
+    """The nominal (scheduled) time of every point of a batch.
+
+    The variable `nominal_time` of the batch when it carries one
+    (`Timecourses.from_arrays(nominal_time=...)`,
+    `Timecourses.from_dataframe(nominal_time=...)`), else the nearest entry of
+    `nominal_times` for every actual time, else the actual times themselves,
+    which is the right answer for data recorded on its schedule (a simulation,
+    a mean curve of a publication).
+
+    Args:
+        batch: the batch
+        nominal_times: the sampling schedule of the study, mapped to every
+            actual time by nearest neighbour; `None` to use the variable of the
+            batch or the actual times
+
+    Returns:
+        The nominal time of every sample and point, `(*sample_shape, n_time)`,
+        `NaN` where the batch has no point.
+    """
+    actual = batch.times
+    stored = batch.nominal_times
+    if stored is not None:
+        return stored
+    if nominal_times is None:
+        return actual
+    grid = np.asarray(nominal_times, dtype=np.float64).ravel()
+    if grid.size == 0:
+        return actual
+    nearest = grid[np.abs(actual[..., None] - grid[None, :]).argmin(axis=-1)]
+    return np.where(np.isfinite(actual), nearest, np.nan)
+
+
+def on_nominal_times(batch: Timecourses, nominal: np.ndarray) -> Timecourses:
+    """A copy of the batch whose samples sit on the shared grid of their nominal times.
+
+    Every point moves from the time it was taken at to the time it was
+    scheduled for, and the batch gets the sorted union of those times as its
+    grid: the samples of a study then share their time points and can be
+    averaged, which is what the mean profile of a study report is taken on
+    (ICH M13A 2.2.2.1). Two points of one sample with the same nominal time
+    would land on the same place; the later one wins.
+
+    Args:
+        batch: the batch
+        nominal: the nominal time of every sample and point, `(*sample_shape,
+            n_time)` (`nominal_grid`)
+
+    Returns:
+        The batch on the nominal grid, the doses and the coordinates unchanged.
+    """
+    sample_dims = batch.sample_dims
+    n_rows, n_time = batch.n_samples, batch.n_time
+    flat = np.asarray(nominal, dtype=np.float64).reshape(n_rows, n_time)
+    finite = np.isfinite(flat)
+    if not finite.any():
+        return batch
+    grid = np.unique(flat[finite])
+    rows = np.repeat(np.arange(n_rows), finite.sum(axis=1))
+    columns = np.searchsorted(grid, flat[finite])
+    moved = [
+        str(name)
+        for name, da in batch.ds.data_vars.items()
+        if TIME_DIM in da.dims and str(name) not in (TIMES_VAR, NOMINAL_TIMES_VAR)
+    ]
+    placed: dict[str, tuple[tuple[str, ...], np.ndarray, dict[str, Any]]] = {}
+    for name in moved:
+        values = (
+            batch.ds[name]
+            .transpose(*sample_dims, TIME_DIM)
+            .to_numpy()
+            .astype(np.float64)
+            .reshape(n_rows, n_time)
+        )
+        block = np.full((n_rows, grid.size), np.nan)
+        block[rows, columns] = values[finite]
+        placed[name] = (
+            (*sample_dims, TIME_DIM),
+            block.reshape(*batch.sample_shape, grid.size),
+            dict(batch.ds[name].attrs),
+        )
+    time_attrs = dict(
+        (batch.ds[TIMES_VAR] if TIMES_VAR in batch.ds else batch.ds[TIME_DIM]).attrs
+    )
+    ds = batch.ds.drop_vars(
+        [*moved, *(name for name in (TIMES_VAR, NOMINAL_TIMES_VAR) if name in batch.ds)]
+    )
+    ds = ds.drop_dims(TIME_DIM) if TIME_DIM in ds.dims else ds
+    ds = ds.assign_coords({TIME_DIM: grid})
+    ds[TIME_DIM].attrs.update(time_attrs)
+    for name, (dims, values, attrs) in placed.items():
+        ds[name] = xr.DataArray(values, dims=dims, attrs=attrs)
+    return Timecourses(ds.transpose(*sample_dims, TIME_DIM, ...))
+
+
+def plot_study_curves(
+    batch: Timecourses,
+    *,
+    by: str | None = None,
+    nominal_times: npt.ArrayLike | None = None,
+    log_y_panels: bool = True,
+    axes: Sequence[Axes] | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+) -> Figure:
+    """The concentration-time figures of a study report, individuals and means.
+
+    ICH M13A (2024, 2.2.2.1) asks for the concentration-time profile of every
+    subject on a linear and on a semi-logarithmic scale, and for the mean
+    profile of every treatment on both scales as well, the individual figures
+    drawn against the actual sampling times and the mean figures against the
+    nominal ones: a mean over the subjects only exists on the schedule the
+    study sampled by. This function draws the four panels in one call, the
+    individual curves with `plot_timecourse` in the first row and the mean
+    curves with `plot_mean_timecourse` (mean, spread band and the individuals
+    behind it) in the second.
+
+    The nominal times come from the variable `nominal_time` of the batch when
+    it carries one, else from `nominal_times` by nearest neighbour, else the
+    actual times are taken as nominal, which is the right answer for data
+    recorded on its schedule (`nominal_grid`, `on_nominal_times`).
+
+    Args:
+        batch: the batch of the study, with at least one sample dimension
+
+    Keyword Args:
+        by: coordinate of the batch grouping the curves (a treatment, an arm, a
+            dose level), one group and one color by default; the groups keep
+            their colors across the four panels
+        nominal_times: the sampling schedule of the study, used when the batch
+            carries no `nominal_time` variable: every actual time is mapped to
+            the nearest of them
+        log_y_panels: draw the two semi-logarithmic panels; `False` gives the
+            two linear panels alone
+        axes: the four axes to draw into (two with `log_y_panels=False`), in
+            reading order, a new figure by default
+        style: colors and markers
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the batch has no sample dimension.
+    """
+    if not batch.sample_dims:
+        raise ValueError("a study figure needs a batch with a sample dimension")
+    scales = (False, True) if log_y_panels else (False,)
+    fig, grid = axes_of(axes, 2, len(scales), figsize=(5.5 * len(scales), 8.4))
+    nominal = on_nominal_times(batch, nominal_grid(batch, nominal_times))
+    for k, log_y in enumerate(scales):
+        panel = grid[0][k]
+        plot_timecourse(
+            batch,
+            log_y=log_y,
+            by=by,
+            max_legend=12 if k == 0 else 0,
+            ax=panel,
+            style=style,
+        )
+        panel.set_title(f"individuals, {_PANEL_TITLES['log' if log_y else 'linear']}")
+    plot_mean_timecourse(
+        nominal,
+        by=by,
+        panels=tuple("log" if log_y else "linear" for log_y in scales),
+        axes=list(grid[1]),
+        style=style,
+    )
+    for panel in grid[1]:
+        panel.set_title(f"mean on the nominal times, {panel.get_title()}")
     return fig
