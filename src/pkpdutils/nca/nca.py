@@ -174,6 +174,25 @@ PARAMETER_UNITS: dict[str, str] = {
     "excluded_reason": "dimensionless",
     "flags": "dimensionless",
     **INTERVAL_UNITS,
+    # the urinary excretion analysis (`pkpdutils.nca.urine`), whose values are
+    # amounts per time rather than concentrations
+    "rate": "({amount}) / ({time})",
+    "midpoint": "{time}",
+    "max_rate": "({amount}) / ({time})",
+    "tmax_rate": "{time}",
+    "rate_last": "({amount}) / ({time})",
+    "mid_pt_last": "{time}",
+    "aurc_last": "{amount}",
+    "aurc_all": "{amount}",
+    "aurc_inf_obs": "{amount}",
+    "aurc_inf_pred": "{amount}",
+    "amount_recovered": "{amount}",
+    "percent_recovered": "percent",
+    "vol_ur": "{volume}",
+    "clr": "({amount}) / (({unit}) * ({time}))",
+    # the sparse sampling analysis (`pkpdutils.nca.sparse`)
+    "auc_last_df": "dimensionless",
+    "n_points": "dimensionless",
 }
 
 

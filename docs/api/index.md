@@ -16,7 +16,7 @@ The API reference is generated from the docstrings of the package.
 
 ## pkpdutils.nca
 
-Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
+Non-compartmental analysis, see [Non-compartmental analysis](../nca.md), [Urinary excretion](../urine.md) and [Sparse sampling](../sparse.md).
 
 | module | description |
 | --- | --- |
@@ -29,6 +29,8 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.steady_state](nca.steady_state.md) | steady state parameters of the last interval, accumulation ratio, superposition |
 | [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
 | [nca.report](nca.report.md) | `M13A_STATISTICS`, `acceptability_table`, `methods_line`: the tables of a regulatory report |
+| [nca.urine](nca.urine.md) | `Excretion`, `nca_urine`: the excretion rate curve, the amount recovered and the renal clearance of a urine study |
+| [nca.sparse](nca.sparse.md) | `nca_sparse`, `sparse_mean`, `bailer_variance`: the area of a sparse or destructive design with its standard error |
 
 ## pkpdutils.fit
 

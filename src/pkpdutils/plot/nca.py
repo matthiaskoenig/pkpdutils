@@ -12,6 +12,7 @@ from scipy.stats import t as student_t
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
+from pkpdutils.nca.urine import Excretion
 from pkpdutils.plot._common import (
     axes_of,
     axis_label,
@@ -37,6 +38,10 @@ LAMBDA_Z_LABEL = "lambda_z = "
 #: the label the regression line gets in a legend shared by several panels,
 #: which cannot name one curve's `lambda_z`
 TERMINAL_LABEL = "terminal regression"
+
+#: share the top of an axis is extended by so that the legend of
+#: `plot_excretion` does not sit on the plateau of the recovered amount
+LEGEND_HEADROOM = 1.6
 
 
 def _sample_values(
@@ -1074,4 +1079,209 @@ def plot_intervals(
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xlabel(INTERVAL_DIM)
     ax.set_ylabel(axis_label(name, unit_label(result.units(name))))
+    return fig
+
+
+def plot_excretion(
+    result: NCAResult,
+    excretion: Excretion,
+    *,
+    cumulative: bool = True,
+    log_rate: bool = True,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+) -> Figure:
+    r"""Plot the excretion rate curve of a urine analysis and the amount recovered.
+
+    The figure a mass balance study is read from: the excretion rate
+    \(\dot A_k\) of every collection against the midpoint \(\bar t_k\) of its
+    interval on a logarithmic axis, with the terminal regression
+    \(e^{b - \lambda_z t}\) over its window, and the cumulative amount
+    recovered against the end of every collection on a second axis, which
+    flattens out as the excretion stops.
+
+    Args:
+        result: the result of `pkpdutils.nca.urine.nca_urine`
+        excretion: the collections the result was computed from, which carry
+            the amount and the end of every interval
+
+    Keyword Args:
+        cumulative: whether the amount recovered is drawn on a second axis
+        log_rate: whether the rate axis is logarithmic, where the terminal
+            phase is a straight line
+        ax: axes to draw on, a new figure by default
+        style: colors and markers
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the result carries no excretion rate curve (it is not
+            the result of `nca_urine`).
+    """
+    if "rate" not in result.ds.data_vars or "midpoint" not in result.ds.data_vars:
+        raise ValueError(
+            "the result carries no excretion rate curve; plot_excretion draws "
+            "the result of nca_urine"
+        )
+    fig, ax = figure_of(ax)
+    midpoint = np.asarray(result["midpoint"].to_numpy(), dtype=float)
+    rate = np.asarray(result["rate"].to_numpy(), dtype=float)
+    ax.plot(
+        midpoint,
+        rate,
+        marker=style.data_marker,
+        linestyle="-",
+        color=style.data_color,
+        linewidth=style.linewidth,
+        markersize=style.markersize,
+        label="excretion rate",
+    )
+    values, _ = _sample_values(result, {})
+    lambda_z = values.get("lambda_z", np.nan)
+    intercept = values.get("lambda_z_intercept", np.nan)
+    t_first = values.get("lambda_z_t_first", np.nan)
+    t_last = values.get("lambda_z_t_last", np.nan)
+    if np.isfinite([lambda_z, intercept, t_first, t_last]).all():
+        # the rate needs no unit conversion (an amount per time is reported as
+        # it is measured), so the intercept is in the unit of the drawn curve
+        grid = np.linspace(t_first, t_last, 50)
+        ax.plot(
+            grid,
+            np.exp(intercept - lambda_z * grid),
+            linestyle="--",
+            color=style.fit_color,
+            linewidth=style.linewidth,
+            label=f"{LAMBDA_Z_LABEL}{lambda_z:.3g} 1/{unit_label(result.units('midpoint'))}",
+        )
+    ax.set_xlabel(axis_label("time", unit_label(result.units("midpoint"))))
+    ax.set_ylabel(axis_label("excretion rate", unit_label(result.units("rate"))))
+    handles, labels = ax.get_legend_handles_labels()
+    if cumulative and excretion.amount is not None:
+        twin = ax.twinx()
+        twin.plot(
+            excretion.end,
+            excretion.cumulative,
+            marker=style.terminal_marker,
+            linestyle="-",
+            color=style.auc_color,
+            linewidth=style.linewidth,
+            markersize=style.markersize,
+            label="amount recovered",
+        )
+        twin.set_ylabel(
+            axis_label("amount recovered", unit_label(result.units("amount_recovered")))
+        )
+        # the plateau of the recovery sits where the legend goes, so the axis
+        # keeps room above it
+        top = float(np.nanmax(excretion.cumulative))
+        twin.set_ylim(bottom=0.0, top=top * LEGEND_HEADROOM if top > 0.0 else None)
+        extra = twin.get_legend_handles_labels()
+        handles += extra[0]
+        labels += extra[1]
+    if log_rate:
+        log_scale(ax, "y")
+    ax.legend(handles, labels, fontsize="small", loc="upper right")
+    return fig
+
+
+def plot_sparse(
+    mean_curve: Timecourse | Timecourses,
+    result: NCAResult,
+    *,
+    log_y: bool = False,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+) -> Figure:
+    r"""Plot the mean curve of a sparse design with its area and the Bailer error.
+
+    The mean of the animals sampled at every nominal time with the standard
+    error \(s_j/\sqrt{n_j}\) of that mean as an error bar, `auc_last` shaded
+    under the polygon the linear trapezoid rule integrates (from the first
+    nominal time to the last measurable one, which is the window the estimator
+    covers), and the estimate with its standard error and the number of animals
+    per time point written into the panel.
+
+    Args:
+        mean_curve: the mean curve, a `Timecourse` or a batch of one sample
+            (`pkpdutils.nca.sparse.sparse_mean`)
+        result: the result of `pkpdutils.nca.sparse.nca_sparse` of the same
+            design
+
+    Keyword Args:
+        log_y: whether the value axis is logarithmic
+        ax: axes to draw on, a new figure by default
+        style: colors and markers
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the batch holds more than one sample.
+    """
+    if isinstance(mean_curve, Timecourses):
+        if mean_curve.n_samples != 1:
+            raise ValueError(
+                f"the batch holds {mean_curve.n_samples} samples, plot_sparse "
+                "draws the one mean curve of a design"
+            )
+        curve = next(iter(mean_curve))
+    else:
+        curve = mean_curve
+    fig, ax = figure_of(ax)
+    time = np.asarray(curve.time, dtype=float)
+    value = np.asarray(curve.value, dtype=float)
+    se = None if curve.se is None else np.asarray(curve.se, dtype=float)
+    with np.errstate(invalid="ignore"):
+        measurable = np.isfinite(value) & (value > 0.0)
+    if measurable.any():
+        through_last = np.isfinite(value)
+        through_last[int(np.flatnonzero(measurable)[-1]) + 1 :] = False
+        ax.fill_between(
+            time[through_last],
+            np.zeros(int(through_last.sum())),
+            value[through_last],
+            color=style.auc_color,
+            alpha=style.alpha,
+            label="auc_last",
+        )
+    ax.errorbar(
+        time,
+        value,
+        yerr=se,
+        marker=style.data_marker,
+        linestyle="-",
+        color=style.data_color,
+        ecolor=style.data_color,
+        capsize=3.0,
+        linewidth=style.linewidth,
+        markersize=style.markersize,
+        label="mean of the animals",
+    )
+    counts = (
+        np.asarray(result["n_points"].to_numpy(), dtype=int)
+        if "n_points" in result.ds.data_vars
+        else np.array([], dtype=int)
+    )
+    lines = [
+        f"auc_last = {estimate_text(float(result['auc_last']), np.nan, np.nan)}"
+        f" ± {float(result['auc_last_se']):.3g} {unit_label(result.units('auc_last'))}",
+        f"df = {float(result['auc_last_df']):.3g}",
+    ]
+    if counts.size:
+        lines.append(f"n per time point: {', '.join(str(int(c)) for c in counts)}")
+    ax.text(
+        0.98,
+        0.98,
+        "\n".join(lines),
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=style.annotation_fontsize,
+    )
+    ax.set_xlabel(axis_label("time", unit_label(curve.time_unit)))
+    ax.set_ylabel(axis_label(curve.substance, unit_label(curve.unit)))
+    if log_y:
+        log_scale(ax, "y")
+    ax.legend(fontsize="small", loc="center right")
     return fig

@@ -50,22 +50,32 @@ DOSE_NORMALIZED_NAMES: dict[str, str] = {"auc_inf_obs": "auc_inf_dn"}
 
 @lru_cache(maxsize=CACHE_SIZE)
 def parameter_unit(
-    expression: str, *, unit: str, time_unit: str, dose_unit: str | None
+    expression: str,
+    *,
+    unit: str,
+    time_unit: str,
+    dose_unit: str | None,
+    amount_unit: str | None = None,
+    volume_unit: str | None = None,
 ) -> tuple[str, float]:
     """Unit of a parameter and the factor from its raw unit to the reported unit.
 
-    The unit of a parameter depends only on the four strings of the signature,
-    of which an analysis has a handful (`PARAMETER_UNITS` holds 29 expressions),
-    while the derivation costs several pint conversions; the result is therefore
-    cached (`pkpdutils.units.CACHE_SIZE` entries).
+    The unit of a parameter depends only on the strings of the signature, of
+    which an analysis has a handful (`PARAMETER_UNITS` holds one expression per
+    parameter), while the derivation costs several pint conversions; the result
+    is therefore cached (`pkpdutils.units.CACHE_SIZE` entries).
 
     Args:
-        expression: pint expression with the placeholders `{unit}`, `{time}`
-            and `{dose}`, e.g. `"({unit}) * ({time})"`
+        expression: pint expression with the placeholders `{unit}`, `{time}`,
+            `{dose}`, `{amount}` and `{volume}`, e.g. `"({unit}) * ({time})"`
         unit: unit of the values
         time_unit: unit of the times
         dose_unit: unit of the doses, `None` without doses (an expression
             with `{dose}` then raises `ValueError`)
+        amount_unit: unit of an excreted amount, `None` outside the urinary
+            excretion analysis (`pkpdutils.nca.urine`)
+        volume_unit: unit of a collected volume, `None` outside the urinary
+            excretion analysis
 
     Returns:
         The canonical unit string and the factor a magnitude in the raw unit is
@@ -73,11 +83,22 @@ def parameter_unit(
         clearances to liter per hour, else 1).
 
     Raises:
-        ValueError: if `expression` uses `{dose}` without a `dose_unit`.
+        ValueError: if `expression` uses a placeholder whose unit is `None`.
     """
-    if "{dose}" in expression and dose_unit is None:
-        raise ValueError(f"'{expression}' needs a dose unit")
-    raw = expression.format(unit=unit, time=time_unit, dose=dose_unit or "")
+    for placeholder, value in (
+        ("{dose}", dose_unit),
+        ("{amount}", amount_unit),
+        ("{volume}", volume_unit),
+    ):
+        if placeholder in expression and value is None:
+            raise ValueError(f"'{expression}' needs a {placeholder[1:-1]} unit")
+    raw = expression.format(
+        unit=unit,
+        time=time_unit,
+        dose=dose_unit or "",
+        amount=amount_unit or "",
+        volume=volume_unit or "",
+    )
     quantity = Q_(1.0, ureg.parse_units(raw))
     converted = normalize_clearance(normalize_volume(quantity))
     return str(converted.units), float(converted.magnitude)

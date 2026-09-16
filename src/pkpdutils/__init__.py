@@ -62,6 +62,7 @@ from pkpdutils.nca import (
     BootstrapDistribution,
     BootstrapSpread,
     C0Method,
+    Excretion,
     Kind,
     NCAFlag,
     NCAOptions,
@@ -71,7 +72,10 @@ from pkpdutils.nca import (
     UncertaintyMethod,
     nca,
     nca_single,
+    nca_sparse,
+    nca_urine,
     partial_auc,
+    sparse_mean,
 )
 from pkpdutils.result import summary_table
 from pkpdutils.stats import (
@@ -116,6 +120,7 @@ __all__ = [
     "Dosing",
     "DosingRegimen",
     "Emax",
+    "Excretion",
     "FitFlag",
     "FitOptions",
     "FitResult",
@@ -156,10 +161,13 @@ __all__ = [
     "meta_analysis",
     "nca",
     "nca_single",
+    "nca_sparse",
+    "nca_urine",
     "partial_auc",
     "plot",
     "proportionality_test",
     "ratio",
+    "sparse_mean",
     "summary_table",
     "ureg",
 ]
