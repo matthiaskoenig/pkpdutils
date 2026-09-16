@@ -32,6 +32,7 @@ from pkpdutils.plot.nca import (
 )
 from pkpdutils.plot.parameters import plot_parameters
 from pkpdutils.plot.ratio import plot_ratio
+from pkpdutils.plot.save import save_figure
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.plot.timecourse import plot_mean_timecourse, plot_timecourse
 
@@ -52,4 +53,5 @@ __all__ = [
     "plot_ratio",
     "plot_timecourse",
     "plot_troughs",
+    "save_figure",
 ]

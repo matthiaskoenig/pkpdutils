@@ -6,10 +6,12 @@ end of every row by `pack_valid`, so that the segments between consecutive
 valid points are the columns of the arrays `segment_areas` returns.
 
 The trapezoid rules are the ones of Gabrielsson & Weiner (2016, ch. 2.8) and
-of the Phoenix WinNonlin NCA: on a segment from `(t1, c1)` to `(t2, c2)` with
-`dt = t2 - t1` the linear rule gives the area `dt (c1 + c2) / 2` and the first
-moment `dt (t1 c1 + t2 c2) / 2`; the logarithmic rule, exact for a
-mono-exponential decline, gives the area `dt (c1 - c2) / L` and the moment
+of the Phoenix WinNonlin NCA, compared against alternative numerical
+integration schemes by Yeh & Kwan (1978), Chiou (1978) and Purves (1992): on
+a segment from `(t1, c1)` to `(t2, c2)` with `dt = t2 - t1` the linear rule
+gives the area `dt (c1 + c2) / 2` and the first moment
+`dt (t1 c1 + t2 c2) / 2`; the logarithmic rule, exact for a mono-exponential
+decline, gives the area `dt (c1 - c2) / L` and the moment
 `dt (t1 c1 - t2 c2) / L + dt² (c1 - c2) / L²` with `L = ln(c1 / c2)`.
 """
 

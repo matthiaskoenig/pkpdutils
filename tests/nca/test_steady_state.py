@@ -348,3 +348,28 @@ def test_mixed_batch_chunks_and_workers_match_one_chunk() -> None:
                 equal_nan=True,
                 err_msg=name,
             )
+
+
+def test_superposition_carries_the_trough_before_every_dose() -> None:
+    regimen = DosingRegimen(dose=DOSE, interval=TAU, n_doses=3)
+    predicted = superposition(
+        single_dose(), regimen, options=NCAOptions(auc_method=AUCMethod.LOG)
+    )
+    ahead = 1e-3 * TAU
+    for k in (1, 2):
+        before = np.isclose(predicted.time, k * TAU - ahead)
+        at = np.isclose(predicted.time, k * TAU)
+        assert before.sum() == 1 and at.sum() == 1
+        # the pre-dose sample is the trough, the sample at the dose the peak
+        assert predicted.value[before][0] < predicted.value[at][0]
+        assert predicted.value[at][0] > C0
+    # a grid of the caller is used, the pre-dose samples added to it
+    grid = np.arange(0.0, 3 * TAU + 24.0, 0.5)
+    fine = superposition(
+        single_dose(),
+        regimen,
+        options=NCAOptions(auc_method=AUCMethod.LOG),
+        grid=grid,
+    )
+    assert fine.time.size == grid[grid <= 2 * TAU + single_dose().time[-1]].size + 2
+    assert np.isclose(fine.time, TAU - ahead).sum() == 1

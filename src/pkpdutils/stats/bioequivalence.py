@@ -1,7 +1,7 @@
 r"""Average bioequivalence: the two one-sided tests on the geometric mean ratio.
 
 Test and reference are bioequivalent when the 90 % confidence interval of
-the geometric mean ratio of the exposure lies within 80-125 % (FDA 2001),
+the geometric mean ratio of the exposure lies within 80-125 % (FDA 2026, EMA 2010, ICH M13A 2024),
 which is the two one-sided tests procedure of Schuirmann (1987) at
 \(\alpha = 0.05\). The interval comes from the design of the study: a 2x2
 crossover (each subject receives both formulations in two periods, in one

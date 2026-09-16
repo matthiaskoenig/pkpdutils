@@ -36,6 +36,7 @@ single dose curve by adding the shifted, dose-scaled single dose curves
 
 import numpy as np
 import xarray as xr
+from numpy.typing import ArrayLike
 
 from pkpdutils.nca.auc import interpolate_at, pack_valid, take_rows
 from pkpdutils.nca.intervals import compute_intervals
@@ -300,14 +301,26 @@ def superposition(
     *,
     options: NCAOptions | None = None,
     t_end: float | None = None,
+    grid: ArrayLike | None = None,
 ) -> Timecourse:
-    """Predict the multiple dose curve of a protocol from a single dose curve.
+    r"""Predict the multiple dose curve of a protocol from a single dose curve.
 
     Every dose of the protocol contributes the single dose curve shifted to its
     time and scaled by `amount_k / amount_single`, the linear superposition
     which holds for linear kinetics (Gabrielsson & Weiner 2016, ch. 2.8). The
-    curve is interpolated on the union of the shifted time grids and continued
-    beyond its last observed point with its terminal phase.
+    curve is interpolated on the union of the shifted time grids, or on `grid`,
+    and continued beyond its last observed point with its terminal phase.
+
+    Before the first observed point after a dose the curve runs in a straight
+    line from the value at the dose, the back-extrapolated \(C_0\) of a bolus
+    (`c0` of the analysis) and 0 for every other route, to that point. The
+    predicted curve carries a sample right before every dose after the
+    first, a thousandth of the shortest dosing interval ahead of the dose
+    time: the sample at the dose time carries the post-dose value, so without
+    the pre-dose sample the curve of a bolus would rise to the next peak in a
+    straight line from the last sample of the interval instead of falling to
+    the trough and jumping. The trough of every interval is therefore in the
+    curve, and a figure of the prediction shows the sawtooth of a bolus.
 
     The reference amount is the dose of the single dose curve; a curve whose
     dose amount is 0 carries no scale, so every dose of the protocol then
@@ -321,6 +334,11 @@ def superposition(
         options: NCA options for the interpolation and the terminal phase
         t_end: end of the predicted curve, the last dose time plus the last
             observed time by default
+        grid: the times to predict at, from the first dose to `t_end`; by
+            default the union of the observed times shifted to every dose,
+            which is as sparse as the observed curve. A fine grid
+            (`np.arange(0, 120, 0.25)`) gives a smooth curve of a figure. The
+            pre-dose samples are added either way.
 
     Returns:
         The predicted curve carrying the protocol, without a label: the label
@@ -344,6 +362,11 @@ def superposition(
         )
     tlast = float(q["tlast"].magnitude)
     clast = float(q["clast"].magnitude)
+    # a bolus starts at its back-extrapolated C0, every other route at 0
+    c_start = 0.0
+    if single.dose is not None and single.dose.route is Route.IV_BOLUS:
+        c0 = float(q["c0"].magnitude) if "c0" in q else np.nan
+        c_start = c0 if np.isfinite(c0) else 0.0
 
     dose_times = protocol.times
     factors = (
@@ -352,7 +375,15 @@ def superposition(
         else np.ones_like(protocol.amounts)
     )
     end = t_end if t_end is not None else float(dose_times[-1] + single.time[-1])
-    grid = np.unique(np.concatenate([single.time + d for d in dose_times]))
+    if grid is None:
+        times = np.concatenate([single.time + d for d in dose_times])
+    else:
+        times = np.asarray(grid, dtype=float).ravel()
+    if dose_times.size > 1:
+        # the trough right before every later dose, see the docstring
+        ahead = 1e-3 * float(np.min(np.diff(dose_times)))
+        times = np.concatenate([times, dose_times[1:] - ahead])
+    grid = np.unique(times)
     grid = grid[(grid >= dose_times[0]) & (grid <= end)]
 
     tp, cp, n_valid = pack_valid(single.time[None, :], single.value[None, :])
@@ -369,10 +400,11 @@ def superposition(
         beyond = tau_rel > tlast
         values = np.where(beyond, clast * np.exp(-lambda_z * (tau_rel - tlast)), values)
         if single.time[0] > 0:
-            # before the first observed point after a dose: linear rise from 0
+            # before the first observed point after a dose: a straight line
+            # from the start value at the dose (C0 of a bolus, 0 otherwise)
             before = (tau_rel < single.time[0]) & (tau_rel >= 0)
             with np.errstate(divide="ignore", invalid="ignore"):
-                rise = single.value[0] * tau_rel / single.time[0]
+                rise = c_start + (single.value[0] - c_start) * tau_rel / single.time[0]
             values = np.where(before, rise, values)
         total = total + factor * values
     return Timecourse(

@@ -6,7 +6,9 @@ weak inhibitor raises the AUC at least 5-fold, 2- to 5-fold or 1.25- to
 2-fold; a strong, moderate or weak inducer lowers it by at least 80 %,
 50-80 % or 20-50 %. A substrate is sensitive when a strong inhibitor raises
 its AUC at least 5-fold and moderately sensitive at 2- to 5-fold. The EMA
-guideline (EMA 2012) uses the same thresholds.
+guideline (EMA 2012) uses the same thresholds; the index substrates, inhibitors
+and inducers are the FDA's tables (FDA drug interaction table), the study designs
+follow the industry perspective of Bjornsson et al. (2003).
 """
 
 from collections.abc import Sequence
