@@ -106,7 +106,10 @@ def plot_ratio(
         )
         if annotate:
             annotations.append((float(y), estimate_text(r.gmr, r.ci_low, r.ci_high)))
-    tick_values = {1.0}
+    # unity is always drawn as the reference line; it carries a tick of its
+    # own only without the interaction thresholds, whose 0.8 and 1.25 sit so
+    # close to it that the three labels run into each other
+    tick_values = set() if thresholds is not None else {1.0}
     ax.axvline(1.0, color="gray", linewidth=1.0)
     if limits is not None:
         for limit in limits:

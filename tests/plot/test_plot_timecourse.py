@@ -170,8 +170,11 @@ def test_plot_timecourse_suppresses_a_legend_above_max_legend() -> None:
 def test_plot_timecourse_draws_an_infusion_as_a_window() -> None:
     fig = plot_timecourse(infusion_tc())
     ax = fig.axes[0]
-    spans = [patch for patch in ax.patches if patch.get_label() == "infusion"]
+    spans = [
+        patch for patch in ax.patches if str(patch.get_label()).startswith("infusion")
+    ]
     assert len(spans) == 1
+    assert spans[0].get_label() == "infusion (1 hr)"
     span = spans[0]
     assert isinstance(span, Rectangle)
     assert (span.get_x(), span.get_x() + span.get_width()) == (0.0, 1.0)
@@ -265,4 +268,29 @@ def test_plot_mean_timecourse_draws_without_a_matplotlib_warning() -> None:
         warnings.simplefilter("error")
         fig = plot_mean_timecourse(batch, by="dose")
         fig.canvas.draw()
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_timecourse_facet_legend_names_every_group() -> None:
+    # a group which no sample of the first panel carries still gets its
+    # legend entry: the legend is built from the groups of the whole batch
+    batch = escalation(n_individual=3)
+    sex = np.array([["m", "m", "m"], ["m", "f", "m"]])  # "f" only at dose 100
+    batch.ds = batch.ds.assign_coords(sex=(("dose", "individual"), sex))
+    fig = plot_timecourse(batch, facet="dose", by="sex")
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    assert sorted(text.get_text() for text in legend.get_texts()) == ["f", "m"]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_mean_timecourse_clips_the_band_at_the_axis_bottom() -> None:
+    batch = escalation()
+    fig = plot_mean_timecourse(batch, by="dose", panels=("log",))
+    ax = fig.axes[0]
+    bottom = ax.get_ylim()[0]
+    assert bottom > 0.0
+    for band in ax.collections:
+        vertices = np.asarray(band.get_paths()[0].vertices, dtype=float)
+        assert float(vertices[:, 1].min()) >= bottom
     matplotlib.pyplot.close(fig)

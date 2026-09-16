@@ -1,12 +1,14 @@
 """Figures of timecourses: the curves of a batch and the mean curve of a group."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
-import xarray as xr
+from matplotlib.artist import Artist
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from pkpdutils.plot._common import (
     axes_of,
@@ -14,6 +16,7 @@ from pkpdutils.plot._common import (
     figure_of,
     format_value,
     group_colors,
+    group_order,
     log_scale,
     sample_colors,
     sample_labels,
@@ -23,6 +26,25 @@ from pkpdutils.timecourse import Timecourse, Timecourses
 
 #: the panels of `plot_mean_timecourse` and their titles
 _PANEL_TITLES = {"linear": "linear", "log": "semi-logarithmic"}
+
+
+@dataclass(frozen=True)
+class _Group:
+    """One reduced group of `plot_mean_timecourse`, drawn on every panel.
+
+    Attributes:
+        label: legend label of the mean curve
+        color: color of the group
+        mean: the mean curve with its spread
+        curves: the individual curves, empty when they are not drawn
+        band: the spread drawn around the mean, `None` for no band
+    """
+
+    label: str
+    color: Any
+    mean: Timecourse
+    curves: list[Timecourse]
+    band: np.ndarray | None
 
 
 def _draw_curve(
@@ -75,38 +97,52 @@ def _draw_curve(
         )
 
 
-def _legend(ax: Axes, max_legend: int, title: str | None = None) -> None:
+def _legend(
+    ax: Axes,
+    max_legend: int,
+    title: str | None = None,
+    handles: Sequence[Artist] | None = None,
+) -> None:
     """Draw the legend of an axes unless it would have too many entries.
 
     Args:
         ax: the axes
         max_legend: most entries a legend may have; above it none is drawn
         title: title of the legend, the name of the grouping coordinate
+        handles: the entries of the legend, the labelled artists of `ax` by
+            default; a faceted figure passes one proxy per group, since the
+            panel the legend is drawn on need not carry every group
     """
-    handles, labels = ax.get_legend_handles_labels()
-    if not handles:
+    entries = list(ax.get_legend_handles_labels()[0] if handles is None else handles)
+    labels = [str(handle.get_label()) for handle in entries]
+    if not entries or len(labels) > max_legend:
         return
-    if len(labels) > max_legend:
-        return
-    ax.legend(fontsize="small", title=title, title_fontsize="small")
+    ax.legend(entries, labels, fontsize="small", title=title, title_fontsize="small")
 
 
-def _group_order(ds: xr.Dataset, sample_dims: Sequence[str], by: str) -> list[str]:
-    """The distinct values of a grouping coordinate, in the order they appear.
+def _group_handles(color_of: Mapping[str, Any], style: PlotStyle) -> list[Artist]:
+    """One legend proxy per group, in the order of the groups.
 
     Args:
-        ds: the dataset of the batch
-        sample_dims: the sample dimensions of the batch
-        by: name of the grouping coordinate
+        color_of: color per group label
+        style: colors and markers
 
     Returns:
-        One entry per group, as the label of a sample.
+        A `Line2D` per group, drawn like the curves of that group.
     """
-    order: list[str] = []
-    for label in sample_labels(ds, list(sample_dims), by=by):
-        if label not in order:
-            order.append(label)
-    return order
+    return [
+        Line2D(
+            [],
+            [],
+            color=color,
+            marker=style.data_marker,
+            linestyle="-",
+            linewidth=style.linewidth,
+            markersize=style.markersize,
+            label=label,
+        )
+        for label, color in color_of.items()
+    ]
 
 
 def plot_timecourse(
@@ -178,7 +214,9 @@ def plot_timecourse(
             errorbars=errorbars,
             style=style,
         )
-        dose_markers(panel, timecourses.dosing, style=style)
+        dose_markers(
+            panel, timecourses.dosing, style=style, time_unit=timecourses.time_unit
+        )
         _finish_panel(panel, timecourses, log_y=log_y, max_legend=max_legend)
         return fig
 
@@ -186,7 +224,7 @@ def plot_timecourse(
     first = batch.isel(**dict.fromkeys(batch.sample_dims, 0))
     color_of: dict[str, Any] | None = None
     if by is not None:
-        groups = _group_order(batch.ds, batch.sample_dims, by)
+        groups = group_order(batch.ds, batch.sample_dims, by)
         palette = group_colors(len(groups), style.cmap)
         color_of = dict(zip(groups, palette, strict=True))
     if facet is None:
@@ -205,7 +243,11 @@ def plot_timecourse(
 
     panels = list(batch.groupby(facet))
     fig, grid = axes_of(axes, 1, len(panels), figsize=(5.0 * len(panels), 4.0))
-    drawn: set[str] = set()
+    # the legend of a grouped figure names every group of the batch, also the
+    # ones no sample of the first panel carries, so it is built from proxies
+    # of the colors rather than from the artists of that panel
+    handles = None if color_of is None else _group_handles(color_of, style)
+    drawn: set[str] = set() if color_of is None else set(color_of)
     for k, (value, group) in enumerate(panels):
         panel = grid[0][k]
         _draw_batch(
@@ -224,6 +266,7 @@ def plot_timecourse(
             log_y=log_y,
             max_legend=max_legend if k == 0 else 0,
             legend_title=by,
+            handles=handles,
         )
     return fig
 
@@ -280,6 +323,7 @@ def _finish_panel(
     log_y: bool,
     max_legend: int,
     legend_title: str | None = None,
+    handles: Sequence[Artist] | None = None,
 ) -> None:
     """Axis labels, the scale and the legend of one panel.
 
@@ -289,12 +333,13 @@ def _finish_panel(
         log_y: logarithmic value axis
         max_legend: most entries the legend may have, `0` for no legend
         legend_title: title of the legend
+        handles: the entries of the legend, the labelled artists by default
     """
     ax.set_xlabel(f"time [{reference.time_unit}]")
     ax.set_ylabel(f"{reference.substance} [{reference.unit}]")
     if log_y:
         log_scale(ax, "y")
-    _legend(ax, max_legend, legend_title)
+    _legend(ax, max_legend, legend_title, handles)
 
 
 def _mean_curve(
@@ -396,53 +441,72 @@ def plot_mean_timecourse(
     colors = group_colors(len(groups), style.cmap)
     fig, grid = axes_of(axes, 1, len(names), figsize=(5.5 * len(names), 4.2))
     first = batch.isel(**dict.fromkeys(batch.sample_dims, 0))
-    for k, name in enumerate(names):
-        ax = grid[0][k]
-        smallest = np.inf
-        for i, (value, group) in enumerate(groups):
-            color: Any = style.data_color if len(groups) == 1 else colors[i]
-            mean = _mean_curve(group, group_dim=group_dim, spread=statistic)
-            positive = mean.value[np.isfinite(mean.value) & (mean.value > 0.0)]
+    # the reduction of every group runs once, not once per panel: the panels
+    # draw the same curves on two scales
+    reduced: list[_Group] = []
+    smallest = np.inf
+    for i, (value, group) in enumerate(groups):
+        color: Any = style.data_color if len(groups) == 1 else colors[i]
+        mean = _mean_curve(group, group_dim=group_dim, spread=statistic)
+        curves = list(group) if individuals else []
+        # the number of curves the group was reduced from, which is what the
+        # `n` of a study figure means; a time point some of them are missing
+        # from carries fewer, in the `n` of the mean curve
+        name_of = "mean" if value is None else format_value(value)
+        reduced.append(
+            _Group(
+                label=f"{name_of} (n = {group.n_samples})",
+                color=color,
+                mean=mean,
+                curves=curves,
+                band=getattr(mean, statistic) if spread is not None else None,
+            )
+        )
+        for values in (mean.value, *(tc.value for tc in curves)):
+            positive = values[np.isfinite(values) & (values > 0.0)]
             if positive.size:
                 smallest = min(smallest, float(positive.min()))
-            if individuals:
-                for tc in group:
-                    ax.plot(
-                        tc.time,
-                        tc.value,
-                        linestyle="-",
-                        color=color,
-                        linewidth=style.linewidth,
-                        alpha=individual_alpha,
-                    )
-                    finite = tc.value[np.isfinite(tc.value) & (tc.value > 0.0)]
-                    if finite.size:
-                        smallest = min(smallest, float(finite.min()))
-            band = getattr(mean, statistic) if spread is not None else None
-            if band is not None:
+    # the lower edge of a band reaches towards zero wherever the spread is as
+    # large as the mean, which would stretch a logarithmic axis over decades
+    # the data never reaches: the axis is bounded by the curves and the band
+    # is clipped at that bound
+    floor = 0.5 * smallest if np.isfinite(smallest) else None
+    for k, name in enumerate(names):
+        ax = grid[0][k]
+        for group_index, entry in enumerate(reduced):
+            for tc in entry.curves:
+                ax.plot(
+                    tc.time,
+                    tc.value,
+                    linestyle="-",
+                    color=entry.color,
+                    linewidth=style.linewidth,
+                    alpha=individual_alpha,
+                )
+            if entry.band is not None:
+                lower = entry.mean.value - entry.band
+                if name == "log" and floor is not None:
+                    lower = np.maximum(lower, floor)
                 ax.fill_between(
-                    mean.time,
-                    mean.value - band,
-                    mean.value + band,
-                    color=color,
+                    entry.mean.time,
+                    lower,
+                    entry.mean.value + entry.band,
+                    color=entry.color,
                     alpha=style.alpha,
                     linewidth=0.0,
                 )
-            # the number of curves the group was reduced from, which is what
-            # the `n` of a study figure means; a time point some of them are
-            # missing from carries fewer, in the `n` of the mean curve
-            label = "mean" if value is None else format_value(value)
-            label = f"{label} (n = {group.n_samples})"
             _draw_curve(
                 ax,
-                mean,
-                color=color,
-                label=label,
+                entry.mean,
+                color=entry.color,
+                label=entry.label,
                 errorbars=False,
                 style=style,
             )
-            if i == 0:
-                dose_markers(ax, mean.dosing, style=style)
+            if group_index == 0:
+                dose_markers(
+                    ax, entry.mean.dosing, style=style, time_unit=first.time_unit
+                )
         heading = _PANEL_TITLES[name]
         if k == 0 and spread is not None:
             heading = f"{heading}, band = mean ± {statistic}"
@@ -451,13 +515,9 @@ def plot_mean_timecourse(
             ax,
             first,
             log_y=name == "log",
-            max_legend=len(groups) + 1 if k == 0 else 0,
+            max_legend=len(groups) + 2 if k == 0 else 0,
             legend_title=by,
         )
-        if name == "log" and ax.get_yscale() == "log" and np.isfinite(smallest):
-            # the lower edge of the band reaches towards zero wherever the
-            # spread is as large as the mean, which would stretch the
-            # logarithmic axis over decades the data never reaches: the axis
-            # is bounded by the mean curves and the band is clipped at it
-            ax.set_ylim(bottom=0.5 * smallest)
+        if name == "log" and ax.get_yscale() == "log" and floor is not None:
+            ax.set_ylim(bottom=floor)
     return fig

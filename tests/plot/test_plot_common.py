@@ -13,17 +13,20 @@ from pkpdutils.plot._common import (
     annotate_column,
     annotation_room,
     axes_of,
+    axis_label,
     dose_markers,
     estimate_text,
     figure_of,
     format_value,
     group_colors,
+    group_order,
     log_scale,
     make_room_right,
     plain_log_ticks,
     sample_colors,
     sample_labels,
     sample_title,
+    unit_label,
 )
 
 matplotlib.use("Agg")
@@ -255,3 +258,41 @@ def test_annotate_column_writes_one_text_per_row() -> None:
 def test_sample_labels_write_a_number_without_trailing_zeros() -> None:
     ds = xr.Dataset({"value": (("dose",), np.zeros(2))}, coords={"dose": [50.0, 100.0]})
     assert sample_labels(ds, ("dose",)) == ["50", "100"]
+
+
+def test_unit_label_shortens_a_canonical_unit_and_keeps_a_spelled_one() -> None:
+    assert unit_label("milligram / liter") == "mg/l"
+    assert unit_label("hour") == "h"
+    assert unit_label("hr") == "hr"  # the user's own spelling of the data
+    assert unit_label("ng/ml") == "ng/ml"
+    assert unit_label("dimensionless") == ""
+    assert unit_label("") == ""
+    assert unit_label("not a unit") == "not a unit"
+
+
+def test_axis_label_leaves_out_an_empty_unit() -> None:
+    assert axis_label("trough", "mg/l") == "trough [mg/l]"
+    assert axis_label("ratio", "") == "ratio"
+
+
+def test_group_order_keeps_the_first_appearance_of_every_group() -> None:
+    ds = xr.Dataset(
+        {"value": (("individual",), np.zeros(4))},
+        coords={
+            "individual": ["s1", "s2", "s3", "s4"],
+            "arm": ("individual", ["B", "A", "B", "A"]),
+        },
+    )
+    assert group_order(ds, ("individual",), "arm") == ["B", "A"]
+
+
+def test_dose_markers_labels_the_window_once_per_axes() -> None:
+    _fig, ax = matplotlib.pyplot.subplots()
+    infusion = Dosing.single(
+        Dose(amount=100, unit="mg", route=Route.IV_INFUSION, duration=0.5)
+    )
+    dose_markers(ax, infusion, time_unit="hr")
+    dose_markers(ax, infusion, time_unit="hr")
+    labels = [str(patch.get_label()) for patch in ax.patches]
+    assert labels.count("infusion (0.5 hr)") == 1
+    matplotlib.pyplot.close("all")

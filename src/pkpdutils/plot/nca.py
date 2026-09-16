@@ -13,17 +13,20 @@ from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.plot._common import (
     axes_of,
+    axis_label,
     dose_markers,
     figure_of,
     format_value,
     group_colors,
+    group_order,
     log_scale,
     sample_colors,
     sample_labels,
     sample_title,
+    unit_label,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.timecourse import Route, Timecourse, Timecourses
+from pkpdutils.timecourse import Dosing, Route, Timecourse, Timecourses
 
 #: start of the legend label of the terminal regression line of a panel, which
 #: carries the `lambda_z` of that very curve
@@ -71,10 +74,11 @@ def draw_nca_panel(
     `[0, tlast]`, labelled `AUC(0-tau)`; a single dose result keeps shading
     `[0, tlast]` as `AUC(0-tlast)`.
 
-    The doses of a protocol of several doses are marked by a thin dotted
-    line each and an infusion by the shaded window from the dose time to the
-    end of the infusion, so that the panel shows how long the dose went in
-    (`dose_markers`).
+    An infusion is marked by the shaded window from the dose time to the end
+    of the infusion, so that the panel shows how long the dose went in. The
+    panel starts at the dose it analyses (the last one of a multiple dose
+    curve), so only that dose falls inside it and the earlier doses of a
+    protocol are not marked.
 
     Args:
         timecourse: the curve (times relative to its dose)
@@ -174,7 +178,13 @@ def draw_nca_panel(
         markersize=style.markersize,
         label="data",
     )
-    dose_markers(ax, tc.dosing, style=style)
+    if tc.dosing is not None:
+        dose_markers(
+            ax,
+            Dosing.single(tc.dosing.last),
+            style=style,
+            time_unit=tc.time_unit,
+        )
     ax.set_xlabel(f"time [{tc.time_unit}]")
     ax.set_ylabel(f"{tc.substance} [{tc.unit}]")
     if log_y:
@@ -411,30 +421,39 @@ def plot_troughs(
     ]
     sample_dims = list(result.sample_dims)
     n_interval = int(result.ds.sizes[INTERVAL_DIM])
-    if x == "time" and "interval_end" in result.ds.data_vars:
-        ends = result.ds["interval_end"].to_numpy().reshape(-1, n_interval)
-        x_values = _mean_spread(ends, "sd")[0]
-        x_label = f"time [{result.units('interval_end')}]"
+    n_rows = max(int(result.ds["interval_ctrough"].size) // n_interval, 1)
+    blocks = {
+        name: result.ds[name].to_numpy().astype(float).reshape(n_rows, n_interval)
+        for name in names
+    }
+    by_time = x == "time" and "interval_end" in result.ds.data_vars
+    if by_time:
+        ends = result.ds["interval_end"].to_numpy().astype(float)
+        ends = ends.reshape(n_rows, n_interval)
+        x_label = axis_label("time", unit_label(result.units("interval_end")))
     else:
-        x_values = result.ds[INTERVAL_DIM].to_numpy().astype(float)
+        ends = None
         x_label = INTERVAL_DIM
+    intervals = result.ds[INTERVAL_DIM].to_numpy().astype(float)
     labels = (
         sample_labels(result.ds, sample_dims, by=by)
         if by is not None
-        else ["all"] * max(result.ds["interval_ctrough"].size // n_interval, 1)
+        else ["all"] * n_rows
     )
-    groups: list[str] = []
-    for label in labels:
-        if label not in groups:
-            groups.append(label)
+    groups = group_order(result.ds, sample_dims, by) if by is not None else ["all"]
     fig, ax = figure_of(ax)
     colors = group_colors(len(groups), style.cmap)
     rows = np.asarray(labels)
     for i, group in enumerate(groups):
         color: Any = style.data_color if len(groups) == 1 else colors[i]
+        in_group = rows == group
+        # the times of the intervals of this group: two groups on different
+        # regimens have their intervals at different times
+        x_values = (
+            _mean_spread(ends[in_group], "sd")[0] if ends is not None else intervals
+        )
         for k, name in enumerate(names):
-            block = result.ds[name].to_numpy().reshape(-1, n_interval)
-            mean, error = _mean_spread(block[rows == group], statistic)
+            mean, error = _mean_spread(blocks[name][in_group], statistic)
             short = name.removeprefix(INTERVAL_PREFIX)
             label = short if by is None else f"{group}, {short}"
             ax.errorbar(
@@ -453,7 +472,7 @@ def plot_troughs(
     if x == "interval":
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xlabel(x_label)
-    ax.set_ylabel(f"trough [{result.units('interval_ctrough')}]")
+    ax.set_ylabel(axis_label("trough", unit_label(result.units("interval_ctrough"))))
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small", title=by, title_fontsize="small")
     return fig
@@ -539,5 +558,5 @@ def plot_intervals(
             ax.legend(fontsize="small")
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_xlabel(INTERVAL_DIM)
-    ax.set_ylabel(f"{name} [{result.units(name)}]")
+    ax.set_ylabel(axis_label(name, unit_label(result.units(name))))
     return fig

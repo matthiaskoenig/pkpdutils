@@ -15,6 +15,7 @@ from matplotlib.ticker import LogFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import Dosing
+from pkpdutils.units import parse_unit
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +368,7 @@ def dose_markers(
     *,
     style: PlotStyle = DEFAULT_STYLE,
     min_doses: int = 2,
+    time_unit: str | None = None,
 ) -> None:
     """Mark the doses of a protocol on the time axis of `ax`.
 
@@ -377,8 +379,11 @@ def dose_markers(
     since the single line at the dose time of a single dose curve carries no
     information.
 
-    The first window is labelled `"infusion"`, so that a legend of the axes
-    explains the shading; the lines are not labelled.
+    The first window is labelled `infusion (1 hr)` with its duration when
+    `time_unit` is given and `infusion` without it, so that a legend of the
+    axes explains the shading; the lines are not labelled. A label already
+    taken by an artist of the axes (a curve whose own label is `infusion`) is
+    left out, since two identical legend rows explain nothing.
 
     Args:
         ax: axes to draw on, its x axis carrying the times of the protocol.
@@ -387,14 +392,23 @@ def dose_markers(
     Keyword Args:
         style: colors and markers (`dose_color`, `alpha`).
         min_doses: fewest doses a protocol needs for the dose lines.
+        time_unit: unit of the times of the protocol, for the label of the
+            window.
     """
     if dosing is None:
         return
     durations = dosing.durations
+    taken = set(ax.get_legend_handles_labels()[1])
     labelled = False
     for i, dose_time in enumerate(dosing.times):
         duration = float(durations[i]) if durations is not None else np.nan
         if np.isfinite(duration) and duration > 0.0:
+            label = "infusion"
+            if time_unit is not None:
+                label = f"infusion ({duration:g} {time_unit})"
+            if labelled or label in taken:
+                label = ""
+            labelled = True
             ax.axvspan(
                 float(dose_time),
                 float(dose_time) + duration,
@@ -404,13 +418,77 @@ def dose_markers(
                 # behind every other artist, the shaded areas of the NCA panel
                 # included, so that the window never hides the data
                 zorder=0.0,
-                label=None if labelled else "infusion",
+                label=label or None,
             )
-            labelled = True
         elif dosing.n_doses >= min_doses:
             ax.axvline(
                 float(dose_time), color=style.dose_color, linestyle=":", linewidth=1
             )
+
+
+def unit_label(unit: str) -> str:
+    """A unit as the short symbols a figure carries, `mg/l` for `milligram / liter`.
+
+    The analyses of the package derive their units with pint and report its
+    canonical long form (`milligram / liter`, `hour * milligram / liter`),
+    which is too long for an axis label; the figures of the timecourses label
+    their axes with the short strings of the data (`mg/l`, `hr`). A unit in
+    the long form is therefore written in the short symbols of pint, while a
+    string the user spelled themselves (`hr`, `ng/ml`, anything that is not
+    the canonical long form) is kept as it is, so that a figure carries the
+    unit as the data carries it. A dimensionless quantity has no label at
+    all, and a string which is not a unit of the registry is passed through
+    unchanged.
+
+    Args:
+        unit: the unit string of a variable.
+
+    Returns:
+        The label, empty for a dimensionless or empty unit.
+    """
+    if not unit.strip() or unit == "dimensionless":
+        return ""
+    try:
+        parsed = parse_unit(unit)
+    except ValueError:
+        logger.debug("'%s' is not a unit of the registry, labelling it as it is", unit)
+        return unit
+    return f"{parsed:~P}" if unit == str(parsed) else unit
+
+
+def axis_label(name: str, unit: str) -> str:
+    """The label of an axis, `name [unit]`, or the name alone without a unit.
+
+    Args:
+        name: name of the variable on the axis.
+        unit: its unit, as `unit_label` writes it or `""` for none.
+
+    Returns:
+        The label.
+    """
+    return f"{name} [{unit}]" if unit else name
+
+
+def group_order(ds: xr.Dataset, sample_dims: Sequence[str], by: str) -> list[str]:
+    """The distinct labels of a grouping coordinate, in the order they appear.
+
+    The labels are the ones `sample_labels(ds, sample_dims, by=by)` gives the
+    samples, so that a figure can key its colors and its legend by them.
+
+    Args:
+        ds: the dataset of the batch or of the result.
+        sample_dims: the sample dimensions, in the order the samples are
+            enumerated.
+        by: name of the grouping coordinate.
+
+    Returns:
+        One entry per group.
+    """
+    order: list[str] = []
+    for label in sample_labels(ds, list(sample_dims), by=by):
+        if label not in order:
+            order.append(label)
+    return order
 
 
 def sample_colors(n: int, cmap: str) -> list[Any]:

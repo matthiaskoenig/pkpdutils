@@ -14,10 +14,12 @@ from pkpdutils.fit.proportionality import ProportionalityResult
 from pkpdutils.fit.result import FitResult
 from pkpdutils.plot._common import (
     axes_of,
+    axis_label,
     figure_of,
     log_scale,
     sample_colors,
     sample_labels,
+    unit_label,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 
@@ -28,8 +30,9 @@ def _axis_labels(result: FitResult) -> tuple[str, str]:
     The names are `attrs["x_name"]` and `attrs["y_name"]`, which the front
     ends of the fit set from what they were given (`time` and the substance
     for a timecourse, the column names for a table); a result built without
-    them falls back to `x` and `y`. A variable without a unit is labelled
-    with its name alone, since `[dimensionless]` says nothing about it.
+    them falls back to `x` and `y`. The unit is written in the short symbols
+    of the data (`unit_label`), and a variable without one is labelled with
+    its name alone, since `[dimensionless]` says nothing about it.
 
     Args:
         result: the fit.
@@ -37,14 +40,13 @@ def _axis_labels(result: FitResult) -> tuple[str, str]:
     Returns:
         The label of the x axis and the label of the y axis.
     """
-
-    def label(name: str, variable: str) -> str:
-        unit = result.units(variable)
-        return f"{name} [{unit}]" if unit and unit != "dimensionless" else name
-
     return (
-        label(str(result.ds.attrs.get("x_name", "x")), "x_data"),
-        label(str(result.ds.attrs.get("y_name", "y")), "y_data"),
+        axis_label(
+            str(result.ds.attrs.get("x_name", "x")), unit_label(result.units("x_data"))
+        ),
+        axis_label(
+            str(result.ds.attrs.get("y_name", "y")), unit_label(result.units("y_data"))
+        ),
     )
 
 
@@ -249,9 +251,9 @@ def plot_goodness_of_fit(
     if finite.size:
         lo, hi = float(finite.min()), float(finite.max())
         ax.plot([lo, hi], [lo, hi], "--", color="gray", linewidth=1, label="identity")
-    unit = result.units("y_data")
-    ax.set_xlabel(f"observed [{unit}]")
-    ax.set_ylabel(f"predicted [{unit}]")
+    unit = unit_label(result.units("y_data"))
+    ax.set_xlabel(axis_label("observed", unit))
+    ax.set_ylabel(axis_label("predicted", unit))
     if log_x:
         log_scale(ax, "x")
     if log_y:
@@ -425,12 +427,13 @@ def plot_bland_altman(
             center - 1.96 * sd, color=style.limit_color, linestyle=":", linewidth=1.0
         )
     ax.axhline(0.0, color="gray", linewidth=1.0)
-    unit = result.units("y_data")
+    unit = unit_label(result.units("y_data"))
+    mean_label = axis_label("mean of observed and predicted", unit)
     if log_ratio:
         log_scale(ax, "x")
-        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
+        ax.set_xlabel(mean_label)
         ax.set_ylabel("log ratio predicted / observed")
     else:
-        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
-        ax.set_ylabel(f"difference predicted - observed [{unit}]")
+        ax.set_xlabel(mean_label)
+        ax.set_ylabel(axis_label("difference predicted - observed", unit))
     return fig

@@ -237,8 +237,13 @@ def infusion_tc(duration: float = 2.0) -> Timecourse:
 def test_draw_nca_panel_draws_an_infusion_as_a_window() -> None:
     tc = infusion_tc()
     fig = plot_nca(tc, nca_single(tc))
-    spans = [patch for patch in fig.axes[0].patches if patch.get_label() == "infusion"]
+    spans = [
+        patch
+        for patch in fig.axes[0].patches
+        if str(patch.get_label()).startswith("infusion")
+    ]
     assert len(spans) == 1
+    assert spans[0].get_label() == "infusion (2 hr)"
     span = spans[0]
     assert isinstance(span, Rectangle)
     assert (span.get_x(), span.get_width()) == (0.0, 2.0)
@@ -316,7 +321,7 @@ def test_plot_troughs_against_the_time_with_groups() -> None:
     fig = plot_troughs(result, by="arm")
     assert isinstance(fig, Figure)
     ax = fig.axes[0]
-    assert ax.get_xlabel() == "time [hour]"
+    assert ax.get_xlabel() == "time [h]"  # the long "hour" of a result, shortened
     assert ax.get_ylabel().startswith("trough [")
     legend = ax.get_legend()
     assert legend is not None
@@ -369,3 +374,38 @@ def test_plot_troughs_raises_without_intervals_and_for_an_unknown_axis() -> None
     result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     with pytest.raises(ValueError):
         plot_troughs(result, x="dose")  # ty: ignore[invalid-argument-type]
+
+
+def test_draw_nca_panel_marks_the_analysed_dose_only() -> None:
+    # the panel starts at the last dose, so the earlier doses of the protocol
+    # fall outside it and no invisible line is drawn for them
+    tc = multiple_dose_tc(n_doses=3)
+    fig = plot_nca(tc, nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG)))
+    dotted = [line for line in fig.axes[0].get_lines() if line.get_linestyle() == ":"]
+    assert not dotted
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_places_every_group_on_its_own_interval_times() -> None:
+    fast = [multiple_dose_tc(n_doses=3, tau=12.0) for _ in range(2)]
+    slow = [multiple_dose_tc(n_doses=3, tau=24.0) for _ in range(2)]
+    batch = Timecourses.from_timecourses(
+        [*fast, *slow], labels=["f1", "f2", "s1", "s2"]
+    )
+    batch.ds = batch.ds.assign_coords(
+        arm=("individual", ["fast", "fast", "slow", "slow"])
+    )
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    fig = plot_troughs(result, by="arm")
+    ax = fig.axes[0]
+    fast_line = next(bar for bar in ax.containers if bar.get_label() == "fast, ctrough")
+    slow_line = next(bar for bar in ax.containers if bar.get_label() == "slow, ctrough")
+    assert isinstance(fast_line, ErrorbarContainer)
+    assert isinstance(slow_line, ErrorbarContainer)
+    np.testing.assert_allclose(
+        np.asarray(fast_line.lines[0].get_xdata()), [12.0, 24.0, 36.0]
+    )
+    np.testing.assert_allclose(
+        np.asarray(slow_line.lines[0].get_xdata()), [24.0, 48.0, 72.0]
+    )
+    matplotlib.pyplot.close(fig)

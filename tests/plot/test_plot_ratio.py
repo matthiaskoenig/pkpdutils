@@ -84,3 +84,14 @@ def test_plot_ratio_without_annotation_writes_no_text() -> None:
     fig = plot_ratio(ratios, annotate=False)
     assert not fig.axes[0].texts
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_ratio_drops_the_unity_tick_when_thresholds_crowd_it() -> None:
+    ratios = {"auc": ratio(ParameterSample(values=TEST), ParameterSample(values=REF))}
+    with_thresholds = plot_ratio(ratios, thresholds=DDIThresholds.fda())
+    ticks = [t.get_text() for t in with_thresholds.axes[0].get_xticklabels()]
+    assert "1" not in ticks
+    assert "0.8" in ticks and "1.25" in ticks
+    plain = plot_ratio(ratios)
+    assert "1" in [t.get_text() for t in plain.axes[0].get_xticklabels()]
+    matplotlib.pyplot.close("all")

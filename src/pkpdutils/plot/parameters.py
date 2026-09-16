@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from pkpdutils.plot._common import figure_of, log_scale
+from pkpdutils.plot._common import axis_label, figure_of, log_scale, unit_label
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, summarize
@@ -120,7 +120,7 @@ def plot_parameters(
                 zorder=3,
             )
     ax.set_xticks(positions, list(groups))
-    ax.set_ylabel(f"{name} [{sample.unit}]")
+    ax.set_ylabel(axis_label(name, unit_label(sample.unit)))
     if by is not None:
         ax.set_xlabel(by)
     if log_y:
