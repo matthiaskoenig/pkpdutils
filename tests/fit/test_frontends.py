@@ -118,21 +118,35 @@ def test_fit_table_dose_proportionality() -> None:
     )
     assert pooled.sample_dims == ()
     test = proportionality_test(pooled, dose_range=(25.0, 200.0))
-    assert set(test.data_vars) >= {
-        "b",
-        "b_ci_low",
-        "b_ci_high",
-        "bound_low",
-        "bound_high",
+    assert set(test.to_dict()) == {
+        "slope",
+        "ci_low",
+        "ci_high",
+        "bounds",
         "proportional",
         "inconclusive",
+        "dose_range",
+        "criterion",
     }
     r = 200.0 / 25.0
-    assert float(test["bound_low"].values) == pytest.approx(1 + np.log(0.8) / np.log(r))
-    assert float(test["bound_high"].values) == pytest.approx(
-        1 + np.log(1.25) / np.log(r)
+    assert test.bounds[0] == pytest.approx(1 + np.log(0.8) / np.log(r))
+    assert test.bounds[1] == pytest.approx(1 + np.log(1.25) / np.log(r))
+    assert float(test.slope) == pytest.approx(float(pooled["b"]))
+    assert test.dose_range == (25.0, 200.0) and test.criterion == (0.8, 1.25)
+    assert bool(test.proportional) or bool(test.inconclusive)
+    # a batch result keeps the sample dimension, `sel` picks one sample
+    per_individual = proportionality_test(result, dose_range=(25.0, 200.0))
+    assert per_individual.slope.dims == ("individual",)
+    one = per_individual.sel(individual="b")
+    assert one.slope.ndim == 0
+    assert float(one.slope) == pytest.approx(float(result["b"].sel(individual="b")))
+    assert one.bounds == per_individual.bounds
+    assert one.dose_range == (25.0, 200.0)
+    assert isinstance(one.to_dict()["proportional"], bool)
+    assert per_individual.to_dict()["slope"] == pytest.approx(
+        result["b"].to_numpy().tolist()
     )
-    assert bool(test["proportional"].values) or bool(test["inconclusive"].values)
+    assert per_individual.sel() is per_individual
 
 
 def test_fit_table_row_pairing_independent_of_dim_order() -> None:
@@ -201,9 +215,8 @@ def test_proportionality_test_detects_nonproportional() -> None:
         dim="dose",
     )
     test = proportionality_test(result, dose_range=(10.0, 400.0))
-    assert not bool(test["proportional"].values) and not bool(
-        test["inconclusive"].values
-    )
+    assert not bool(test.proportional) and not bool(test.inconclusive)
+    assert test.to_dict()["proportional"] is False
     with pytest.raises(ValueError, match="b"):
         proportionality_test(
             fit_table(
@@ -273,3 +286,34 @@ def test_fit_timecourses_rejects_coordinate_named_like_a_parameter() -> None:
     )
     with pytest.raises(ValueError, match="collides"):
         fit_timecourses(MonoExp(), batch)
+
+
+def test_fit_timecourses_names_the_axes_in_attrs() -> None:
+    result = fit_timecourses(MonoExp(), curves())
+    assert result.ds.attrs["x_name"] == "time"
+    assert result.ds.attrs["y_name"] == "x"  # the substance of the batch
+    single = fit_timecourse(MonoExp(), next(iter(curves())))
+    assert single.ds.attrs["x_name"] == "time"
+    assert single.ds.attrs["y_name"] == "x"
+
+
+def test_fit_timecourses_without_a_substance_names_the_value_axis_value() -> None:
+    tc = Timecourse(
+        time=T,
+        value=10.0 * np.exp(-0.25 * T),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    result = fit_timecourse(MonoExp(), tc)
+    assert result.ds.attrs["y_name"] == "value"
+
+
+def test_fit_table_names_the_axes_after_its_columns() -> None:
+    doses = np.array([25.0, 50.0, 100.0, 200.0])
+    ds = xr.Dataset(
+        {"auc": (("dose",), 2.0 * doses**1.05, {"units": "mg*hr/l"})},
+        coords={"dose": doses},
+    )
+    result = fit_table(Power(), ds, "dose", "auc", dim="dose")
+    assert result.ds.attrs["x_name"] == "dose"
+    assert result.ds.attrs["y_name"] == "auc"

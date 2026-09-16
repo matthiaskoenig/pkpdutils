@@ -39,7 +39,7 @@ def nca_result():
 
 def test_plot_parameters_groups() -> None:
     result = nca_result()
-    fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log=True)
+    fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log_y=True)
     assert isinstance(fig, Figure)
     ax = fig.axes[0]
     assert ax.get_yscale() == "log"
@@ -82,7 +82,9 @@ def _result_with_values(values: np.ndarray) -> ParameterResult:
 
 def test_plot_parameters_log_ticks_over_several_decades() -> None:
     values = np.array([1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0])
-    fig = plot_parameters(_result_with_values(values), "value", "individual", log=True)
+    fig = plot_parameters(
+        _result_with_values(values), "value", "individual", log_y=True
+    )
     ax = fig.axes[0]
     fig.canvas.draw()
     labels = [t.get_text() for t in ax.get_yticklabels(which="both")]
@@ -115,14 +117,14 @@ def _result_with_nonpositive_value() -> ParameterResult:
 
 def test_plot_parameters_nonpositive_value_falls_back_to_linear_marker() -> None:
     result = _result_with_nonpositive_value()
-    fig = plot_parameters(result, "value", "individual", by="sex", log=True)
+    fig = plot_parameters(result, "value", "individual", by="sex", log_y=True)
     assert isinstance(fig, Figure)
     assert fig.axes[0].get_yscale() == "log"
     matplotlib.pyplot.close("all")
 
 
 def test_plot_parameters_log_without_positive_values_stays_linear() -> None:
-    # B28: `plot_parameters(log=True)` used to call `ax.set_yscale("log")`
+    # B28: `plot_parameters(log_y=True)` used to call `ax.set_yscale("log")`
     # directly, so an all-non-positive parameter (e.g. an all-zero `cmax`
     # batch) raised "UserWarning: Data has no positive values, and therefore
     # cannot be log-scaled" at draw time.
@@ -130,7 +132,7 @@ def test_plot_parameters_log_without_positive_values_stays_linear() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         fig = plot_parameters(
-            _result_with_values(values), "value", "individual", log=True
+            _result_with_values(values), "value", "individual", log_y=True
         )
         fig.canvas.draw()
     assert fig.axes[0].get_yscale() == "linear"

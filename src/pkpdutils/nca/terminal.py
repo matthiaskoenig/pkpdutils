@@ -35,6 +35,7 @@ class TerminalFit:
         se_slope: standard error of the slope
         n_points: number of points of the regression
         t_first: time of the first point of the regression
+        t_last: time of the last point of the regression
         start: packed index of the first point of the window
         flags: `NCAFlag` bits `POSITIVE_SLOPE` and `TOO_FEW_POINTS`
     """
@@ -46,6 +47,7 @@ class TerminalFit:
     se_slope: np.ndarray
     n_points: np.ndarray
     t_first: np.ndarray
+    t_last: np.ndarray
     start: np.ndarray
     flags: np.ndarray
 
@@ -201,11 +203,19 @@ def _collect(
     The statistics of a window starting at a point that cannot be regressed
     (`NaN`, zero or negative) are those of the window starting at the next
     regressable point, so the start is snapped forward to that point before the
-    times are read: `t_first` always names a point of the regression.
+    times are read: `t_first` always names a point of the regression, and
+    `t_last` the last regressable point at or after it, the point every window
+    ends at.
     """
     # snap the start of every row forward to the first regressable point
-    at_or_after = regressable & (np.arange(tp.shape[1])[None, :] >= start[:, None])
+    n_columns = tp.shape[1]
+    at_or_after = regressable & (np.arange(n_columns)[None, :] >= start[:, None])
     start = np.where(at_or_after.any(axis=1), at_or_after.argmax(axis=1), start)
+    end = np.where(
+        at_or_after.any(axis=1),
+        n_columns - 1 - at_or_after[:, ::-1].argmax(axis=1),
+        start,
+    )
 
     def take(a: np.ndarray) -> np.ndarray:
         """Value of `a` at the chosen `start` index of every row."""
@@ -232,6 +242,7 @@ def _collect(
         se_slope=pick(stats["se_slope"]),
         n_points=pick(stats["n"]),
         t_first=pick(tp),
+        t_last=np.where(has_fit, take_rows(tp, end), nan),
         start=np.where(has_fit, start, -1),
         flags=flags,
     )

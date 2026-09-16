@@ -143,8 +143,8 @@ def test_reduce_replicates_layout() -> None:
 def test_bootstrap_default_for_group_data_and_reproducible() -> None:
     tc = group_curve()
     options = NCAOptions(seed=42, n_boot=500, auc_method=AUCMethod.LOG)
-    a = nca_single(tc, options)
-    b = nca_single(tc, options)
+    a = nca_single(tc, options=options)
+    b = nca_single(tc, options=options)
     assert a.has_uncertainty
     assert "auc_inf_obs_se" in a and "auc_inf_obs_ci_low" in a
     assert "auc_inf_obs_geocv" in a
@@ -157,7 +157,9 @@ def test_bootstrap_default_for_group_data_and_reproducible() -> None:
     q = a.to_quantities()
     plain = nca_single(
         group_curve(),
-        NCAOptions(uncertainty=UncertaintyMethod.NONE, auc_method=AUCMethod.LOG),
+        options=NCAOptions(
+            uncertainty=UncertaintyMethod.NONE, auc_method=AUCMethod.LOG
+        ),
     )
     assert q["auc_inf_obs"].magnitude == pytest.approx(
         plain.to_quantities()["auc_inf_obs"].magnitude
@@ -175,12 +177,12 @@ def test_bootstrap_default_for_group_data_and_reproducible() -> None:
 def test_bootstrap_se_scales_with_input_uncertainty() -> None:
     options = NCAOptions(seed=1, n_boot=2000, auc_method=AUCMethod.LINEAR)
     small = (
-        nca_single(group_curve(cv=0.05), options)
+        nca_single(group_curve(cv=0.05), options=options)
         .to_quantities()["auc_last_se"]
         .magnitude
     )
     large = (
-        nca_single(group_curve(cv=0.10), options)
+        nca_single(group_curve(cv=0.10), options=options)
         .to_quantities()["auc_last_se"]
         .magnitude
     )
@@ -189,7 +191,7 @@ def test_bootstrap_se_scales_with_input_uncertainty() -> None:
 
 def test_bootstrap_sd_spread_and_sd_se_relation() -> None:
     options = NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD)
-    q = nca_single(group_curve(n=16), options).to_quantities()
+    q = nca_single(group_curve(n=16), options=options).to_quantities()
     assert q["auc_last_se"].magnitude == pytest.approx(q["auc_last_sd"].magnitude / 4.0)
 
 
@@ -201,10 +203,10 @@ def test_bootstrap_batch_shape_and_chunking() -> None:
     ]
     tcs = Timecourses.from_timecourses(curves)
     options = NCAOptions(seed=3, n_boot=200)
-    result = nca(tcs, options)
+    result = nca(tcs, options=options)
     assert result["auc_last_se"].dims == ("individual",)
     assert result["auc_last_se"].values[1] > result["auc_last_se"].values[0]
-    chunked = nca(tcs, options.model_copy(update={"chunk_rows": 7}))
+    chunked = nca(tcs, options=options.model_copy(update={"chunk_rows": 7}))
     for name in result.derived_variables:
         np.testing.assert_allclose(
             chunked[name].values, result[name].values, equal_nan=True
@@ -221,7 +223,7 @@ def test_no_uncertainty_without_spread() -> None:
     assert result.derived_variables == []
     assert np.isnan(result.to_quantities()["n"].magnitude)
     with pytest.raises(ValueError, match="sd"):
-        nca_single(tc, NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP))
+        nca_single(tc, options=NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP))
 
 
 def test_discrete_and_lognormal_sets() -> None:
@@ -249,7 +251,7 @@ def test_delta_linear_auc_matches_closed_form() -> None:
     # back extrapolated `(0, c0)` segment, whose weights depend on the first two
     # points, so the closed form is compared on a dose-less curve
     tc_nd = tc.model_copy(update={"dosing": None})
-    q = nca_single(tc_nd, options).to_quantities()
+    q = nca_single(tc_nd, options=options).to_quantities()
     assert tc_nd.se is not None
     w = np.empty(T.size)
     w[0] = (T[1] - T[0]) / 2
@@ -277,7 +279,7 @@ def test_delta_agrees_with_bootstrap() -> None:
     terminal = TerminalPhase(method=TerminalMethod.ALL_AFTER_TMAX)
     delta = nca_single(
         tc,
-        NCAOptions(
+        options=NCAOptions(
             uncertainty=UncertaintyMethod.DELTA,
             auc_method=AUCMethod.LINEAR,
             terminal=terminal,
@@ -285,7 +287,7 @@ def test_delta_agrees_with_bootstrap() -> None:
     ).to_quantities()
     boot = nca_single(
         tc,
-        NCAOptions(
+        options=NCAOptions(
             uncertainty=UncertaintyMethod.BOOTSTRAP,
             auc_method=AUCMethod.LINEAR,
             terminal=terminal,
@@ -303,24 +305,24 @@ def test_delta_batch_and_no_se() -> None:
     tcs = Timecourses.from_timecourses(
         [group_curve(label="a"), group_curve(cv=0.2, label="b")]
     )
-    result = nca(tcs, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    result = nca(tcs, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
     assert result.has_uncertainty
     assert result["auc_last_se"].values[1] > result["auc_last_se"].values[0]
     plain = Timecourse(time=T, value=C0 * np.exp(-K * T), time_unit="hr", unit="mg/l")
     with pytest.raises(ValueError, match="se"):
-        nca_single(plain, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+        nca_single(plain, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
 
 
 def test_bootstrap_effect_values_are_not_clipped_at_zero() -> None:
     """Effect values are legitimately negative, clipping at 0 would erase their spread."""
     options = NCAOptions(kind=Kind.EFFECT, seed=1, n_boot=500)
-    q = nca_single(effect_curve(), options).to_quantities()
+    q = nca_single(effect_curve(), options=options).to_quantities()
     assert q["e0_se"].magnitude > 0
     assert q["e0_ci_low"].magnitude < -1.0 < q["e0_ci_high"].magnitude
     with pytest.raises(ValueError, match="log-normal"):
         nca_single(
             effect_curve(),
-            NCAOptions(
+            options=NCAOptions(
                 kind=Kind.EFFECT,
                 seed=1,
                 n_boot=100,
@@ -354,7 +356,7 @@ def test_bootstrap_row_without_spread_is_nan() -> None:
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        result = nca(tcs, NCAOptions(seed=2, n_boot=200))
+        result = nca(tcs, options=NCAOptions(seed=2, n_boot=200))
     for name in ("auc_last_se", "auc_last_sd", "auc_last_ci_low", "auc_last_geocv"):
         assert np.isfinite(result[name].values[0]), name
         assert np.isnan(result[name].values[1]), name
@@ -364,10 +366,10 @@ def test_bootstrap_geocv_is_on_the_between_subject_scale() -> None:
     """`x_geocv` is the CV over subjects, whichever spread the draws used."""
     tc = group_curve(n=16)
     se_draws = nca_single(
-        tc, NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SE)
+        tc, options=NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SE)
     ).to_quantities()["auc_last_geocv"]
     sd_draws = nca_single(
-        tc, NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SD)
+        tc, options=NCAOptions(seed=5, n_boot=3000, bootstrap_spread=BootstrapSpread.SD)
     ).to_quantities()["auc_last_geocv"]
     assert se_draws.magnitude == pytest.approx(sd_draws.magnitude, rel=0.15)
 
@@ -377,7 +379,7 @@ def test_bootstrap_sd_draws_report_confidence_and_prediction_interval() -> None:
     tc = group_curve(n=16)
     sd_draws = nca_single(
         tc,
-        NCAOptions(seed=5, n_boot=2000, bootstrap_spread=BootstrapSpread.SD),
+        options=NCAOptions(seed=5, n_boot=2000, bootstrap_spread=BootstrapSpread.SD),
     )
     q = sd_draws.to_quantities()
     ci_width = q["auc_last_ci_high"].magnitude - q["auc_last_ci_low"].magnitude
@@ -385,7 +387,7 @@ def test_bootstrap_sd_draws_report_confidence_and_prediction_interval() -> None:
     assert pi_width > ci_width
     assert q["auc_last_pi_low"].magnitude < q["auc_last_ci_low"].magnitude
     assert str(q["auc_last_pi_low"].units) == str(q["auc_last"].units)
-    se_draws = nca_single(tc, NCAOptions(seed=5, n_boot=500))
+    se_draws = nca_single(tc, options=NCAOptions(seed=5, n_boot=500))
     assert "auc_last_pi_low" not in se_draws
     assert "auc_last_pi_high" not in se_draws
 
@@ -418,10 +420,14 @@ def test_delta_masks_points_which_flip_the_terminal_window() -> None:
     the delta value agrees with the bootstrap.
     """
     tc = noisy_group_curve()
-    delta_result = nca_single(tc, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    delta_result = nca_single(
+        tc, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA)
+    )
     boot = nca_single(
         tc,
-        NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7),
+        options=NCAOptions(
+            uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7
+        ),
     )
     delta_se = delta_result.to_quantities()["lambda_z_se"].magnitude
     boot_se = boot.to_quantities()["lambda_z_se"].magnitude
@@ -438,12 +444,15 @@ def test_delta_flags_a_terminal_window_flip() -> None:
     """A step large enough to move the best fit window is skipped and flagged."""
     tc = noisy_group_curve_for_flip()
     delta_result = nca_single(
-        tc, NCAOptions(uncertainty=UncertaintyMethod.DELTA, delta_step=0.05)
+        tc, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA, delta_step=0.05)
     )
     assert "DELTA_WINDOW_CHANGE" in delta_result.flags()
     q = delta_result.to_quantities()
     boot = nca_single(
-        tc, NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7)
+        tc,
+        options=NCAOptions(
+            uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=3000, seed=7
+        ),
     ).to_quantities()
     # without the mask the jump between two regressions inflated `lambda_z_se`
     # by more than an order of magnitude over the bootstrap
@@ -476,7 +485,7 @@ def test_bootstrap_lognormal_end_to_end_and_ci_level() -> None:
     tc = group_curve(cv=0.2)
     logn = nca_single(
         tc,
-        NCAOptions(
+        options=NCAOptions(
             seed=4,
             n_boot=1000,
             bootstrap_distribution=BootstrapDistribution.LOGNORMAL,
@@ -485,10 +494,10 @@ def test_bootstrap_lognormal_end_to_end_and_ci_level() -> None:
     assert logn["auc_last_se"].magnitude > 0
     assert logn["auc_last_ci_low"].magnitude > 0
     narrow = nca_single(
-        tc, NCAOptions(seed=4, n_boot=2000, ci_level=0.8)
+        tc, options=NCAOptions(seed=4, n_boot=2000, ci_level=0.8)
     ).to_quantities()
     wide = nca_single(
-        tc, NCAOptions(seed=4, n_boot=2000, ci_level=0.95)
+        tc, options=NCAOptions(seed=4, n_boot=2000, ci_level=0.95)
     ).to_quantities()
     narrow_width = (
         narrow["auc_last_ci_high"].magnitude - narrow["auc_last_ci_low"].magnitude
@@ -520,13 +529,15 @@ def test_delta_geocv_is_the_between_subject_cv() -> None:
     boot = (
         nca(
             batch,
-            NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=4000, seed=3),
+            options=NCAOptions(
+                uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=4000, seed=3
+            ),
         )
         .to_dataframe()
         .iloc[0]
     )
     row = (
-        nca(batch, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+        nca(batch, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
         .to_dataframe()
         .iloc[0]
     )
@@ -553,7 +564,7 @@ def test_delta_geocv_is_nan_without_the_number_of_subjects() -> None:
         dim="group",
     )
     row = (
-        nca(without_n, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+        nca(without_n, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
         .to_dataframe()
         .iloc[0]
     )
@@ -583,10 +594,12 @@ def test_bootstrap_does_not_depend_on_the_block_size(chunk_rows: int) -> None:
         seed=42,
         chunk_rows=chunk_rows,
     )
-    result = nca(tcs, options)
+    result = nca(tcs, options=options)
     reference = nca(
         tcs,
-        NCAOptions(uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=120, seed=42),
+        options=NCAOptions(
+            uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=120, seed=42
+        ),
     )
     assert list(result.ds.data_vars) == list(reference.ds.data_vars)
     for name in reference.ds.data_vars:

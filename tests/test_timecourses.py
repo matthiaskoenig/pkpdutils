@@ -7,6 +7,7 @@ import pytest
 import xarray as xr
 
 from pkpdutils.timecourse import Dose, Dosing, Route, Timecourse, Timecourses
+from pkpdutils.units import Q_
 
 T = np.array([0.0, 1.0, 2.0, 4.0])
 V = np.array([[0.0, 2.0, 1.5, 0.5], [0.0, 3.0, 2.0, 1.0], [0.0, 1.0, 0.8, 0.3]])
@@ -1061,3 +1062,449 @@ def test_from_dataframe_of_an_empty_frame() -> None:
         Timecourses.from_dataframe(
             empty, sample=["subject"], time_unit="hr", unit="mg/l"
         )
+
+
+def test_relative_to_dose_of_a_shared_grid_keeps_it_shared() -> None:
+    """Every row shifted by the same dose time keeps the shared time coordinate."""
+    batch = Timecourses.from_arrays(
+        T + 2.0,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=2.0),
+        substance="x",
+    )
+    shifted = batch.relative_to_dose()
+    np.testing.assert_allclose(shifted.ds["time"].to_numpy(), T)
+    assert "times" not in shifted.ds
+    dose_time = shifted.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time, np.zeros((3, 1)))
+    np.testing.assert_allclose(shifted.values, batch.values)
+    assert shifted.ds["time"].attrs["units"] == "hr"
+    assert shifted.unit == "mg/l" and shifted.substance == "x"
+
+
+def test_relative_to_dose_of_different_dose_times_uses_the_union_grid() -> None:
+    """Rows shifted by their own dose time are placed on the union of the grids."""
+    curves = [
+        Timecourse(
+            time=np.array([0.0, 1.0, 2.0]) + offset,
+            value=np.array([1.0, 2.0, 3.0]) * (i + 1),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=offset),
+            label=label,
+        )
+        for i, (label, offset) in enumerate((("a", 0.0), ("b", 0.5)))
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    shifted = batch.relative_to_dose()
+    np.testing.assert_allclose(shifted.times[0], [0.0, 1.0, 2.0])
+    np.testing.assert_allclose(shifted.times[1], [0.0, 1.0, 2.0])
+    np.testing.assert_allclose(shifted.values[1], [2.0, 4.0, 6.0])
+    dose_time = shifted.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time, np.zeros((2, 1)))
+    # a row which no longer aligns keeps its own points and is NaN elsewhere
+    ragged = Timecourses.from_timecourses(
+        [
+            curves[0],
+            curves[1].model_copy(update={"time": np.array([0.5, 1.7, 2.5])}),
+        ]
+    )
+    on_grid = ragged.relative_to_dose()
+    np.testing.assert_allclose(on_grid.ds["time"].to_numpy(), [0.0, 1.0, 1.2, 2.0])
+    np.testing.assert_allclose(on_grid.values[0], [1.0, 2.0, np.nan, 3.0])
+    np.testing.assert_allclose(on_grid.values[1], [2.0, np.nan, 4.0, 6.0])
+
+
+def test_relative_to_dose_last_shifts_by_the_last_dose() -> None:
+    protocol = Dosing.regimen(
+        Dose(amount=100, unit="mg", route=Route.ORAL), interval=12.0, n_doses=2
+    )
+    tc = Timecourse(
+        time=np.array([0.0, 6.0, 12.0, 18.0]),
+        value=np.array([1.0, 2.0, 3.0, 4.0]),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=protocol,
+    )
+    batch = tc.to_batch()
+    last = batch.relative_to_dose(which="last")
+    np.testing.assert_allclose(last.times[0], [-12.0, -6.0, 0.0, 6.0])
+    dose_time = last.dose_time
+    assert dose_time is not None
+    np.testing.assert_allclose(dose_time[0], [-12.0, 0.0])
+    # a batch without doses is returned unchanged
+    plain = Timecourses.from_arrays(T, V, time_unit="hr", unit="mg/l")
+    assert plain.relative_to_dose() is plain
+
+
+def test_relative_to_dose_keeps_the_uncertainty_and_the_coordinates() -> None:
+    curves = [
+        Timecourse(
+            time=np.array([0.0, 1.0, 2.0]) + offset,
+            value=np.array([1.0, 2.0, 3.0]),
+            sd=np.array([0.1, 0.2, 0.3]),
+            n=6,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL, time=offset),
+            label=label,
+        )
+        for label, offset in (("a", 0.0), ("b", 0.5))
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    batch.ds.coords["sex"] = ("individual", ["m", "f"])
+    shifted = batch.relative_to_dose()
+    assert shifted.sd is not None
+    np.testing.assert_allclose(shifted.sd[1], [0.1, 0.2, 0.3])
+    subjects = shifted.n
+    assert subjects is not None
+    np.testing.assert_allclose(subjects, [6, 6])
+    assert list(shifted.ds.coords["sex"].to_numpy()) == ["m", "f"]
+    assert shifted.ds["sd"].attrs["units"] == "mg/l"
+
+
+def test_to_batch_of_a_single_timecourse() -> None:
+    tc = Timecourse(
+        time=T,
+        value=V[0],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        label="s1",
+        substance="x",
+    )
+    batch = tc.to_batch()
+    assert isinstance(batch, Timecourses)
+    assert batch.sample_dims == ("individual",)
+    assert list(batch.ds.coords["individual"].to_numpy()) == ["s1"]
+    assert batch.sel(individual="s1") == tc
+    named = tc.to_batch(dim="subject", label="other")
+    assert named.sample_dims == ("subject",)
+    assert list(named.ds.coords["subject"].to_numpy()) == ["other"]
+
+
+def test_from_dataframe_keeps_the_label_dtype() -> None:
+    """An integer subject column gives integer labels, as `from_timecourses` does."""
+    frame = pd.DataFrame(
+        {
+            "subject": [1, 1, 1, 2, 2, 2],
+            "time": [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+            "value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    batch = Timecourses.from_dataframe(
+        frame, sample=["subject"], time_unit="hr", unit="mg/l"
+    )
+    labels = batch.ds.coords["subject"].to_numpy()
+    assert labels.dtype.kind == "i"
+    assert list(labels) == [1, 2]
+    assert batch.sel(subject=2).value[0] == 4.0
+    curves = [
+        Timecourse(time=T, value=V[i], time_unit="hr", unit="mg/l") for i in range(2)
+    ]
+    from_curves = Timecourses.from_timecourses(curves, labels=[1, 2])
+    assert from_curves.ds.coords["individual"].to_numpy().dtype.kind == "i"
+
+
+def make_study() -> Timecourses:
+    values = np.array(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [3.0, 4.0, 5.0, 6.0],
+            [2.0, 3.0, 4.0, 5.0],
+            [10.0, 11.0, 12.0, 13.0],
+        ]
+    )
+    return Timecourses.from_arrays(
+        T,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={
+            "individual": ["s1", "s2", "s3", "s4"],
+            "arm": ("individual", ["a", "a", "b", "b"]),
+            "weight": ("individual", [70.0, 80.0, 90.0, 100.0]),
+        },
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        substance="caffeine",
+    )
+
+
+def test_select_by_label_list_slice_and_coordinate() -> None:
+    tcs = make_study()
+    one = tcs.select(individual="s2")
+    assert isinstance(one, Timecourses)
+    assert one.sample_dims == ("individual",) and one.n_samples == 1
+    assert one.ds["individual"].to_numpy().tolist() == ["s2"]
+    assert tcs.select(individual=["s1", "s3"]).ds["individual"].to_numpy().tolist() == [
+        "s1",
+        "s3",
+    ]
+    assert tcs.select(individual=slice("s2", "s3")).ds[
+        "individual"
+    ].to_numpy().tolist() == [
+        "s2",
+        "s3",
+    ]
+    arm = tcs.select(arm="a")
+    assert arm.ds["individual"].to_numpy().tolist() == ["s1", "s2"]
+    np.testing.assert_allclose(arm.values, [[1.0, 2.0, 3.0, 4.0], [3.0, 4.0, 5.0, 6.0]])
+    # both bounds of a coordinate slice are included
+    assert tcs.select(weight=slice(80.0, 90.0)).ds[
+        "individual"
+    ].to_numpy().tolist() == [
+        "s2",
+        "s3",
+    ]
+    # several indexers are combined
+    assert tcs.select(arm="b", weight=slice(0.0, 95.0)).ds[
+        "individual"
+    ].to_numpy().tolist() == ["s3"]
+
+
+def test_select_slice_bounds_must_match_the_labels() -> None:
+    tcs = make_study()
+    with pytest.raises(ValueError, match="by label"):
+        tcs.select(individual=slice(0, 2))
+
+
+def test_select_errors() -> None:
+    tcs = make_study()
+    with pytest.raises(ValueError, match="neither a sample dimension"):
+        tcs.select(study="x")
+    with pytest.raises(ValueError, match="no sample of the batch"):
+        tcs.select(arm="c")
+    # a label no sample carries is the same error, not a KeyError of the index
+    with pytest.raises(ValueError, match="no sample of the batch has individual"):
+        tcs.select(individual="zzz")
+    with pytest.raises(ValueError, match="no sample of the batch"):
+        tcs.select(individual=["zzz", "yyy"])
+    # every label of a list has to be in the batch, a missing one is not
+    # silently dropped from the selection
+    with pytest.raises(
+        ValueError, match="no sample of the batch has individual = 'zzz'"
+    ):
+        tcs.select(individual=["s1", "zzz"])
+    with pytest.raises(ValueError, match="no sample of the batch has arm = 'typo'"):
+        tcs.select(arm=["a", "typo"])
+    with pytest.raises(ValueError, match="'yyy', 'zzz'"):
+        tcs.select(individual=["s1", "yyy", "zzz"])
+    # a slice is a range and is not checked label by label
+    assert tcs.select(individual=slice("s0", "s2")).n_samples == 2
+    assert tcs.select(weight=slice(0.0, 75.0)).n_samples == 1
+
+
+def test_groupby_partitions_in_order_of_appearance() -> None:
+    tcs = make_study()
+    groups = list(tcs.groupby("arm"))
+    assert [value for value, _ in groups] == ["a", "b"]
+    assert [group.n_samples for _, group in groups] == [2, 2]
+    assert groups[1][1].ds["individual"].to_numpy().tolist() == ["s3", "s4"]
+    assert sum(group.n_samples for _, group in groups) == tcs.n_samples
+    # a sample dimension groups by its own labels, one sample per group
+    assert [value for value, _ in tcs.groupby("individual")] == ["s1", "s2", "s3", "s4"]
+    with pytest.raises(ValueError, match="neither a sample dimension"):
+        list(tcs.groupby("nope"))
+
+
+def test_mean_of_known_curves() -> None:
+    group = make_study().select(arm="a").mean("individual")
+    assert group.sample_dims == () and group.n_samples == 1
+    np.testing.assert_allclose(group.values, [2.0, 3.0, 4.0, 5.0])
+    sd = group.sd
+    se = group.se
+    n = group.n
+    assert sd is not None and se is not None and n is not None
+    np.testing.assert_allclose(sd, np.full(4, np.sqrt(2.0)))
+    np.testing.assert_allclose(se, np.full(4, 1.0))
+    np.testing.assert_allclose(n, 2.0)
+    assert group.unit == "mg/l" and group.time_unit == "hr"
+    assert group.substance == "caffeine"
+    # the protocol of the group is the shared protocol of its samples
+    dose_amount = group.dose_amount
+    assert dose_amount is not None
+    np.testing.assert_allclose(dose_amount, [100.0])
+    assert group.route is Route.ORAL
+
+
+def test_mean_keeps_the_remaining_dimensions_and_their_coordinates() -> None:
+    values = np.arange(24, dtype=float).reshape(2, 3, 4)
+    tcs = Timecourses.from_arrays(
+        T,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("dose", "individual"),
+        coords={"dose": [50, 100], "individual": ["s1", "s2", "s3"]},
+        substance="caffeine",
+    )
+    group = tcs.mean("individual")
+    assert group.sample_dims == ("dose",)
+    assert group.ds["dose"].to_numpy().tolist() == [50, 100]
+    np.testing.assert_allclose(group.values, values.mean(axis=1))
+
+
+def test_mean_with_missing_points_and_min_n() -> None:
+    values = np.array([[1.0, 2.0, 3.0, 4.0], [3.0, np.nan, 5.0, 6.0]])
+    tcs = Timecourses.from_arrays(
+        T,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["s1", "s2"]},
+        substance="caffeine",
+    )
+    group = tcs.mean("individual")
+    n = group.n
+    sd = group.sd
+    se = group.se
+    assert n is not None and sd is not None and se is not None
+    np.testing.assert_allclose(group.values, [2.0, 2.0, 4.0, 5.0])
+    assert np.isnan(sd[1])  # one value, no scatter
+    np.testing.assert_allclose(n, 2.0)
+    # se = sd / sqrt(n) with the stored n
+    np.testing.assert_allclose(se[0], sd[0] / np.sqrt(2.0))
+    # `min_n` drops the points which not every sample covers
+    strict = tcs.mean("individual", min_n=2)
+    assert np.isnan(strict.values[1])
+    np.testing.assert_allclose(strict.values[[0, 2, 3]], [2.0, 4.0, 5.0])
+    # with `spread="se"` the standard error uses the count of its own point
+    by_se = tcs.mean("individual", spread="se")
+    se_by_se = by_se.se
+    sd_by_se = by_se.sd
+    assert se_by_se is not None and sd_by_se is not None
+    np.testing.assert_allclose(se_by_se[0], np.std([1.0, 3.0], ddof=1) / np.sqrt(2.0))
+    np.testing.assert_allclose(sd_by_se[0], se_by_se[0] * np.sqrt(2.0))
+
+
+def test_mean_warns_on_different_protocols(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        dose={"amount": [100.0, 50.0, 100.0], "unit": "mg", "time": [0.0, 0.0, 0.0]},
+        route=Route.ORAL,
+        substance="caffeine",
+    )
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.timecourse"):
+        group = tcs.mean("individual")
+    assert "dosing protocol" in caplog.text
+    dose_amount = group.dose_amount
+    assert dose_amount is not None
+    np.testing.assert_allclose(dose_amount, [100.0])
+
+
+def test_mean_of_a_ragged_batch_uses_the_union_grid() -> None:
+    times = np.array([[0.0, 1.0, 2.0], [0.0, 1.5, 2.0]])
+    values = np.array([[1.0, 2.0, 3.0], [3.0, 4.0, 5.0]])
+    tcs = Timecourses.from_arrays(
+        times,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b"]},
+        substance="caffeine",
+    )
+    group = tcs.mean("individual")
+    np.testing.assert_allclose(group.times, [0.0, 1.0, 1.5, 2.0])
+    np.testing.assert_allclose(group.values, [2.0, 2.0, 4.0, 4.0])
+
+
+def test_mean_rejects_an_unknown_dimension() -> None:
+    with pytest.raises(ValueError, match="not a sample dimension"):
+        make_study().mean("group")
+    with pytest.raises(ValueError, match="'min_n'"):
+        make_study().mean("individual", min_n=0)
+
+
+def test_dose_normalized_values_and_unit() -> None:
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="ng/ml",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        dose={"amount": [100.0, 50.0, 200.0], "unit": "mg", "time": [0.0, 0.0, 0.0]},
+        route=Route.ORAL,
+        substance="caffeine",
+    )
+    normalized = tcs.dose_normalized()
+    assert normalized.unit == str((Q_(1.0, "ng/ml") / Q_(1.0, "mg")).units)
+    np.testing.assert_allclose(
+        normalized.values, V / np.array([100.0, 50.0, 200.0])[:, None]
+    )
+    # the doses themselves are kept
+    dose_amount = normalized.dose_amount
+    assert dose_amount is not None
+    np.testing.assert_allclose(dose_amount[:, 0], [100.0, 50.0, 200.0])
+    # one reference dose for every sample
+    reference = tcs.dose_normalized(reference=100.0)
+    np.testing.assert_allclose(reference.values, V / 100.0)
+    # a quantity is converted to the dose unit of the batch
+    quantity = tcs.dose_normalized(reference=Q_(0.1, "g"))
+    np.testing.assert_allclose(quantity.values, V / 100.0)
+
+
+def test_dose_normalized_scales_the_uncertainty() -> None:
+    sd = np.abs(V) * 0.1
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        sd=sd,
+        n=6,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        dose=Dose(amount=50, unit="mg", route=Route.ORAL),
+        substance="caffeine",
+    )
+    normalized = tcs.dose_normalized()
+    normalized_sd = normalized.sd
+    normalized_se = normalized.se
+    assert normalized_sd is not None and normalized_se is not None
+    np.testing.assert_allclose(normalized_sd, sd / 50.0)
+    np.testing.assert_allclose(normalized_se, sd / 50.0 / np.sqrt(6.0))
+    assert normalized.ds["sd"].attrs["units"] == normalized.unit
+
+
+def test_dose_normalized_without_doses() -> None:
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        substance="caffeine",
+    )
+    with pytest.raises(ValueError, match="no doses"):
+        tcs.dose_normalized()
+
+
+def test_select_a_dimension_without_labels_by_position() -> None:
+    tcs = Timecourses.from_arrays(
+        T,
+        V,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        substance="caffeine",
+    )
+    assert tcs.select(individual=1).n_samples == 1
+    np.testing.assert_allclose(tcs.select(individual=[0, 2]).values, V[[0, 2]])
+    # without labels a slice is the python slice, its stop is exclusive
+    np.testing.assert_allclose(tcs.select(individual=slice(0, 2)).values, V[:2])

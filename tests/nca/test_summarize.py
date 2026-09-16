@@ -3,7 +3,7 @@ import pytest
 import xarray as xr
 from scipy.stats import t as student_t
 
-from pkpdutils import Dose, Route, Timecourse, Timecourses
+from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
 from pkpdutils.nca import AUCMethod, NCAOptions, nca
 
 K = 0.3
@@ -29,7 +29,7 @@ def individuals(n: int = 6) -> Timecourses:
 
 
 def test_summarize_statistics() -> None:
-    result = nca(individuals(), NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca(individuals(), options=NCAOptions(auc_method=AUCMethod.LOG))
     summary = result.summarize("individual")
     assert summary.sample_dims == ()
     values = result["auc_inf_obs"].values
@@ -61,7 +61,7 @@ def test_summarize_statistics() -> None:
 def test_summarize_keeps_other_dims_and_ors_flags() -> None:
     tcs = individuals(4)
     ds = tcs.ds.assign_coords(individual=["a", "b", "c", "d"])
-    result = nca(Timecourses(ds), NCAOptions())
+    result = nca(Timecourses(ds), options=NCAOptions())
     # a second sample dimension: stack two copies along "study"
     two = Timecourses(
         xr.concat([tcs.ds, tcs.ds], dim="study").assign_coords(study=["s1", "s2"])
@@ -107,3 +107,57 @@ def test_summarize_reports_no_uncertainty_for_discrete_parameters() -> None:
     # a continuous parameter keeps its statistics
     for suffix in ("_sd", "_se", "_ci_low", "_ci_high", "_median", "_n"):
         assert f"auc_last{suffix}" in names
+
+
+def multiple_dose(n: int = 4) -> Timecourses:
+    tau, n_doses = 12.0, 3
+    times = np.arange(0.0, 36.1, 1.0)
+    rng = np.random.default_rng(1)
+    curves = []
+    for i in range(n):
+        c0 = 10.0 * rng.lognormal(0, 0.2)
+        value = np.zeros_like(times)
+        for k in range(n_doses):
+            since = times - k * tau
+            value += np.where(
+                since >= 0, c0 * np.exp(-K * np.clip(since, 0, None)), 0.0
+            )
+        curves.append(
+            Timecourse(
+                time=times,
+                value=value,
+                time_unit="hr",
+                unit="mg/l",
+                dosing=Dosing.regimen(
+                    Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+                    interval=tau,
+                    n_doses=n_doses,
+                ),
+                label=f"s{i}",
+            )
+        )
+    return Timecourses.from_timecourses(curves)
+
+
+def test_summarize_reports_no_uncertainty_for_discrete_interval_parameters() -> None:
+    # the time of the maximum of an interval and the bounds of the interval are
+    # observed or given, an uncertainty of them is not a quantity
+    result = nca(multiple_dose())
+    assert result.has_intervals
+    summary = result.summarize("individual")
+    names = set(summary.ds.data_vars)
+    for name in (
+        "interval_tmax",
+        "interval_start",
+        "interval_end",
+        "interval_dose",
+        "interval_n_points",
+    ):
+        assert name in names
+        for suffix in ("_sd", "_se", "_cv", "_ci_low", "_ci_high"):
+            assert f"{name}{suffix}" not in names
+        for suffix in ("_median", "_q25", "_q75", "_min", "_max", "_n"):
+            assert f"{name}{suffix}" in names
+    # a measured interval parameter keeps its statistics
+    for suffix in ("_sd", "_se", "_cv", "_ci_low", "_ci_high"):
+        assert f"interval_ctrough{suffix}" in names

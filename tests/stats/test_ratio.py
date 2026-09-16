@@ -126,3 +126,58 @@ def test_paired_needs_finite_pairs() -> None:
     unlabelled_r = ParameterSample(values=np.array([np.nan, np.nan]))
     with pytest.raises(ValueError, match="finite"):
         ratio(unlabelled_t, unlabelled_r, paired=True)
+
+
+def test_ratio_table_of_a_mapping() -> None:
+    from pkpdutils.stats import ratio_table
+
+    results = {
+        "auc_inf_obs": ratio(
+            ParameterSample(values=TEST, labels=LABELS, name="auc", unit="mg*hr/l"),
+            ParameterSample(values=REF, labels=LABELS, name="auc", unit="mg*hr/l"),
+        ),
+        "cmax": ratio(
+            ParameterSample(values=TEST, labels=LABELS, name="cmax", unit="mg/l"),
+            ParameterSample(values=REF, labels=LABELS, name="cmax", unit="mg/l"),
+        ),
+    }
+    df = ratio_table(results)
+    assert list(df.columns) == [
+        "parameter",
+        "unit",
+        "n_test",
+        "n_reference",
+        "gmr",
+        "ci_low",
+        "ci_high",
+        "ci_level",
+    ]
+    assert df["parameter"].tolist() == ["auc_inf_obs", "cmax"]
+    assert df.iloc[0]["unit"] == "mg*hr/l"
+    assert df.iloc[0]["n_test"] == "12" and df.iloc[0]["ci_level"] == "90 %"
+    # the cells are the formatted ratio in percent
+    result = results["auc_inf_obs"]
+    assert df.iloc[0]["gmr"] == f"{result.gmr * 100:.3g} %"
+    assert df.iloc[0]["ci_low"] == f"{result.ci_low * 100:.3g} %"
+    # without `percent` the plain ratio is reported
+    plain = ratio_table(results, percent=False)
+    assert plain.iloc[0]["gmr"] == f"{result.gmr:.3g}"
+    assert plain.iloc[0]["ci_high"] == f"{result.ci_high:.3g}"
+
+
+def test_ratio_table_limits_share_their_decimals() -> None:
+    from pkpdutils.stats import ratio_table
+    from pkpdutils.stats.bioequivalence import BEResult, tost
+
+    sample = ParameterSample(values=TEST, labels=LABELS, name="auc", unit="mg*hr/l")
+    reference = ParameterSample(values=REF, labels=LABELS, name="auc", unit="mg*hr/l")
+    parameter = tost(sample, reference)
+    result = BEResult(
+        parameters={"auc_inf_obs": parameter},
+        bioequivalent=parameter.bioequivalent,
+        limits=(0.8, 1.25),
+        ci_level=0.90,
+    )
+    # the two bounds of one cell are written with the same decimals and one suffix
+    assert ratio_table(result).iloc[0]["limits"] == "80.0 - 125.0 %"
+    assert ratio_table(result, percent=False).iloc[0]["limits"] == "0.800 - 1.250"

@@ -89,7 +89,7 @@ if __name__ == "__main__":
         dose_unit="mg",
         route=Route.ORAL,
     )
-    result = nca(read_back, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca(read_back, options=NCAOptions(auc_method=AUCMethod.LOG))
 
     console.rule("Parameters of the dosing intervals")
     console.print(

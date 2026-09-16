@@ -36,7 +36,7 @@ if __name__ == "__main__":
     )
     old = nca_single(
         tc,
-        NCAOptions(
+        options=NCAOptions(
             auc_method=AUCMethod.LINEAR,
             terminal=TerminalPhase(method=TerminalMethod.ALL_AFTER_TMAX),
         ),

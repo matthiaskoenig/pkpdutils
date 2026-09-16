@@ -13,7 +13,7 @@ from functools import lru_cache
 
 import pandas as pd
 
-from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
+from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX, INTERVAL_UNITS
 from pkpdutils.nca.options import NCAFlag
 from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS, LOGNORMAL_PARAMETERS
 from pkpdutils.result import ParameterResult
@@ -73,6 +73,11 @@ class NCAResult(ParameterResult):
     flag_type = NCAFlag
     lognormal_parameters = LOGNORMAL_PARAMETERS
     discrete_parameters = DISCRETE_PARAMETERS
+    #: the per-interval parameters are point variables (the dimension
+    #: `interval`) which `summarize` reduces over the sample dimension, so
+    #: that a multiple dose study reports the mean trough per interval over
+    #: its subjects
+    summarized_point_variables = frozenset(INTERVAL_UNITS)
 
     @property
     def has_intervals(self) -> bool:

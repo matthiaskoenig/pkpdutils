@@ -50,7 +50,7 @@ def oral_timecourse(ka: float = 2.0) -> Timecourse:
 
 
 def test_single_iv_bolus_analytic() -> None:
-    result = nca_single(iv_timecourse(), NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(iv_timecourse(), options=NCAOptions(auc_method=AUCMethod.LOG))
     assert isinstance(result, NCAResult)
     assert result.sample_dims == ()
     q = result.to_quantities()
@@ -74,7 +74,9 @@ def test_single_iv_bolus_analytic() -> None:
 
 
 def test_c0_first_value() -> None:
-    result = nca_single(iv_timecourse(), NCAOptions(c0_method=C0Method.FIRST_VALUE))
+    result = nca_single(
+        iv_timecourse(), options=NCAOptions(c0_method=C0Method.FIRST_VALUE)
+    )
     assert result.to_quantities()["c0"].magnitude == pytest.approx(
         C0 * np.exp(-K * 0.25)
     )
@@ -106,7 +108,9 @@ def test_extrapolation_flag_and_positive_slope() -> None:
     rising = Timecourse(
         time=t, value=[1, 1.2, 1.5, 1.9, 2.5], time_unit="hr", unit="mg/l"
     )
-    result = nca_single(rising, NCAOptions(terminal=TerminalPhase(exclude_cmax=False)))
+    result = nca_single(
+        rising, options=NCAOptions(terminal=TerminalPhase(exclude_cmax=False))
+    )
     assert "POSITIVE_SLOPE" in result.flags()
     assert np.isnan(result.to_quantities()["lambda_z"].magnitude)
     assert np.isnan(result.to_quantities()["auc_inf_obs"].magnitude)
@@ -152,11 +156,14 @@ def test_lloq_handling() -> None:
     t = np.array([0.5, 1, 2, 4, 8, 12, 24])
     c = np.array([0.05, 2.0, 4.0, 3.0, 1.5, 0.5, 0.05])
     tc = Timecourse(time=t, value=c, time_unit="hr", unit="mg/l")
-    nan = nca_single(tc, NCAOptions(lloq=0.1, auc_method=AUCMethod.LINEAR))
+    nan = nca_single(tc, options=NCAOptions(lloq=0.1, auc_method=AUCMethod.LINEAR))
     assert "BLQ_TRUNCATED" in nan.flags()
     assert nan.to_quantities()["tlast"].magnitude == 12.0
     zero = nca_single(
-        tc, NCAOptions(lloq=0.1, auc_method=AUCMethod.LINEAR, blq="zero_before_tmax")
+        tc,
+        options=NCAOptions(
+            lloq=0.1, auc_method=AUCMethod.LINEAR, blq="zero_before_tmax"
+        ),
     )
     # the first point becomes 0 and adds the triangle 0.5*(0+2)*0.5 to the area
     assert zero.to_quantities()["auc_last"].magnitude == pytest.approx(
@@ -254,7 +261,7 @@ def test_batch_two_sample_dims_and_workers() -> None:
         dose={"amount": np.broadcast_to(doses[:, None], (2, 3)), "unit": "mg"},
         route=Route.IV_BOLUS,
     )
-    serial = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    serial = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     assert serial.sample_dims == ("dose", "k")
     np.testing.assert_allclose(
         serial["lambda_z"].values, np.broadcast_to(ks, (2, 3)), rtol=1e-6
@@ -262,7 +269,7 @@ def test_batch_two_sample_dims_and_workers() -> None:
     np.testing.assert_allclose(
         serial["cl"].values, np.broadcast_to(ks * 10, (2, 3)), rtol=1e-6
     )
-    parallel = nca(batch, NCAOptions(auc_method=AUCMethod.LOG, n_workers=2))
+    parallel = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG, n_workers=2))
     for name in serial.parameters:
         np.testing.assert_allclose(
             parallel[name].values, serial[name].values, equal_nan=True
@@ -285,9 +292,9 @@ def test_cmax_half_only_for_oral() -> None:
 def test_chunking_matches_one_chunk() -> None:
     curves = [oral_timecourse(ka) for ka in (0.8, 1.0, 2.0, 4.0, 6.0)]
     batch = Timecourses.from_timecourses(curves, dim="individual")
-    one = nca(batch, NCAOptions(chunk_rows=5000))
-    chunked = nca(batch, NCAOptions(chunk_rows=2))
-    parallel = nca(batch, NCAOptions(n_workers=2, chunk_rows=2))
+    one = nca(batch, options=NCAOptions(chunk_rows=5000))
+    chunked = nca(batch, options=NCAOptions(chunk_rows=2))
+    parallel = nca(batch, options=NCAOptions(n_workers=2, chunk_rows=2))
     for other in (chunked, parallel):
         for name in one.parameters:
             np.testing.assert_allclose(
@@ -327,9 +334,11 @@ def test_automatic_workers_match_serial_on_a_large_batch() -> None:
     assert resolve_workers(options.n_workers, batch.n_samples) == max(
         1, min(os.process_cpu_count() or 1, 8)
     )
-    serial = nca(batch, options.model_copy(update={"n_workers": 1}))
-    assert_same_result(nca(batch, options), serial)
-    assert_same_result(nca(batch, options.model_copy(update={"n_workers": 4})), serial)
+    serial = nca(batch, options=options.model_copy(update={"n_workers": 1}))
+    assert_same_result(nca(batch, options=options), serial)
+    assert_same_result(
+        nca(batch, options=options.model_copy(update={"n_workers": 4})), serial
+    )
 
 
 def test_workers_match_serial_on_a_mixed_batch_in_small_chunks() -> None:
@@ -359,9 +368,11 @@ def test_workers_match_serial_on_a_mixed_batch_in_small_chunks() -> None:
         )
     batch = Timecourses.from_timecourses(curves)
     options = NCAOptions(auc_method=AUCMethod.LOG)
-    whole = nca(batch, options)
+    whole = nca(batch, options=options)
     assert whole["n_doses"].to_numpy().tolist() == [1.0, 3.0, 1.0, 3.0, 1.0, 3.0]
-    split = nca(batch, options.model_copy(update={"n_workers": 3, "chunk_rows": 1}))
+    split = nca(
+        batch, options=options.model_copy(update={"n_workers": 3, "chunk_rows": 1})
+    )
     assert_same_result(split, whole)
 
 
@@ -369,7 +380,7 @@ def test_effect_kind() -> None:
     t = np.array([0, 1, 2, 4, 6, 8.0])
     e = np.array([10, 14, 20, 16, 12, 10.0])
     tc = Timecourse(time=t, value=e, time_unit="hr", unit="mmHg", substance="effect")
-    result = nca_single(tc, NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0))
+    result = nca_single(tc, options=NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0))
     q = result.to_quantities()
     assert q["e0"].magnitude == 10.0
     assert q["emax_obs"].magnitude == 20.0 and q["temax"].magnitude == 2.0
@@ -388,7 +399,7 @@ def test_terminal_manual_points() -> None:
     options = NCAOptions(
         terminal=TerminalPhase(method=TerminalMethod.MANUAL, points=(8, 9, 10, 11))
     )
-    q = nca_single(tc, options).to_quantities()
+    q = nca_single(tc, options=options).to_quantities()
     slope, _ = np.polyfit(tc.time[8:], np.log(tc.value[8:]), 1)
     assert q["lambda_z"].magnitude == pytest.approx(-slope)
     assert q["lambda_z_n_points"].magnitude == 4
@@ -489,7 +500,7 @@ def test_last_n_after_the_maximum_end_to_end() -> None:
     tc = Timecourse(time=t, value=c, time_unit="hr", unit="mg/l")
     result = nca_single(
         tc,
-        NCAOptions(
+        options=NCAOptions(
             terminal=TerminalPhase(
                 method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=True
             )
@@ -534,7 +545,9 @@ def effect_timecourse() -> Timecourse:
 
 def test_effect_applies_lloq_and_blq() -> None:
     # B21: `lloq` and `blq` were accepted and silently discarded for effects
-    result = nca_single(effect_timecourse(), NCAOptions(kind=Kind.EFFECT, lloq=1.5))
+    result = nca_single(
+        effect_timecourse(), options=NCAOptions(kind=Kind.EFFECT, lloq=1.5)
+    )
     # the values 0 and 1 are below the limit and drop out: the linear area of
     # (1, 5), (2, 4), (4, 2) is 4.5 + 6
     assert float(result["auec_last"]) == pytest.approx(10.5)
@@ -545,7 +558,7 @@ def test_effect_applies_lloq_and_blq() -> None:
 def test_effect_area_is_linear_whatever_the_auc_method() -> None:
     for method in AUCMethod:
         options = NCAOptions(kind=Kind.EFFECT, auc_method=method)
-        assert float(nca_single(effect_timecourse(), options)["auec_last"]) == (
+        assert float(nca_single(effect_timecourse(), options=options)["auec_last"]) == (
             pytest.approx(19.0)
         )
 
@@ -563,3 +576,51 @@ def test_chunk_bounds_cuts_as_array_split(n_rows: int, n_chunks: int) -> None:
     assert bounds[-1][1] == n_rows
     for (start, stop), part in zip(bounds, expected, strict=True):
         np.testing.assert_array_equal(rows[start:stop], part)
+
+
+def test_lambda_z_span_on_an_analytic_curve() -> None:
+    # C(t) = 10 exp(-0.5 t) sampled to 12 hr: the window runs from 0.5 hr to
+    # 12 hr and the half-life is ln(2)/0.5, so the span is (12 - 0.5) / thalf
+    result = nca_single(iv_timecourse())
+    q = result.to_quantities()
+    assert q["lambda_z_t_first"].magnitude == pytest.approx(0.5)
+    assert q["lambda_z_t_last"].magnitude == pytest.approx(12.0)
+    assert str(q["lambda_z_t_last"].units) == "hour"
+    assert q["lambda_z_span"].magnitude == pytest.approx(11.5 / (np.log(2) / K))
+    assert str(q["lambda_z_span"].units) == "dimensionless"
+    assert "SPAN_LOW" not in result.flags()
+
+
+def test_span_low_flag_on_a_short_terminal_phase() -> None:
+    # four points over one half-life: the span is 1 and below the limit of 2
+    thalf = np.log(2) / K
+    t = np.array([0.0, thalf / 3, 2 * thalf / 3, thalf])
+    tc = Timecourse(
+        time=t,
+        value=C0 * np.exp(-K * t),
+        time_unit="hr",
+        unit="mg/l",
+        dose=IV_DOSE,
+        substance="x",
+    )
+    result = nca_single(
+        tc, options=NCAOptions(terminal=TerminalPhase(exclude_cmax=False))
+    )
+    assert result.to_quantities()["lambda_z_span"].magnitude == pytest.approx(1.0)
+    assert "SPAN_LOW" in result.flags()
+
+
+def test_span_is_nan_without_a_terminal_phase() -> None:
+    tc = Timecourse(
+        time=[0.0, 1.0, 2.0],
+        value=[1.0, 2.0, 3.0],
+        time_unit="hr",
+        unit="mg/l",
+        dose=IV_DOSE,
+        substance="x",
+    )
+    result = nca_single(tc)
+    q = result.to_quantities()
+    assert np.isnan(q["lambda_z_span"].magnitude)
+    assert np.isnan(q["lambda_z_t_last"].magnitude)
+    assert "SPAN_LOW" not in result.flags()

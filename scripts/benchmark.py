@@ -122,7 +122,7 @@ def case_nca_small() -> Case:
     options = NCAOptions(uncertainty=UncertaintyMethod.NONE)
     return Case(
         "20 x (100 curves x 12 points)",
-        lambda: [nca(batch, options) for _ in range(20)],
+        lambda: [nca(batch, options=options) for _ in range(20)],
     )
 
 
@@ -130,14 +130,16 @@ def case_nca_large() -> Case:
     """The analysis of a large batch: the vectorized core."""
     batch = mono_batch(100_000)
     options = NCAOptions(uncertainty=UncertaintyMethod.NONE)
-    return Case("100 000 curves x 12 points", lambda: nca(batch, options))
+    return Case("100 000 curves x 12 points", lambda: nca(batch, options=options))
 
 
 def case_nca_multiple() -> Case:
     """The analysis of a multiple dose batch: the dosing intervals."""
     batch = multi_dose_batch(5_000)
     options = NCAOptions(uncertainty=UncertaintyMethod.NONE)
-    return Case("5 000 curves x 60 points x 5 doses", lambda: nca(batch, options))
+    return Case(
+        "5 000 curves x 60 points x 5 doses", lambda: nca(batch, options=options)
+    )
 
 
 def case_bootstrap() -> Case:
@@ -146,14 +148,16 @@ def case_bootstrap() -> Case:
     options = NCAOptions(
         uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=1_000, seed=1234
     )
-    return Case("100 group curves x 1 000 replicates", lambda: nca(batch, options))
+    return Case(
+        "100 group curves x 1 000 replicates", lambda: nca(batch, options=options)
+    )
 
 
 def case_delta() -> Case:
     """The delta method on group curves."""
     batch = mono_batch(1_000, spread=True)
     options = NCAOptions(uncertainty=UncertaintyMethod.DELTA)
-    return Case("1 000 group curves x 12 points", lambda: nca(batch, options))
+    return Case("1 000 group curves x 12 points", lambda: nca(batch, options=options))
 
 
 def case_fit() -> Case:

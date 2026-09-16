@@ -266,3 +266,32 @@ def test_bioequivalence_of_nca_results() -> None:
     } <= set(df.columns)
     with pytest.raises(ValueError, match="not a variable"):
         bioequivalence(test, reference, parameters=["auc_inf"])
+
+
+def test_ratio_table_of_a_bioequivalence_result() -> None:
+    from pkpdutils.stats import ratio_table
+
+    test = nca(batch(TEST_VALUES, PERIOD_TEST))
+    reference = nca(batch(REF_VALUES, PERIOD_REF))
+    res = bioequivalence(test, reference)
+    df = ratio_table(res)
+    assert list(df.columns) == [
+        "parameter",
+        "unit",
+        "n_test",
+        "n_reference",
+        "gmr",
+        "ci_low",
+        "ci_high",
+        "ci_level",
+        "cv_intra",
+        "limits",
+        "bioequivalent",
+    ]
+    assert df["parameter"].tolist() == ["auc_inf_obs", "cmax"]
+    parameter = res["auc_inf_obs"]
+    assert df.iloc[0]["gmr"] == f"{parameter.gmr * 100:.3g} %"
+    assert df.iloc[0]["limits"] == "80.0 - 125.0 %"
+    assert df.iloc[0]["ci_level"] == "90 %"
+    assert df.iloc[0]["cv_intra"] == f"{parameter.cv_intra * 100:.3g} %"
+    assert df.iloc[0]["bioequivalent"] == str(parameter.bioequivalent)

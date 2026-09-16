@@ -1067,17 +1067,21 @@ def fit(
 
 
 def _cv(se: float, value: float) -> float:
-    """The coefficient of variation in percent, `NaN` for a zero or missing value.
+    """The coefficient of variation as a fraction, `NaN` for a zero or missing value.
+
+    The package reports every coefficient of variation as a fraction
+    (`NCAResult` `x_geocv`, `stats.Summary.cv`); a table which shows percent
+    multiplies by 100 where it formats.
 
     Args:
         se: the standard error.
         value: the estimate.
 
     Returns:
-        `100 se / |value|`.
+        `se / |value|`.
     """
     with np.errstate(divide="ignore", invalid="ignore"):
-        return float(100.0 * np.float64(se) / np.abs(np.float64(value)))
+        return float(np.float64(se) / np.abs(np.float64(value)))
 
 
 #: dimension names `build_result` reserves for the parameter and point axes,
@@ -1089,10 +1093,13 @@ def _check_no_reserved_suffix(model: Model) -> None:
     """Reject a model whose parameter or derived name ends in a suffix of the result variables.
 
     The result writes the uncertainty of a parameter `p` as `p_se`,
-    `p_ci_low`, ... and `ParameterResult` reads that structure back with
-    `pkpdutils.result.base_name`, so a parameter named `k_n` or `auc_se`
-    would be classified as the uncertainty of a parameter `k` or `auc` that
-    does not exist, and `summarize` would then drop it.
+    `p_ci_low`, ... and the statistics of a summary as `p_median`, `p_min`,
+    `p_max`, ...; `ParameterResult` reads that structure back with
+    `pkpdutils.result.base_name`, so a parameter named `k_n`, `auc_se`,
+    `e_max` or `c_min` would be classified as a derived variable of a
+    parameter `k`, `auc`, `e` or `c` that does not exist, and `summarize`
+    would then drop it. Write such a parameter as `emax` or `cmin`, the
+    spelling of the rest of the package.
 
     Args:
         model: the model, for its parameter and derived names.

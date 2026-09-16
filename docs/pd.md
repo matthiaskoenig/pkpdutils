@@ -27,7 +27,7 @@ from pkpdutils import NCAOptions, nca_single
 from pkpdutils.nca import Kind
 
 result = nca_single(
-    effect_timecourse, NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0)
+    effect_timecourse, options=NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0)
 )
 q = result.to_quantities()
 q["auec_baseline"], q["time_above"]
@@ -39,7 +39,8 @@ An effect timecourse carrying a dosing protocol of more than one dose gets the s
 
 ```python
 result = nca_single(
-    effect_protocol_timecourse, NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0)
+    effect_protocol_timecourse,
+    options=NCAOptions(kind=Kind.EFFECT, effect_threshold=15.0),
 )
 result.intervals()[["interval", "interval_auec", "interval_emax"]]
 result.to_quantities()["auec_tau"]  # the last, complete interval

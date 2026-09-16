@@ -65,7 +65,7 @@ New:
 
 ## Breaking changes (for the release notes of the next minor)
 
-- `options` is keyword-only in `nca`, `nca_single`, `partial_auc`, `superposition`.
+- `options` is keyword-only in `nca`, `nca_single`, `partial_auc`, `superposition`; `t_end` of `superposition` is keyword-only with it, since it follows `options` in the signature.
 - `FitResult` `p_cv` is a fraction (was a percentage).
 - `plot_*`: `ax`/`axes` and `style` keyword-only, `log` replaced by `log_x`/`log_y`; `plot_dose_proportionality` takes a `ProportionalityResult`; `proportionality_test` returns a `ProportionalityResult`.
 - `read_events`, `read_pknca`, `read_adnca`: column keywords renamed to `*_col`; `groups` of `read_pknca` renamed `covariates`.
@@ -74,3 +74,21 @@ New:
 - Reader errors are `ValueError`, not pydantic `ValidationError`; `Timecourses.from_dataframe` raises the same way, since it no longer builds one `Timecourse` per sample: a sample with fewer than two time points, a `NaN` time, duplicate times or a dose which is not a valid protocol is a `ValueError` naming the sample.
 - `Timecourses.from_dataframe` rejects a value which is neither missing nor a number with a `ValueError` naming the sample and the column; a non-numeric `time` column raised a `TypeError` from pandas before, and a non-numeric dose column with `dose_time` was read as a missing dose.
 - `ParameterResult.summarize` no longer reports `_sd`, `_se`, `_ci_low`, `_ci_high`, `_geomean` and `_geocv` for the discrete parameters (`tmax`, `tlast`, `tau`, the counts and the diagnostics of the terminal regression); they keep `x`, `x_median`, `x_q25`, `x_q75` and `x_n`.
+- `plot_timecourse` no longer takes `ax` positionally; `plot_forest` takes `exp` before `ax` and `style`; `draw_nca_panel(timecourse, values, flags, *, log_y, title, ax, style)` takes its data first, `ax` as a keyword and returns the `Axes` instead of `None`.
+- `plot_goodness_of_fit`: `log` is replaced by `log_x` and `log_y`, which scale and mask the two axes on their own. `plot_bland_altman`: `log` is renamed `log_ratio`, since it selects the statistic (the log ratio against the log mean) and not only the scale of an axis.
+- `plot_nca`, `plot_nca_grid` and `plot_fit` take `axes` (the panels to draw into); `plot_nca_grid`'s `log` is `log_y`; `plot_parameters`' `log` is `log_y`.
+- `plot_dose_proportionality` and `plot_bland_altman` take `ax`.
+- `write_events`: column keywords renamed to `*_col` like the readers (`id` no longer shadows the builtin).
+- `read_adnca` and `read_pknca` gain `covariates`; the ADNCA column keywords `subject`, `param`, `value`, `value_unit`, `time_first`, `time_ref`, `dose`, `dtype` and `lloq` are `subject_col`, `param_col`, `value_col`, `value_unit_col`, `time_first_col`, `time_ref_col`, `dose_col`, `dtype_col` and `lloq_col`; the PKNCA `subject` is `subject_col`.
+- `stats`: `multiple_comparison(p_values, *, method=...)` and `effects_from_arrays(estimates, variances, *, labels=..., kind=..., ci_level=...)` take their options by keyword.
+- `compare_models(models, x, y)`: `y` defaults to `None` and `x` also takes a `Timecourse` or a `Timecourses`, in which case `y`, `sd`, `dims`, `coords`, `x_unit` and `y_unit` must not be given.
+- The result of the NCA carries the variables `lambda_z_t_last` and `lambda_z_span` and the flag `NCAFlag.SPAN_LOW` (1024); `pkpdutils.nca.terminal.TerminalFit` gains the field `t_last` after `t_first`, so a positional construction of it has to be adapted.
+- `ParameterResult.summarize` reports `x_min` and `x_max` for every parameter and `x_cv` for every non-discrete one, and reduces the point variables of `summarized_point_variables` (the `interval_*` parameters of a multiple dose analysis, which it dropped before) over the sample dimension, keeping their `interval` dimension.
+- `pkpdutils.result.SUMMARY_SUFFIXES` holds `_min` and `_max`, so a fit model whose parameter or derived name ends in one of them (`e_max`, `c_min`) is rejected by the reserved suffix guard of `pkpdutils.fit.engine` and has to be spelled `emax`, `cmin`.
+- `plot_timecourse(by=...)` colors the curves by group and writes one legend entry per group, where it used to give every sample its own color and entry with the group value as its label; a figure of more than `max_legend` (12) entries gets no legend at all. The function gains `facet` and, with it, `axes`.
+- `plot_nca` draws the legend on the linear panel only, `plot_nca_grid` once for the figure (into the first panel when the caller supplies `axes`); its panel titles are `dose = 50 mg, individual = s1` instead of `50.0|s1`, and its `ncols` is clamped to the number of samples, so a batch of one sample no longer produces a figure of three panels. `draw_nca_panel` gains `legend`.
+- `plot_ratio` and `plot_forest` annotate the rows with `estimate [low, high]` (and the weight of a study) by default and widen the x axis to hold the column; `annotate=False` restores the bare figure. `plot_ratio` gains `labels` for the row names.
+- A curve with an infusion is drawn with the window of the infusion (a shaded span from the dose time to the end of the dose) in `plot_timecourse` and `draw_nca_panel`; the NCA panel marks the dose it analyses alone, since it starts at that dose.
+- The figures label an axis whose unit is the canonical long form of pint with the short symbols instead (`trough [mg/l]`, not `trough [milligram / liter]`), and leave the unit out of the label of a dimensionless variable; a unit the data spells itself (`hr`, `ng/ml`) is unchanged.
+- `plot_ratio` draws no tick at unity when the interaction thresholds are drawn, whose 0.8 and 1.25 crowd it.
+- `fit_timecourse`, `fit_timecourses` and `fit_table` store `attrs["x_name"]` and `attrs["y_name"]` on the result; `plot_fit` and `plot_dose_proportionality` label their axes with them instead of `x` and `y`.

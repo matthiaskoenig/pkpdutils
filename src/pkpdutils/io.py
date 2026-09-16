@@ -510,17 +510,17 @@ def read_events(
     unit: str,
     dose_unit: str,
     route: Route | str,
-    id: str = "ID",
-    time: str = "TIME",
-    dv: str = "DV",
-    amt: str = "AMT",
-    evid: str = "EVID",
-    mdv: str = "MDV",
-    rate: str = "RATE",
-    tinf: str = "TINF",
-    addl: str = "ADDL",
-    ii: str = "II",
-    ss: str = "SS",
+    id_col: str = "ID",
+    time_col: str = "TIME",
+    dv_col: str = "DV",
+    amt_col: str = "AMT",
+    evid_col: str = "EVID",
+    mdv_col: str = "MDV",
+    rate_col: str = "RATE",
+    tinf_col: str = "TINF",
+    addl_col: str = "ADDL",
+    ii_col: str = "II",
+    ss_col: str = "SS",
     sd_col: str = "SD",
     se_col: str = "SE",
     n_col: str = "N",
@@ -573,17 +573,17 @@ def read_events(
             (`"oral"`, `"IV_BOLUS"`); the event format has no route column
             (`CMT`/`ADM` are compartments, not routes) and a batch has one
             route, so a table of several routes is filtered by the caller
-        id: name of the subject column
-        time: name of the time column
-        dv: name of the observation column
-        amt: name of the dose amount column
-        evid: name of the event identifier column
-        mdv: name of the missing dependent value column
-        rate: name of the infusion rate column
-        tinf: name of the infusion duration column (Monolix)
-        addl: name of the additional doses column
-        ii: name of the interdose interval column
-        ss: name of the steady state column
+        id_col: name of the subject column
+        time_col: name of the time column
+        dv_col: name of the observation column
+        amt_col: name of the dose amount column
+        evid_col: name of the event identifier column
+        mdv_col: name of the missing dependent value column
+        rate_col: name of the infusion rate column
+        tinf_col: name of the infusion duration column (Monolix)
+        addl_col: name of the additional doses column
+        ii_col: name of the interdose interval column
+        ss_col: name of the steady state column
         sd_col: name of the standard deviation column of a group curve
         se_col: name of the standard error column of a group curve
         n_col: name of the column with the number of subjects of a group curve
@@ -604,7 +604,7 @@ def read_events(
         their `ID` as the coordinate of `dim`.
 
     Raises:
-        ValueError: if a required column (`id`, `time`, `dv`) is missing, if a
+        ValueError: if a required column (`id_col`, `time_col`, `dv_col`) is missing, if a
             row carries `EVID` 4, if a row carries an `SS` value other than 0
             or 1, if a rate is negative (a modelled rate), if a dose record
             asks for repeated doses without a positive `II`, if a subject has
@@ -616,17 +616,17 @@ def read_events(
     route = Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
-    c_id = _column(lookup, id, "id", required=True)
-    c_time = _column(lookup, time, "time", required=True)
-    c_dv = _column(lookup, dv, "dv", required=True)
-    c_amt = _column(lookup, amt, "amt")
-    c_evid = _column(lookup, evid, "evid")
-    c_mdv = _column(lookup, mdv, "mdv")
-    c_rate = _column(lookup, rate, "rate")
-    c_tinf = _column(lookup, tinf, "tinf")
-    c_addl = _column(lookup, addl, "addl")
-    c_ii = _column(lookup, ii, "ii")
-    c_ss = _column(lookup, ss, "ss")
+    c_id = _column(lookup, id_col, "id", required=True)
+    c_time = _column(lookup, time_col, "time", required=True)
+    c_dv = _column(lookup, dv_col, "dv", required=True)
+    c_amt = _column(lookup, amt_col, "amt")
+    c_evid = _column(lookup, evid_col, "evid")
+    c_mdv = _column(lookup, mdv_col, "mdv")
+    c_rate = _column(lookup, rate_col, "rate")
+    c_tinf = _column(lookup, tinf_col, "tinf")
+    c_addl = _column(lookup, addl_col, "addl")
+    c_ii = _column(lookup, ii_col, "ii")
+    c_ss = _column(lookup, ss_col, "ss")
     c_sd = _column(lookup, sd_col)
     c_se = _column(lookup, se_col)
     c_n = _column(lookup, n_col)
@@ -635,7 +635,7 @@ def read_events(
     if c_rate is not None and (_numeric(df, c_rate) < 0).any():
         raise ValueError(
             "Modelled rates (RATE -1/-2) are not data: give the infusion "
-            f"duration in '{tinf}' or a positive rate in '{rate}'"
+            f"duration in '{tinf_col}' or a positive rate in '{rate_col}'"
         )
 
     if c_evid is not None:
@@ -858,13 +858,13 @@ def read_events(
 def write_events(
     timecourses: Timecourses,
     *,
-    id: str = "ID",
-    time: str = "TIME",
-    dv: str = "DV",
-    amt: str = "AMT",
-    evid: str = "EVID",
-    mdv: str = "MDV",
-    rate: str = "RATE",
+    id_col: str = "ID",
+    time_col: str = "TIME",
+    dv_col: str = "DV",
+    amt_col: str = "AMT",
+    evid_col: str = "EVID",
+    mdv_col: str = "MDV",
+    rate_col: str = "RATE",
     sd_col: str = "SD",
     se_col: str = "SE",
     n_col: str = "N",
@@ -891,21 +891,21 @@ def write_events(
 
     Args:
         timecourses: the batch, with exactly one sample dimension
-        id: name of the subject column
-        time: name of the time column
-        dv: name of the observation column
-        amt: name of the dose amount column
-        evid: name of the event identifier column
-        mdv: name of the missing dependent value column
-        rate: name of the infusion rate column
+        id_col: name of the subject column
+        time_col: name of the time column
+        dv_col: name of the observation column
+        amt_col: name of the dose amount column
+        evid_col: name of the event identifier column
+        mdv_col: name of the missing dependent value column
+        rate_col: name of the infusion rate column
         sd_col: name of the standard deviation column of a group curve
         se_col: name of the standard error column of a group curve
         n_col: name of the column with the number of subjects of a group curve
 
     Returns:
-        The event table with the columns `id`, `time`, `dv`, `amt`, `evid`,
-        `mdv`, `rate`, the uncertainty columns of a group curve and one column
-        per covariate coordinate.
+        The event table with the subject, time, observation, amount, event
+        identifier, missing value and rate columns, the uncertainty columns of
+        a group curve and one column per covariate coordinate.
 
     Raises:
         ValueError: if the batch does not have exactly one sample dimension.
@@ -939,7 +939,7 @@ def write_events(
 
     rows: list[dict[str, Any]] = []
     for index in range(n_samples):
-        shared: dict[str, Any] = {id: labels[index]}
+        shared: dict[str, Any] = {id_col: labels[index]}
         if n is not None:
             shared[n_col] = float(n[index])
         shared.update({name: ds[name].to_numpy()[index] for name in covariate_names})
@@ -953,12 +953,12 @@ def write_events(
                 sample_rows.append(
                     {
                         **shared,
-                        time: float(dose_time),
-                        dv: np.nan,
-                        amt: float(amount),
-                        evid: 1,
-                        mdv: 1,
-                        rate: (
+                        time_col: float(dose_time),
+                        dv_col: np.nan,
+                        amt_col: float(amount),
+                        evid_col: 1,
+                        mdv_col: 1,
+                        rate_col: (
                             float(amount) / float(duration)
                             if np.isfinite(duration) and duration > 0
                             else 0.0
@@ -972,19 +972,19 @@ def write_events(
                 continue  # the padding of a shorter sampling grid
             observation = {
                 **shared,
-                time: float(t),
-                dv: float(value),
-                amt: 0.0,
-                evid: 0,
-                mdv: 0 if np.isfinite(value) else 1,
-                rate: 0.0,
+                time_col: float(t),
+                dv_col: float(value),
+                amt_col: 0.0,
+                evid_col: 0,
+                mdv_col: 0 if np.isfinite(value) else 1,
+                rate_col: 0.0,
             }
             if sd is not None:
                 observation[sd_col] = float(sd[index][point])
             if se is not None:
                 observation[se_col] = float(se[index][point])
             sample_rows.append(observation)
-        sample_rows.sort(key=lambda row: (row[time], -row[evid]))
+        sample_rows.sort(key=lambda row: (row[time_col], -row[evid_col]))
         rows.extend(sample_rows)
 
     uncertainty = [
@@ -996,7 +996,17 @@ def write_events(
         )
         if present
     ]
-    columns = [id, time, dv, amt, evid, mdv, rate, *uncertainty, *covariate_names]
+    columns = [
+        id_col,
+        time_col,
+        dv_col,
+        amt_col,
+        evid_col,
+        mdv_col,
+        rate_col,
+        *uncertainty,
+        *covariate_names,
+    ]
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -1012,9 +1022,9 @@ def read_pknca(
     time_col: str = "time",
     dose_col: str = "dose",
     dose_time_col: str = "time",
-    subject: str = "subject",
-    groups: Sequence[str] = (),
+    subject_col: str = "subject",
     duration_col: str | None = None,
+    covariates: Sequence[str] = (),
     dim: str = "individual",
     substance: str = "substance",
 ) -> Timecourses:
@@ -1039,11 +1049,11 @@ def read_pknca(
         time_col: name of the time column of `conc`
         dose_col: name of the dose amount column
         dose_time_col: name of the time column of `dose`, 0 when it is absent
-        subject: name of the subject column of both tables
-        groups: further grouping columns which are constant within a subject;
-            they become coordinates along `dim`
+        subject_col: name of the subject column of both tables
         duration_col: name of the infusion duration column of `dose`, `None`
             without infusions
+        covariates: further columns of either table which are constant within a
+            subject; they become coordinates along `dim`
         dim: name of the sample dimension of the batch
         substance: name of the substance or effect
 
@@ -1052,8 +1062,8 @@ def read_pknca(
         `conc` and their subject label as the coordinate of `dim`.
 
     Raises:
-        ValueError: if a required column is missing, if a grouping column is in
-            neither table or is not constant within a subject, if the
+        ValueError: if a required column is missing, if a covariate column is
+            in neither table or is not constant within a subject, if the
             concentration table holds no subject, if a subject has fewer than
             two concentrations or duplicate times, or if the dose rows of a
             subject are not a valid protocol (a dose time which is not a
@@ -1065,10 +1075,10 @@ def read_pknca(
     dose = dose.reset_index(drop=True)
     c_lookup = _lookup(conc)
     d_lookup = _lookup(dose)
-    c_subject = _column(c_lookup, subject, required=True)
+    c_subject = _column(c_lookup, subject_col, required=True)
     c_time = _column(c_lookup, time_col, required=True)
     c_value = _column(c_lookup, conc_col, required=True)
-    d_subject = _column(d_lookup, subject, required=True)
+    d_subject = _column(d_lookup, subject_col, required=True)
     d_amount = _column(d_lookup, dose_col, required=True)
     d_time = _column(d_lookup, dose_time_col)
     d_duration = _column(d_lookup, duration_col)
@@ -1106,7 +1116,7 @@ def read_pknca(
         )
 
     coordinates: dict[str, np.ndarray] = {}
-    for name in groups:
+    for name in covariates:
         column = _column(c_lookup, name)
         table, table_subject = conc, c_subject
         if column is None:
@@ -1116,7 +1126,7 @@ def read_pknca(
         constant = _constant_per_subject(table, table_subject, column, labels)
         if constant is None:
             raise ValueError(
-                f"The grouping column '{column}' is not constant within every subject"
+                f"The covariate column '{column}' is not constant within every subject"
             )
         coordinates[column] = constant
 
@@ -1170,20 +1180,21 @@ def read_adnca(
     unit: str | None = None,
     dose_unit: str | None = None,
     route: Route | None = None,
-    subject: str = "USUBJID",
+    subject_col: str = "USUBJID",
     analyte: str | None = None,
-    param: str = "PARAMCD",
-    value: str = "AVAL",
-    value_unit: str = "AVALU",
-    time_first: str = "AFRLT",
-    time_ref: str = "ARRLT",
-    dose: str = "DOSEA",
+    param_col: str = "PARAMCD",
+    value_col: str = "AVAL",
+    value_unit_col: str = "AVALU",
+    time_first_col: str = "AFRLT",
+    time_ref_col: str = "ARRLT",
+    dose_col: str = "DOSEA",
     dose_unit_col: str = "DOSEU",
     route_col: str = "ROUTE",
-    dtype: str = "DTYPE",
-    lloq: str = "ALLOQ",
+    dtype_col: str = "DTYPE",
+    lloq_col: str = "ALLOQ",
     dim: str = "individual",
     substance: str | None = None,
+    covariates: Sequence[str] = (),
 ) -> Timecourses:
     """Read a batch from a CDISC ADaM ADNCA (ADPC) dataset.
 
@@ -1207,22 +1218,24 @@ def read_adnca(
         dose_unit: unit of the doses, the first `DOSEU` by default
         route: route of the doses, a `Route` or a string it coerces, the
             first `ROUTE` by default
-        subject: name of the subject column
+        subject_col: name of the subject column
         analyte: the analyte to read, the single analyte of the dataset by
             default
-        param: name of the parameter code column
-        value: name of the value column
-        value_unit: name of the unit column of the values
-        time_first: name of the column with the time since the first dose
-        time_ref: name of the column with the time since the reference dose
-        dose: name of the dose amount column
+        param_col: name of the parameter code column
+        value_col: name of the value column
+        value_unit_col: name of the unit column of the values
+        time_first_col: name of the column with the time since the first dose
+        time_ref_col: name of the column with the time since the reference dose
+        dose_col: name of the dose amount column
         dose_unit_col: name of the unit column of the doses
         route_col: name of the route column
-        dtype: name of the derivation type column
-        lloq: name of the column with the lower limit of quantification; it
+        dtype_col: name of the derivation type column
+        lloq_col: name of the column with the lower limit of quantification; it
             becomes the coordinate `lloq` along `dim`
         dim: name of the sample dimension of the batch
         substance: name of the substance, the analyte by default
+        covariates: further columns which are constant within a subject; they
+            become coordinates along `dim`
 
     Returns:
         The batch, the subjects in the order of their first appearance and
@@ -1233,23 +1246,24 @@ def read_adnca(
             the dataset holds several analytes, if a unit or a route cannot be
             read, if the route is `Route.IV_INFUSION` (the dataset holds no
             duration, the error names the subject), if a subject has fewer than
-            two records or duplicate times, or if the records of one dose time
-            of a subject disagree on the dose amount.
+            two records or duplicate times, if the records of one dose time
+            of a subject disagree on the dose amount, or if a covariate column
+            is not in the dataset or not constant within a subject.
     """
     route = None if route is None else Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
-    c_subject = _column(lookup, subject, required=True)
-    c_param = _column(lookup, param, required=True)
-    c_value = _column(lookup, value, required=True)
-    c_first = _column(lookup, time_first, required=True)
-    c_ref = _column(lookup, time_ref, required=True)
-    c_dose = _column(lookup, dose, required=True)
-    c_value_unit = _column(lookup, value_unit)
+    c_subject = _column(lookup, subject_col, required=True)
+    c_param = _column(lookup, param_col, required=True)
+    c_value = _column(lookup, value_col, required=True)
+    c_first = _column(lookup, time_first_col, required=True)
+    c_ref = _column(lookup, time_ref_col, required=True)
+    c_dose = _column(lookup, dose_col, required=True)
+    c_value_unit = _column(lookup, value_unit_col)
     c_dose_unit = _column(lookup, dose_unit_col)
     c_route = _column(lookup, route_col)
-    c_dtype = _column(lookup, dtype)
-    c_lloq = _column(lookup, lloq)
+    c_dtype = _column(lookup, dtype_col)
+    c_lloq = _column(lookup, lloq_col)
     assert c_subject is not None and c_param is not None and c_value is not None
     assert c_first is not None and c_ref is not None and c_dose is not None
 
@@ -1333,6 +1347,15 @@ def read_adnca(
                 "every subject"
             )
         coordinates["lloq"] = constant
+    for name in covariates:
+        column = _column(lookup, name, required=True)
+        assert column is not None
+        constant = _constant_per_subject(rows, c_subject, column, labels)
+        if constant is None:
+            raise ValueError(
+                f"The covariate column '{column}' is not constant within every subject"
+            )
+        coordinates[column] = constant
 
     return _build_batch(
         labels=labels,

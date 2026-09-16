@@ -98,6 +98,8 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "temax",
         "lambda_z_n_points",
         "lambda_z_t_first",
+        "lambda_z_t_last",
+        "lambda_z_span",
         "lambda_z_intercept",
         "lambda_z_r2",
         "lambda_z_r2_adj",
@@ -107,6 +109,14 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "n_doses",
         "tau",
         "interval_n_points",
+        # the observed times and the bounds of a dosing interval: an interval
+        # starts and ends where the protocol says, so a standard error or a
+        # coefficient of variation of them is not a quantity either
+        "interval_tmax",
+        "interval_temax",
+        "interval_start",
+        "interval_end",
+        "interval_dose",
     }
 )
 

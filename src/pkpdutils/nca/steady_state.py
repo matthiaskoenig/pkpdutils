@@ -297,6 +297,7 @@ def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.Da
 def superposition(
     timecourse: Timecourse,
     dosing: Dosing | DosingRegimen,
+    *,
     options: NCAOptions | None = None,
     t_end: float | None = None,
 ) -> Timecourse:
@@ -315,6 +316,8 @@ def superposition(
     Args:
         timecourse: the single dose curve (its dose is the reference amount)
         dosing: the protocol to superpose, or a `DosingRegimen` with `n_doses`
+
+    Keyword Args:
         options: NCA options for the interpolation and the terminal phase
         t_end: end of the predicted curve, the last dose time plus the last
             observed time by default
@@ -333,7 +336,7 @@ def superposition(
         raise ValueError("The single dose curve needs a dose to scale the protocol")
     amount_single = timecourse.dose.amount
     single = timecourse.relative_to_dose()
-    q = nca_single(single, options).to_quantities()
+    q = nca_single(single, options=options).to_quantities()
     lambda_z = float(q["lambda_z"].magnitude)
     if not np.isfinite(lambda_z):
         raise ValueError(

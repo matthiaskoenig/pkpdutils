@@ -532,7 +532,7 @@ def _welch_from_moments(
 
 
 def multiple_comparison(
-    p_values: ArrayLike, method: AdjustMethod | str = AdjustMethod.HOLM
+    p_values: ArrayLike, *, method: AdjustMethod | str = AdjustMethod.HOLM
 ) -> np.ndarray:
     r"""Adjust p values for multiple comparisons.
 
@@ -542,6 +542,8 @@ def multiple_comparison(
 
     Args:
         p_values: the p values.
+
+    Keyword Args:
         method: the adjustment, as the member or as its string.
 
     Returns:

@@ -1,21 +1,53 @@
 """Figures of fits: data and curve with residuals, goodness of fit, dose proportionality."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import NullLocator
 
+from pkpdutils.fit.proportionality import ProportionalityResult
 from pkpdutils.fit.result import FitResult
 from pkpdutils.plot._common import (
+    axes_of,
+    axis_label,
+    figure_of,
     log_scale,
-    plain_log_ticks,
     sample_colors,
     sample_labels,
+    unit_label,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
+
+
+def _axis_labels(result: FitResult) -> tuple[str, str]:
+    """The axis labels of a fit, `name [unit]` for `x` and for `y`.
+
+    The names are `attrs["x_name"]` and `attrs["y_name"]`, which the front
+    ends of the fit set from what they were given (`time` and the substance
+    for a timecourse, the column names for a table); a result built without
+    them falls back to `x` and `y`. The unit is written in the short symbols
+    of the data (`unit_label`), and a variable without one is labelled with
+    its name alone, since `[dimensionless]` says nothing about it.
+
+    Args:
+        result: the fit.
+
+    Returns:
+        The label of the x axis and the label of the y axis.
+    """
+    return (
+        axis_label(
+            str(result.ds.attrs.get("x_name", "x")), unit_label(result.units("x_data"))
+        ),
+        axis_label(
+            str(result.ds.attrs.get("y_name", "y")), unit_label(result.units("y_data"))
+        ),
+    )
 
 
 def _parameter_text(result: FitResult, sample: xr.Dataset) -> str:
@@ -46,6 +78,7 @@ def plot_fit(
     log_y: bool = False,
     n_grid: int = 200,
     title: str | None = None,
+    axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
 ) -> Figure:
@@ -59,14 +92,24 @@ def plot_fit(
     and the flags of the sample. The lower panel draws the weighted
     residuals against `x` with a zero line.
 
+    The axes are labelled with the names the front end of the fit stored in
+    `attrs["x_name"]` and `attrs["y_name"]` (`time` and the substance for a
+    timecourse, the column names for a table), `x` and `y` without them.
+
     Args:
         result: the fit.
+
+    Keyword Args:
         log_x: logarithmic x axis (and a log-spaced curve grid); a point
             with `x <= 0` is left out of the plot and the curve grid.
         log_y: logarithmic y axis; a point with `y <= 0` is left out of the plot.
         n_grid: number of points of the curve grid.
         title: title, the model name by default; the parameters and the
             flags are appended.
+        axes: the two axes to draw the fit and the residual panel into, a new
+            figure by default; a caller-supplied pair is used as it is, so it
+            gives up the `height_ratios=[3, 1]` and the shared x axis of the
+            default panels unless the caller sets them itself.
         style: colors and markers.
         **indexers: coordinate label per sample dimension, none for a 0-D result.
 
@@ -80,10 +123,15 @@ def plot_fit(
     x_ok = (x > 0) if log_x else np.ones_like(x, dtype=bool)
     y_ok = (y > 0) if log_y else np.ones_like(y, dtype=bool)
     ok_plot = ok & x_ok & y_ok
-    fig, (ax, ax_res) = plt.subplots(
-        nrows=2, ncols=1, figsize=(7, 6.5), height_ratios=[3, 1], sharex=True
-    )
-    fig.set_layout_engine("constrained")
+    if axes is None:
+        fig, panels = plt.subplots(
+            nrows=2, ncols=1, figsize=(7, 6.5), height_ratios=[3, 1], sharex=True
+        )
+        fig.set_layout_engine("constrained")
+        ax, ax_res = panels
+    else:
+        fig, panels = axes_of(axes, nrows=2, ncols=1, figsize=(7, 6.5))
+        ax, ax_res = panels[0][0], panels[1][0]
     if "sd_data" in sample and np.any(np.isfinite(sample["sd_data"].to_numpy())):
         sd = sample["sd_data"].to_numpy()
         ax.errorbar(
@@ -130,8 +178,9 @@ def plot_fit(
     if flags:
         text = f"{text} [{', '.join(flags)}]"
     ax.set_title(text, fontsize="small")
+    x_label, y_label = _axis_labels(result)
     # the x axis is shared with the residual panel below, which carries the label
-    ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
+    ax.set_ylabel(y_label)
     if log_x:
         log_scale(ax, "x")
     if log_y:
@@ -149,27 +198,35 @@ def plot_fit(
         color=style.data_color,
         markersize=style.markersize,
     )
-    ax_res.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
+    ax_res.set_xlabel(x_label)
     ax_res.set_ylabel("weighted residual")
     return fig
 
 
 def plot_goodness_of_fit(
-    result: FitResult, *, log: bool = False, style: PlotStyle = DEFAULT_STYLE
+    result: FitResult,
+    *,
+    log_x: bool = False,
+    log_y: bool = False,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
     """Predicted against observed values of every sample, with the identity line.
 
     Args:
         result: the fit.
-        log: logarithmic axes; non-positive points are masked out to avoid a
-            warning from the log scale.
+
+    Keyword Args:
+        log_x: logarithmic axis of the observed values; non-positive points are
+            masked out to avoid a warning from the log scale.
+        log_y: logarithmic axis of the predicted values, masked the same way.
+        ax: axes to draw on, a new figure by default.
         style: colors and markers.
 
     Returns:
         The figure.
     """
-    fig, ax = plt.subplots(figsize=(5.5, 5.5))
-    fig.set_layout_engine("constrained")
+    fig, ax = figure_of(ax, figsize=(5.5, 5.5))
     n_point = result.ds.sizes["point"]
     y = result["y_data"].to_numpy().reshape(-1, n_point)
     pred = result["y_pred"].to_numpy().reshape(-1, n_point)
@@ -179,24 +236,27 @@ def plot_goodness_of_fit(
     colors = sample_colors(n, style.cmap)
     for i in range(n):
         ok = np.isfinite(y[i]) & np.isfinite(pred[i])
-        if log:
-            ok &= (y[i] > 0) & (pred[i] > 0)
+        if log_x:
+            ok &= y[i] > 0
+        if log_y:
+            ok &= pred[i] > 0
         label = f"{labels[i]} (R² = {r2[i]:.3f})" if n <= 8 else None
         color = colors[i] if n > 1 else style.data_color
         ax.scatter(
             y[i][ok], pred[i][ok], color=color, s=style.markersize**2 * 1.5, label=label
         )
     finite = np.concatenate([y[np.isfinite(y)], pred[np.isfinite(pred)]])
-    if log:
+    if log_x or log_y:
         finite = finite[finite > 0]
     if finite.size:
         lo, hi = float(finite.min()), float(finite.max())
         ax.plot([lo, hi], [lo, hi], "--", color="gray", linewidth=1, label="identity")
-    unit = result.ds.attrs["y_unit"]
-    ax.set_xlabel(f"observed [{unit}]")
-    ax.set_ylabel(f"predicted [{unit}]")
-    if log:
+    unit = unit_label(result.units("y_data"))
+    ax.set_xlabel(axis_label("observed", unit))
+    ax.set_ylabel(axis_label("predicted", unit))
+    if log_x:
         log_scale(ax, "x")
+    if log_y:
         log_scale(ax, "y")
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small")
@@ -206,17 +266,25 @@ def plot_goodness_of_fit(
 def plot_dose_proportionality(
     result: FitResult,
     *,
-    test: xr.Dataset | None = None,
+    test: ProportionalityResult | None = None,
+    ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
 ) -> Figure:
     """Log-log exposure against dose with the power fit and the acceptance bounds.
 
+    The axes are labelled with the names the front end of the fit stored in
+    `attrs["x_name"]` and `attrs["y_name"]` (the column names for
+    `fit_table`), `x` and `y` without them.
+
     Args:
         result: fit of `Power` (parameters `a`, `b`).
-        test: the dataset of `proportionality_test`; when given, draws the
+
+    Keyword Args:
+        test: the result of `proportionality_test`; when given, draws the
             acceptance wedge through the first data point and the verdict
             ("proportional", "inconclusive" or "not proportional") in the title.
+        ax: axes to draw on, a new figure by default.
         style: colors and markers.
         **indexers: coordinate label per sample dimension, none for a 0-D result.
 
@@ -227,8 +295,7 @@ def plot_dose_proportionality(
     x = sample["x_data"].to_numpy()
     y = sample["y_data"].to_numpy()
     ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    fig.set_layout_engine("constrained")
+    fig, ax = figure_of(ax, figsize=(6, 4.5))
     ax.plot(
         x[ok],
         y[ok],
@@ -246,7 +313,7 @@ def plot_dose_proportionality(
     heading = f"b = {b:.3f}"
     if np.isfinite(ci_low) and np.isfinite(ci_high):
         heading = f"{heading} [{ci_low:.3f}, {ci_high:.3f}]"
-    t = None if test is None else (test.sel(indexers) if indexers else test)
+    t = None if test is None else test.sel(**indexers)
     if ok.any() and np.isfinite(a) and np.isfinite(b):
         lo, hi = float(x[ok].min()), float(x[ok].max())
         if lo < hi:
@@ -260,8 +327,7 @@ def plot_dose_proportionality(
                 label=f"a·x^b, b = {b:.3f}",
             )
             if t is not None:
-                bound_low = float(t["bound_low"].to_numpy())
-                bound_high = float(t["bound_high"].to_numpy())
+                bound_low, bound_high = t.bounds
                 x0, y0 = grid[0], a * grid[0] ** b
                 ax.fill_between(
                     grid,
@@ -272,17 +338,16 @@ def plot_dose_proportionality(
                     label=f"acceptance [{bound_low:.2f}, {bound_high:.2f}]",
                 )
     if t is not None:
-        if bool(t["proportional"].to_numpy()):
+        if bool(t.proportional.to_numpy()):
             verdict = "proportional"
-        elif bool(t["inconclusive"].to_numpy()):
+        elif bool(t.inconclusive.to_numpy()):
             verdict = "inconclusive"
         else:
             verdict = "not proportional"
         heading = f"{heading}: {verdict}"
     ax.set_title(heading)
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    plain_log_ticks(ax.yaxis)
+    log_scale(ax, "x")
+    log_scale(ax, "y")
     if ok.any():
         # a dose escalation has few, known doses: label those instead of the
         # decade ticks of the log scale, whose labels overlap over a range of
@@ -290,25 +355,39 @@ def plot_dose_proportionality(
         doses = np.unique(x[ok])
         ax.set_xticks(doses, labels=[f"{dose:g}" for dose in doses])
         ax.xaxis.set_minor_locator(NullLocator())
-    ax.set_xlabel(f"x [{result.ds.attrs['x_unit']}]")
-    ax.set_ylabel(f"y [{result.ds.attrs['y_unit']}]")
+    x_label, y_label = _axis_labels(result)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize="small")
     return fig
 
 
 def plot_bland_altman(
-    result: FitResult, *, log: bool = False, style: PlotStyle = DEFAULT_STYLE
+    result: FitResult,
+    *,
+    log_ratio: bool = False,
+    ax: Axes | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
     """Bland-Altman plot of the predictions against the data of every sample.
 
-    The difference `y_pred - y_data` (the log ratio with `log`) against the
-    mean of both per point, with the mean difference and the limits of
+    The difference `y_pred - y_data` (the log ratio with `log_ratio`) against
+    the mean of both per point, with the mean difference and the limits of
     agreement `mean +- 1.96 sd` as horizontal lines (Bland & Altman 1986).
+
+    `log_ratio` selects the statistic the figure shows and not only the scale
+    of an axis, which is why it is not one of the `log_x`/`log_y` keywords of
+    the other figures: it replaces the difference by the log ratio and draws
+    the mean on a logarithmic axis.
 
     Args:
         result: the fit.
-        log: use the log ratio and the log mean; non-positive points are masked out.
+
+    Keyword Args:
+        log_ratio: use the log ratio and the log mean; non-positive points are
+            masked out.
+        ax: axes to draw on, a new figure by default.
         style: colors and markers.
 
     Returns:
@@ -317,15 +396,14 @@ def plot_bland_altman(
     y = result.ds["y_data"].to_numpy().ravel()
     pred = result.ds["y_pred"].to_numpy().ravel()
     ok = np.isfinite(y) & np.isfinite(pred)
-    if log:
+    if log_ratio:
         ok &= (y > 0) & (pred > 0)
         mean = np.exp((np.log(y[ok]) + np.log(pred[ok])) / 2.0)
         diff = np.log(pred[ok]) - np.log(y[ok])
     else:
         mean = (y[ok] + pred[ok]) / 2.0
         diff = pred[ok] - y[ok]
-    fig, ax = plt.subplots(figsize=(6, 4))
-    fig.set_layout_engine("constrained")
+    fig, ax = figure_of(ax, figsize=(6, 4))
     ax.plot(
         mean,
         diff,
@@ -349,12 +427,13 @@ def plot_bland_altman(
             center - 1.96 * sd, color=style.limit_color, linestyle=":", linewidth=1.0
         )
     ax.axhline(0.0, color="gray", linewidth=1.0)
-    unit = result.ds.attrs["y_unit"]
-    if log:
+    unit = unit_label(result.units("y_data"))
+    mean_label = axis_label("mean of observed and predicted", unit)
+    if log_ratio:
         log_scale(ax, "x")
-        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
+        ax.set_xlabel(mean_label)
         ax.set_ylabel("log ratio predicted / observed")
     else:
-        ax.set_xlabel(f"mean of observed and predicted [{unit}]")
-        ax.set_ylabel(f"difference predicted - observed [{unit}]")
+        ax.set_xlabel(mean_label)
+        ax.set_ylabel(axis_label("difference predicted - observed", unit))
     return fig

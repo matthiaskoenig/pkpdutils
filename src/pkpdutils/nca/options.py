@@ -122,6 +122,9 @@ class NCAFlag(IntFlag):
     #: the trough of at least one dosing interval of a bolus was extrapolated
     #: because the sample at the dose time carries the post-dose value
     EXTRAPOLATED_TROUGH = 512
+    #: the terminal phase spans fewer than two half-lives
+    #: (`lambda_z_span < 2`); lambda_z and its half-life are poorly determined
+    SPAN_LOW = 1024
 
 
 def decode_flags(value: int) -> list[str]:

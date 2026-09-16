@@ -205,18 +205,21 @@ def test_log_scale_rejects_non_positive() -> None:
 
 def test_multiple_comparison() -> None:
     p = np.array([0.01, 0.04, 0.03, 0.2])
-    bonf = multiple_comparison(p, AdjustMethod.BONFERRONI)
+    bonf = multiple_comparison(p, method=AdjustMethod.BONFERRONI)
     assert bonf.tolist() == pytest.approx([0.04, 0.16, 0.12, 0.8])
-    holm = multiple_comparison(p, AdjustMethod.HOLM)
+    holm = multiple_comparison(p, method=AdjustMethod.HOLM)
     # sorted: 0.01*4=0.04, 0.03*3=0.09, 0.04*2=0.08 -> 0.09 (monotone), 0.2*1 -> 0.2
     assert holm.tolist() == pytest.approx([0.04, 0.09, 0.09, 0.2])
-    bh = multiple_comparison(p, AdjustMethod.BH)
+    bh = multiple_comparison(p, method=AdjustMethod.BH)
     assert bh.tolist() == pytest.approx(
         stats.false_discovery_control(p, method="bh").tolist()
     )
-    assert multiple_comparison(np.array([0.5]), AdjustMethod.HOLM).tolist() == [0.5]
+    assert multiple_comparison(np.array([0.5]), method=AdjustMethod.HOLM).tolist() == [
+        0.5
+    ]
     assert (
-        multiple_comparison(np.array([0.9, 0.9]), AdjustMethod.BONFERRONI).max() == 1.0
+        multiple_comparison(np.array([0.9, 0.9]), method=AdjustMethod.BONFERRONI).max()
+        == 1.0
     )
 
 
@@ -232,10 +235,13 @@ def test_string_arguments_are_coerced() -> None:
     less = compare(a, b, alternative="less")
     assert less.p_value == compare(a, b, alternative=Alternative.LESS).p_value
     p = np.array([0.001, 0.008, 0.014, 0.2])
-    assert multiple_comparison(p, "holm").tolist() == pytest.approx(
-        multiple_comparison(p, AdjustMethod.HOLM).tolist()
+    assert multiple_comparison(p, method="holm").tolist() == pytest.approx(
+        multiple_comparison(p, method=AdjustMethod.HOLM).tolist()
     )
-    assert multiple_comparison(p, "bh")[1] != multiple_comparison(p, "holm")[1]
+    assert (
+        multiple_comparison(p, method="bh")[1]
+        != multiple_comparison(p, method="holm")[1]
+    )
     with pytest.raises(ValueError, match="not a valid Scale"):
         compare(a, b, scale="logarithmic")
     with pytest.raises(ValueError, match="not a valid TestMethod"):
@@ -243,7 +249,7 @@ def test_string_arguments_are_coerced() -> None:
     with pytest.raises(ValueError, match="not a valid Alternative"):
         compare(a, b, alternative="smaller")
     with pytest.raises(ValueError, match="not a valid AdjustMethod"):
-        multiple_comparison(p, "hochberg")
+        multiple_comparison(p, method="hochberg")
 
 
 def test_sample_without_finite_values_gives_nan_statistics() -> None:

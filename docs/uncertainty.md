@@ -16,7 +16,7 @@ Under `se` draws the interval is the percentile interval of the replicates, whic
 
 **Discrete parameters.** `tmax`, `tlast`, `tmin`, `tmax_half`, `temax` and the counts of the terminal regression are read from the observed points; they carry no uncertainty variables. The regression diagnostics (`lambda_z_stderr`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`) carry no uncertainty variables either.
 
-**Individuals.** When every subject has its own curve the parameters of the subjects are a sample: `NCAResult.summarize(dim)` reduces the result over a sample dimension to the mean, standard deviation, standard error, a t-based confidence interval of the mean, median and quartiles, the number of values and, for log-normal parameters, the geometric mean and geometric CV. The variables have the same names as the bootstrap output, so a group result and a summary look alike. The two counts of a summary differ: `n` is the number of samples along the reduced dimension, `x_n` the number of them at which `x` is finite, and every statistic of `x` uses `x_n` (\(\mathrm{se} = \mathrm{sd}/\sqrt{x_n}\), the interval uses \(t\) with \(x_n - 1\) degrees of freedom). A parameter which does not apply to every subject, such as `lambda_z` without a terminal phase, therefore has \(x_n < n\).
+**Individuals.** When every subject has its own curve the parameters of the subjects are a sample: `NCAResult.summarize(dim)` reduces the result over a sample dimension to the mean, standard deviation, standard error, the coefficient of variation `x_cv` (\(\mathrm{sd}/\lvert \bar x \rvert\), a fraction), a t-based confidence interval of the mean, median, quartiles, `x_min` and `x_max`, the number of values and, for log-normal parameters, the geometric mean and geometric CV. The per-interval parameters of a multiple dose analysis (`interval_*`) are reduced over the subjects as well and keep their `interval` dimension, so that the mean trough per dosing interval is one call; `summary_table` formats the whole set into the parameter table of a publication, see [NCA](nca.md). The variables have the same names as the bootstrap output, so a group result and a summary look alike. The two counts of a summary differ: `n` is the number of samples along the reduced dimension, `x_n` the number of them at which `x` is finite, and every statistic of `x` uses `x_n` (\(\mathrm{se} = \mathrm{sd}/\sqrt{x_n}\), the interval uses \(t\) with \(x_n - 1\) degrees of freedom). A parameter which does not apply to every subject, such as `lambda_z` without a terminal phase, therefore has \(x_n < n\).
 
 ## Math
 
@@ -76,17 +76,17 @@ group = Timecourse(
     dose=Dose(amount=100, unit="mg", route=Route.ORAL),
     substance="caffeine",
 )
-result = nca_single(group, NCAOptions(seed=1, n_boot=2000))
+result = nca_single(group, options=NCAOptions(seed=1, n_boot=2000))
 q = result.to_quantities()
 q["auc_inf_obs"], q["auc_inf_obs_se"], q["auc_inf_obs_ci_low"], q["auc_inf_obs_ci_high"]
 result = nca_single(
     group,
-    NCAOptions(
+    options=NCAOptions(
         bootstrap_spread=BootstrapSpread.SD,
         bootstrap_distribution=BootstrapDistribution.LOGNORMAL,
     ),
 )
-result = nca_single(group, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+result = nca_single(group, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
 ```
 
 Individual curves:
@@ -95,6 +95,7 @@ Individual curves:
 result = nca(individuals)  # individuals: Timecourses over "individual"
 summary = result.summarize("individual")
 summary.to_dataframe()  # auc_inf_obs, auc_inf_obs_sd, ..., auc_inf_obs_geocv, n
+result.summary_table("individual")  # the formatted table of the same statistics
 ```
 
 Partial areas, e.g. \(\mathrm{AUC}_{0\text{-}6}\) of every sample:

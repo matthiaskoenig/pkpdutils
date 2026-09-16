@@ -231,7 +231,7 @@ def test_read_pknca() -> None:
         unit="mg/l",
         dose_unit="mg",
         route=Route.ORAL,
-        groups=["treatment"],
+        covariates=["treatment"],
     )
     assert batch.ds["treatment"].to_numpy().tolist() == ["A", "B"]
     assert batch.dosing_of(individual=2) == Dosing(
@@ -249,7 +249,7 @@ def test_read_pknca() -> None:
             unit="mg/l",
             dose_unit="mg",
             route=Route.ORAL,
-            groups=["treatment"],
+            covariates=["treatment"],
         )
         == batch
     )
@@ -339,6 +339,21 @@ def test_read_adnca() -> None:
     with pytest.raises(ValueError, match="analyte"):
         read_adnca(pd.concat([df, df.assign(PARAMCD="OTHER")]))
     assert Timecourses.from_adnca(df) == batch
+
+
+def test_read_adnca_covariates_become_coordinates() -> None:
+    """Every reader takes `covariates`, the columns kept along the sample dimension."""
+    df = pd.read_csv(DATA / "adnca.csv")
+    weights = {"S1": 70.0, "S2": 82.0}
+    with_covariate = df.assign(WEIGHT=df["USUBJID"].map(weights))
+    batch = read_adnca(with_covariate, covariates=["WEIGHT"])
+    assert batch.ds["WEIGHT"].to_numpy().tolist() == [70.0, 82.0]
+    with pytest.raises(ValueError, match="no 'AGE' column"):
+        read_adnca(with_covariate, covariates=["AGE"])
+    varying = with_covariate.copy()
+    varying.loc[varying.index[0], "WEIGHT"] = 99.0
+    with pytest.raises(ValueError, match="not constant"):
+        read_adnca(varying, covariates=["WEIGHT"])
 
 
 def test_events_round_trip_keeps_the_uncertainty() -> None:

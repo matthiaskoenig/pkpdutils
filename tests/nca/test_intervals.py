@@ -50,7 +50,7 @@ TC = Timecourse(
 
 
 def test_interval_parameters_match_the_closed_form() -> None:
-    result = nca_single(TC, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(TC, options=NCAOptions(auc_method=AUCMethod.LOG))
     assert result.has_intervals
     auc = result["interval_auc"].to_numpy()
     assert auc.shape == (N_DOSES,)
@@ -80,7 +80,7 @@ def test_interval_parameters_match_the_closed_form() -> None:
 def test_steady_state_is_the_last_interval_and_point_parameters_follow_the_last_dose() -> (
     None
 ):
-    result = nca_single(TC, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(TC, options=NCAOptions(auc_method=AUCMethod.LOG))
     q = result.to_quantities()
     assert float(q["auc_tau"].magnitude) == pytest.approx(
         interval_auc_closed_form(N_DOSES - 1), rel=1e-3
@@ -117,7 +117,7 @@ def test_steady_state_is_the_last_interval_and_point_parameters_follow_the_last_
 
 
 def test_multiple_dose_analysis_reports_no_single_dose_quantities() -> None:
-    result = nca_single(TC, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(TC, options=NCAOptions(auc_method=AUCMethod.LOG))
     q = result.to_quantities()
     # the slice after the last dose carries the exposure of the earlier doses,
     # so `CL = D / AUC(0-inf)` of that slice would be biased low (1.82 l/h here)
@@ -150,7 +150,7 @@ def test_an_extravascular_multiple_dose_analysis_reports_cl_ss_f() -> None:
             Dose(amount=100, unit="mg", route=Route.ORAL), interval=12, n_doses=3
         ),
     )
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     assert "cl_ss" not in result and "cl_ss_f" in result
     q = result.to_quantities()
     assert float(q["cl_ss_f"].magnitude) == pytest.approx(
@@ -169,7 +169,7 @@ def test_bolus_trough_is_regressed_only_when_the_sample_is_post_dose() -> None:
     tc = Timecourse(
         time=TIMES, value=noisy, time_unit="hr", unit="mg/l", dosing=PROTOCOL
     )
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     trough = float(result["interval_ctrough"].to_numpy()[0])
     expected = C0 * np.exp(-K * TAU)
     assert trough == pytest.approx(expected * 0.98 ** (4 / 3), rel=1e-6)
@@ -187,7 +187,7 @@ def test_an_observed_bolus_trough_at_the_dose_time_is_used_as_it_is() -> None:
     tc = Timecourse(
         time=TIMES, value=pre_dose, time_unit="hr", unit="mg/l", dosing=PROTOCOL
     )
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     observed = pre_dose[np.isclose(TIMES, TAU)][0]
     assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(observed)
     assert NCAFlag.EXTRAPOLATED_TROUGH.name not in result.flags()
@@ -210,7 +210,7 @@ def test_an_oral_curve_never_extrapolates_the_trough() -> None:
             Dose(amount=100, unit="mg", route=Route.ORAL), interval=12, n_doses=3
         ),
     )
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LOG))
     assert NCAFlag.EXTRAPOLATED_TROUGH.name not in result.flags()
     assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(
         c[np.isclose(t, 12.0)][0]
@@ -260,7 +260,7 @@ def test_tau_option_makes_a_single_dose_curve_a_steady_state_interval() -> None:
         unit="mg/l",
         dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
     )
-    result = nca_single(tc, NCAOptions(tau=TAU, auc_method=AUCMethod.LOG))
+    result = nca_single(tc, options=NCAOptions(tau=TAU, auc_method=AUCMethod.LOG))
     assert result.has_intervals and result["interval_auc"].to_numpy().shape == (1,)
     assert float(result["auc_tau"].to_numpy()) == pytest.approx(
         interval_auc_closed_form(4), rel=1e-3
@@ -297,7 +297,7 @@ def test_batch_with_different_numbers_of_doses_and_workers() -> None:
     a = TC
     b = Timecourse(time=t3, value=c3, time_unit="hr", unit="mg/l", dosing=three)
     batch = Timecourses.from_timecourses([a, b], labels=["five", "three"])
-    serial = nca(batch, NCAOptions(auc_method=AUCMethod.LOG))
+    serial = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     assert serial.ds.sizes["interval"] == 5
     auc = serial["interval_auc"]
     assert (
@@ -306,7 +306,7 @@ def test_batch_with_different_numbers_of_doses_and_workers() -> None:
     )
     assert serial["n_doses"].to_numpy().tolist() == [5, 3]
     parallel = nca(
-        batch, NCAOptions(auc_method=AUCMethod.LOG, n_workers=2, chunk_rows=1)
+        batch, options=NCAOptions(auc_method=AUCMethod.LOG, n_workers=2, chunk_rows=1)
     )
     for variable in serial.ds.data_vars:
         name = str(variable)
@@ -327,7 +327,7 @@ def test_effect_intervals() -> None:
         unit="mmHg",
         dosing=Dosing.regimen(Dose(amount=1, unit="mg"), interval=12, n_doses=3),
     )
-    result = nca_single(tc, NCAOptions(kind=Kind.EFFECT, effect_threshold=6.0))
+    result = nca_single(tc, options=NCAOptions(kind=Kind.EFFECT, effect_threshold=6.0))
     assert result["interval_emax"].to_numpy() == pytest.approx([8.0, 8.0, 8.0])
     assert result["interval_temax"].to_numpy() == pytest.approx([6.0, 6.0, 6.0])
     assert result["interval_emin"].to_numpy() == pytest.approx([5.0, 5.0, 5.0])
@@ -358,7 +358,9 @@ def test_superposition_on_a_protocol_with_different_amounts() -> None:
     protocol = Dosing(
         amounts=[100, 200, 100], times=[0, 12, 24], unit="mg", route=Route.IV_BOLUS
     )
-    predicted = superposition(single, protocol, NCAOptions(auc_method=AUCMethod.LOG))
+    predicted = superposition(
+        single, protocol, options=NCAOptions(auc_method=AUCMethod.LOG)
+    )
     assert predicted.dosing == protocol
     expected = (
         C0 * np.exp(-K * 24.5) + 2 * C0 * np.exp(-K * 12.5) + C0 * np.exp(-K * 0.5)
@@ -393,9 +395,9 @@ def test_an_interval_of_a_batch_is_analysed_like_the_curve_on_its_own() -> None:
                 ),
             )
         )
-    batch = nca(Timecourses.from_timecourses(curves), options)
+    batch = nca(Timecourses.from_timecourses(curves), options=options)
     for i, curve in enumerate(curves):
-        single = nca_single(curve, options)
+        single = nca_single(curve, options=options)
         assert curve.dosing is not None
         n_doses = curve.dosing.n_doses
         for name in single.ds.data_vars:
@@ -427,7 +429,7 @@ def test_an_interval_with_samples_on_both_of_its_bounds() -> None:
             Dose(amount=100, unit="mg", route=Route.ORAL), interval=12.0, n_doses=2
         ),
     )
-    result = nca_single(tc, NCAOptions(auc_method=AUCMethod.LINEAR))
+    result = nca_single(tc, options=NCAOptions(auc_method=AUCMethod.LINEAR))
     auc = result["interval_auc"].to_numpy()
     # the linear trapezoids of the samples at 0, 3, 6, 9, 12 and 12, 15, 18, 21, 24
     assert auc[0] == pytest.approx(3 * (9.0 + 7.0 + 5.0 + 8.0))

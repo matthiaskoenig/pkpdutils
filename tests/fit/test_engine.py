@@ -97,6 +97,13 @@ def test_monoexp_recovery_and_statistics() -> None:
     assert q["k"].magnitude == pytest.approx(0.3, rel=0.1)
     assert str(q["k"].units) == "1 / hour" and str(q["a"].units) == "milligram / liter"
     assert q["k_se"].magnitude > 0 and q["k_cv"].magnitude > 0
+    # the coefficient of variation is a fraction, not a percentage
+    assert q["k_cv"].magnitude == pytest.approx(
+        q["k_se"].magnitude / abs(q["k"].magnitude)
+    )
+    assert q["thalf_cv"].magnitude == pytest.approx(
+        q["thalf_se"].magnitude / abs(q["thalf"].magnitude)
+    )
     assert q["k_ci_low"].magnitude < q["k"].magnitude < q["k_ci_high"].magnitude
     assert q["thalf"].magnitude == pytest.approx(np.log(2) / q["k"].magnitude)
     assert q["thalf_se"].magnitude > 0 and str(q["thalf"].units) == "hour"

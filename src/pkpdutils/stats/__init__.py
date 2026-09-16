@@ -1,4 +1,14 @@
-"""Statistics on parameters: samples, tests, ratios, bioequivalence, drug-drug interactions and meta-analysis."""
+"""Statistics on parameters: samples, tests, ratios, bioequivalence, drug-drug interactions and meta-analysis.
+
+Two unrelated functions share the name `summarize`: `pkpdutils.stats.summarize`
+reduces one `ParameterSample` to a `Summary` of scalars, while
+`pkpdutils.result.ParameterResult.summarize` reduces every parameter of a
+result over a sample dimension and returns a result again. The shared
+primitives of the module (`welch_df`, `welch_se`, `pooled_sd`, `cohen_d`,
+`hedges_correction`, `exp_t_interval`, `paired_values`, `labels_match`,
+`log_positive`, `coerce` and the log-normal conversions) live in
+`pkpdutils.stats.sample` and are part of the public interface.
+"""
 
 from pkpdutils.stats.bioequivalence import (
     BEParameter,
@@ -14,6 +24,7 @@ from pkpdutils.stats.ddi import (
     DDIThresholds,
     Sensitivity,
     ddi_classification,
+    ddi_table,
     substrate_sensitivity,
 )
 from pkpdutils.stats.meta import (
@@ -31,14 +42,26 @@ from pkpdutils.stats.meta import (
     meta_analysis_by,
     random_effects,
 )
-from pkpdutils.stats.ratio import RatioResult, ratio
+from pkpdutils.stats.ratio import RatioResult, ratio, ratio_table
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
     Summary,
+    coerce,
+    cohen_d,
+    exp_t_interval,
+    hedges_correction,
+    labels_match,
+    log_positive,
+    lognormal_from_geometric,
+    lognormal_from_moments,
+    moments_from_lognormal,
     paired_indices,
     paired_values,
+    pooled_sd,
     summarize,
+    welch_df,
+    welch_se,
 )
 from pkpdutils.stats.tests import (
     AdjustMethod,
@@ -73,20 +96,34 @@ __all__ = [
     "TestMethod",
     "TestResult",
     "bioequivalence",
+    "coerce",
+    "cohen_d",
     "compare",
     "ddi_classification",
+    "ddi_table",
     "effect_size",
     "effects_from_arrays",
+    "exp_t_interval",
     "fixed_effect",
+    "hedges_correction",
     "heterogeneity",
+    "labels_match",
+    "log_positive",
+    "lognormal_from_geometric",
+    "lognormal_from_moments",
     "meta_analysis",
     "meta_analysis_by",
+    "moments_from_lognormal",
     "multiple_comparison",
     "paired_indices",
     "paired_values",
+    "pooled_sd",
     "random_effects",
     "ratio",
+    "ratio_table",
     "substrate_sensitivity",
     "summarize",
     "tost",
+    "welch_df",
+    "welch_se",
 ]
