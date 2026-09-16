@@ -26,6 +26,8 @@ if __name__ == "__main__":
         effect,
         x_unit="ng/ml",
         y_unit="mmHg",
+        x_name="concentration",
+        y_name="effect",
         options=FitOptions(n_starts=10, seed=0),
     )
     q = result.to_quantities()

@@ -10,7 +10,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![A group curve with its standard deviation and a batch of three individuals](images/timecourses.png)
+    [![A group curve with its standard deviation and a batch of three individuals](images/timecourses.png)](images/timecourses.png)
 
     One curve with its dose, its units and the uncertainty of a group, and a batch of several curves over the sample dimensions.
 
@@ -34,7 +34,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.png)
+    [![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.png)](images/nca_single.png)
 
     The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail and the points of the terminal regression.
 
@@ -54,7 +54,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The mean curve of every dose group with its standard deviation](images/nca_batch_curves.png)
+    [![The mean curve of every dose group with its standard deviation](images/nca_batch_curves.png)](images/nca_batch_curves.png)
 
     A `(dose, individual)` batch analysed at once: the parameters of every curve as a data frame, the mean curve per dose group and a diagnostic panel per sample.
 
@@ -75,7 +75,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.png)
+    [![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.png)](images/group_uncertainty.png)
 
     The uncertainty of a published mean curve propagated to the parameters with the bootstrap or the delta method, and individual results summarized over the subjects.
 
@@ -94,7 +94,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The predicted curve of ten doses every twelve hours](images/steady_state.png)
+    [![The predicted curve of ten doses every twelve hours](images/steady_state.png)](images/steady_state.png)
 
     A single dose curve superposed into a regimen of ten doses, the parameters of every dosing interval and the steady state parameters of the last one.
 
@@ -117,7 +117,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The trough concentration of every dosing interval of four subjects](images/formats.png)
+    [![The trough concentration of every dosing interval of four subjects](images/formats.png)](images/formats.png)
 
     A twice daily batch written as event records and read back, analysed interval by interval; `from_adnca` reads a CDISC ADaM extract the same way.
 
@@ -146,7 +146,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![A Bateman curve fitted to an oral timecourse with its weighted residuals](images/fitting_exponential.png)
+    [![A Bateman curve fitted to an oral timecourse with its weighted residuals](images/fitting_exponential.png)](images/fitting_exponential.png)
 
     A Bateman model fitted to an oral curve with `1/sd` weighting and a residual bootstrap, and the AICc comparison of the exponential models.
 
@@ -167,7 +167,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![A sigmoid Emax curve fitted to a concentration-effect relationship](images/emax.png)
+    [![A sigmoid Emax curve fitted to a concentration-effect relationship](images/emax.png)](images/emax.png)
 
     The concentration-effect relationship as a sigmoid Emax model, with `ec50`, `ec90` and the comparison against the Emax and the linear model.
 
@@ -182,6 +182,8 @@ The snippet of a card is the core of its example. It runs from the root of a che
         effect,
         x_unit="ng/ml",
         y_unit="mmHg",
+        x_name="concentration",
+        y_name="effect",
         options=FitOptions(n_starts=10, seed=0),
     )
     print(result.to_quantities()["ec50"])
@@ -194,7 +196,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The power model of the exposure against the dose with its acceptance region](images/dose_proportionality.png)
+    [![The power model of the exposure against the dose with its acceptance region](images/dose_proportionality.png)](images/dose_proportionality.png)
 
     The power model \(AUC = a \cdot dose^b\) over a dose escalation and the confidence interval criterion of the dose proportionality.
 
@@ -208,7 +210,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     power = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
     test = proportionality_test(power, dose_range=(25.0, 400.0))
     print(test.slope, test.ci_low, test.ci_high, test.proportional)
-    plot_dose_proportionality(power, test=test).savefig("dp.png", dpi=120)
+    plot_dose_proportionality(power, test=test).savefig("dose_proportionality.png", dpi=120)
     ```
 
     [dose_proportionality.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/dose_proportionality.py) &middot; [Curve fitting](fitting.md)
@@ -217,7 +219,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
+    [![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)](images/covariate.png)
 
     The clearance against the body weight as an allometric model, with a free exponent and with the exponent fixed at 0.75.
 
@@ -237,7 +239,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The geometric mean ratios of a 2x2 crossover against the acceptance limits](images/bioequivalence.png)
+    [![The geometric mean ratios of a 2x2 crossover against the acceptance limits](images/bioequivalence.png)](images/bioequivalence.png)
 
     Average bioequivalence of a test against a reference formulation in a 2x2 crossover: the geometric mean ratios with their 90 % intervals against the 80-125 % limits.
 
@@ -259,7 +261,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
+    [![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)](images/ddi.png)
 
     The exposure with and without a perpetrator as a geometric mean ratio, classified against the FDA and EMA thresholds of an interaction.
 
@@ -284,7 +286,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The forest plot of five studies with the fixed and the random effect](images/meta_analysis.png)
+    [![The forest plot of five studies with the fixed and the random effect](images/meta_analysis.png)](images/meta_analysis.png)
 
     Published summary statistics of several studies pooled with the fixed effect and the random effects model, with the heterogeneity and a forest plot.
 
@@ -306,13 +308,13 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    ![The simulated curves of a dose scan, one color per dose](images/nca_from_sbmlsim.png)
+    [![The simulated curves of a dose scan, one color per dose](images/nca_from_sbmlsim.png)](images/nca_from_sbmlsim.png)
 
     The result of a simulation scan read as a batch (`from_dataset`, `from_xresult` for an sbmlsim `XResult`) and analysed curve by curve.
 
     ```python
-    from examples.nca_from_sbmlsim import simulated_dataset
-    from pkpdutils import Dose, NCAOptions, Route, Timecourses, nca
+    from examples.nca_from_sbmlsim import DOSES, simulated_dataset
+    from pkpdutils import NCAOptions, Route, Timecourses, nca
     from pkpdutils.plot import plot_timecourse
 
     batch = Timecourses.from_dataset(
@@ -320,11 +322,12 @@ The snippet of a card is the core of its example. It runs from the root of a che
         "[Cve]",
         unit="mmol/l",
         time_unit="hr",
-        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        dose={"amount": DOSES, "unit": "mg"},
+        route=Route.ORAL,
     )
     result = nca(batch, options=NCAOptions())
-    print(result.to_dataframe()[["dim_dose", "auc_inf_obs", "cmax"]])
-    plot_timecourse(batch, by="dim_dose").savefig("scan.png", dpi=120)
+    print(result.to_dataframe()[["dose", "auc_inf_obs", "cmax"]])
+    plot_timecourse(batch, by="dose").savefig("nca_from_sbmlsim.png", dpi=120)
     ```
 
     [nca_from_sbmlsim.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_from_sbmlsim.py) &middot; [Non-compartmental analysis](nca.md)

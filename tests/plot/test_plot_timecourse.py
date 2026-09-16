@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
-from pkpdutils.plot import plot_mean_timecourse, plot_timecourse
+from pkpdutils.plot import PlotStyle, plot_mean_timecourse, plot_timecourse
 
 matplotlib.use("Agg")
 
@@ -132,7 +132,8 @@ def test_plot_timecourse_by_gives_one_legend_entry_and_one_color_per_group() -> 
     legend = ax.get_legend()
     assert legend is not None
     assert [text.get_text() for text in legend.get_texts()] == ["50", "100"]
-    assert legend.get_title().get_text() == "dose"
+    # the unit of the grouping coordinate is written once, in the title
+    assert legend.get_title().get_text() == "dose [mg]"
     colors = {tuple(line.get_color()) for line in ax.get_lines()}
     assert len(colors) == 2
     matplotlib.pyplot.close(fig)
@@ -142,8 +143,9 @@ def test_plot_timecourse_facet_draws_one_panel_per_value() -> None:
     batch = escalation()
     fig = plot_timecourse(batch, facet="dose", by="individual")
     assert len(fig.axes) == 2
-    assert fig.axes[0].get_title() == "dose = 50"
-    assert fig.axes[1].get_title() == "dose = 100"
+    # the panel names the value of the coordinate with its unit
+    assert fig.axes[0].get_title() == "dose = 50 mg"
+    assert fig.axes[1].get_title() == "dose = 100 mg"
     # the legend is drawn once, on the first panel
     assert fig.axes[0].get_legend() is not None
     assert fig.axes[1].get_legend() is None
@@ -206,9 +208,9 @@ def test_plot_mean_timecourse_panels_bands_and_legend() -> None:
     legend = linear.get_legend()
     assert legend is not None
     assert [text.get_text() for text in legend.get_texts()] == [
-        "50 (n = 3)",
-        "100 (n = 3)",
-    ]  # the number of curves of the group
+        "50 mg (n = 3)",
+        "100 mg (n = 3)",
+    ]  # the dose with its unit and the number of curves of the group
     assert log.get_legend() is None
     # one spread band per group and panel
     assert len(linear.collections) == 2
@@ -282,6 +284,58 @@ def test_plot_timecourse_facet_legend_names_every_group() -> None:
     assert legend is not None
     assert sorted(text.get_text() for text in legend.get_texts()) == ["f", "m"]
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_mean_timecourse_group_without_a_unit_is_the_bare_value() -> None:
+    time = np.array([0.5, 1.0, 2.0, 4.0, 8.0])
+    values = np.stack([(1.0 + 0.1 * j) * np.exp(-0.2 * time) for j in range(4)])
+    batch = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={
+            "individual": [f"s{j}" for j in range(4)],
+            "sex": ("individual", ["f", "m", "f", "m"]),
+        },
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    )
+    fig = plot_mean_timecourse(batch, by="sex", panels=("linear",))
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    # a coordinate without a unit is named by its bare value
+    assert sorted(text.get_text() for text in legend.get_texts()) == [
+        "f (n = 2)",
+        "m (n = 2)",
+    ]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_timecourse_drops_the_markers_of_a_densely_sampled_curve() -> None:
+    time = np.linspace(0, 24, 241)
+    dense = Timecourse(
+        time=time,
+        value=10.0 * np.exp(-0.2 * time),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    # 241 points: the markers would merge into a band and hide the curve
+    line = plot_timecourse(dense).axes[0].get_lines()[0]
+    assert line.get_marker() == "none"
+    sparse = Timecourse(
+        time=time[::30],
+        value=10.0 * np.exp(-0.2 * time[::30]),
+        time_unit="hr",
+        unit="mg/l",
+    )
+    assert plot_timecourse(sparse).axes[0].get_lines()[0].get_marker() == "o"
+    # the threshold is a style, a caller who wants every marker raises it
+    style = PlotStyle(marker_max_points=500)
+    assert (
+        plot_timecourse(dense, style=style).axes[0].get_lines()[0].get_marker() == "o"
+    )
+    matplotlib.pyplot.close("all")
 
 
 def test_plot_mean_timecourse_clips_the_band_at_the_axis_bottom() -> None:

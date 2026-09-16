@@ -15,25 +15,27 @@ Writes `nca_from_sbmlsim.png` into the working directory.
 import numpy as np
 import xarray as xr
 
-from pkpdutils import Dose, NCAOptions, Route, Timecourses, nca
+from pkpdutils import NCAOptions, Route, Timecourses, nca
 from pkpdutils.console import console
 from pkpdutils.nca import AUCMethod
-from pkpdutils.plot import PlotStyle, plot_timecourse
+from pkpdutils.plot import plot_timecourse
+
+#: the doses of the scan, the scan dimension of the simulated dataset
+DOSES = np.array([25.0, 50.0, 100.0, 200.0])
 
 
 def simulated_dataset() -> xr.Dataset:
     """A dataset shaped like an sbmlsim scan over the dose."""
     time = np.linspace(0, 24, 241)
-    doses = np.array([25.0, 50.0, 100.0, 200.0])
     values = (
-        doses[None, :]
+        DOSES[None, :]
         / 20
         * np.exp(-0.2 * time[:, None])
         * (1 - np.exp(-1.5 * time[:, None]))
     )
     return xr.Dataset(
-        {"[Cve]": (("_time", "dim_dose"), values)},
-        coords={"_time": time, "dim_dose": doses},
+        {"[Cve]": (("_time", "dose"), values)},
+        coords={"_time": time, "dose": ("dose", DOSES, {"units": "mg"})},
     )
 
 
@@ -46,25 +48,24 @@ if __name__ == "__main__":
         console.print("sbmlsim is not installed, using a dataset of the same shape")
 
     ds = simulated_dataset()
+    # every simulated curve carries the dose of its scan point, so that the
+    # dose dependent parameters (cl_f, vz_f, auc_inf_dn) are the ones of the
+    # dose the curve was simulated with
     batch = Timecourses.from_dataset(
         ds,
         "[Cve]",
         unit="mmol/l",
         time_unit="hr",
-        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        dose={"amount": DOSES, "unit": "mg"},
+        route=Route.ORAL,
         substance="drug",
     )
     result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LINEAR_LOG))
     console.rule("NCA over the scan dimension")
     console.print(
-        result.to_dataframe()[
-            ["dim_dose", "auc_inf_obs", "cmax", "tmax", "thalf", "flags"]
-        ]
+        result.to_dataframe()[["dose", "auc_inf_obs", "cmax", "tmax", "thalf", "flags"]]
     )
 
-    # the simulated curves of the scan, one color per scanned dose; a simulation
-    # is sampled densely, so the style drops the markers of the data points
-    plot_timecourse(batch, by="dim_dose", style=PlotStyle(data_marker="")).savefig(
-        "nca_from_sbmlsim.png", dpi=120
-    )
+    # the simulated curves of the scan, one color per scanned dose
+    plot_timecourse(batch, by="dose").savefig("nca_from_sbmlsim.png", dpi=120)
     console.print("written: nca_from_sbmlsim.png")

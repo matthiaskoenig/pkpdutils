@@ -214,18 +214,21 @@ def plot_nca(
 ) -> Figure:
     """Linear and logarithmic panel of one curve with its NCA diagnostics.
 
-    Both panels show the same curve and carry the same title; the legend is
-    drawn once, on the linear panel.
+    Both panels show the same curve: the title of the figure names the sample
+    and its flags once, the two panels name the scale they draw it on
+    (`linear`, `semi-logarithmic`), and the legend is drawn once, on the
+    linear panel.
 
     Args:
         timecourse: the curve
         result: the result of its analysis (a batch result with `indexers`, or a single result)
 
     Keyword Args:
-        title: title of the panels, `name = value` per indexer (the label of
+        title: title of the figure, `name = value` per indexer (the label of
             the curve without indexers) by default; the flags are appended
         axes: the two axes to draw the linear and the logarithmic panel into,
-            a new figure by default
+            a new figure by default; a figure of the caller keeps its own
+            title, so the heading goes on the first panel instead
         style: colors and markers
         **indexers: coordinate labels selecting the sample of a batch result
 
@@ -233,21 +236,39 @@ def plot_nca(
         The figure.
     """
     values, flags = _sample_values(result, indexers)
+    own_figure = axes is None
     fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
     ax1, ax2 = grid[0]
-    if title is None and indexers:
-        title = ", ".join(
-            f"{name} = {format_value(value)}" for name, value in indexers.items()
+    if title is None:
+        title = (
+            ", ".join(
+                f"{name} = {format_value(value)}" for name, value in indexers.items()
+            )
+            if indexers
+            else (timecourse.label or timecourse.substance)
         )
+    heading = f"{title} [{', '.join(flags)}]" if flags else title
+    # the panels carry the scale, the sample and its flags are the title of
+    # the figure: the same heading over both panels says it twice. A figure
+    # of the caller keeps its own title, so the heading goes on its first
+    # panel instead
+    if own_figure:
+        fig.suptitle(heading, fontsize="medium")
     draw_nca_panel(
-        timecourse, values, flags, log_y=False, title=title, ax=ax1, style=style
+        timecourse,
+        values,
+        [],
+        log_y=False,
+        title="linear" if own_figure else heading,
+        ax=ax1,
+        style=style,
     )
     draw_nca_panel(
         timecourse,
         values,
-        flags,
+        [],
         log_y=True,
-        title=title,
+        title="semi-logarithmic",
         legend=False,
         ax=ax2,
         style=style,

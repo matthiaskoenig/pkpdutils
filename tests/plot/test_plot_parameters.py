@@ -51,6 +51,29 @@ def test_plot_parameters_groups() -> None:
     matplotlib.pyplot.close("all")
 
 
+def test_plot_parameters_names_the_statistic_in_the_legend_once() -> None:
+    result = nca_result()
+    fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex")
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    # the groups are the ticks of the x axis, only the marker is named
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "geometric mean [95 % CI]"
+    ]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_parameters_legend_follows_the_scale_and_the_level() -> None:
+    result = nca_result()
+    fig = plot_parameters(
+        result, "cmax", "individual", scale=Scale.LINEAR, ci_level=0.90
+    )
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == ["mean [90 % CI]"]
+    matplotlib.pyplot.close(fig)
+
+
 def test_plot_parameters_single_group_linear() -> None:
     result = nca_result()
     fig, ax = matplotlib.pyplot.subplots()

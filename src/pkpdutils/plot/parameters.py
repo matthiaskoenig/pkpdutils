@@ -38,6 +38,10 @@ def plot_parameters(
     non-positive points are left out of the strip, since a logarithmic axis
     cannot show them.
 
+    The legend names the marker of the statistic once for the figure
+    (`geometric mean [95 % CI]`, `mean [...]` with `scale=Scale.LINEAR`); the
+    groups themselves are the ticks of the x axis and stay out of it.
+
     Args:
         result: the result the parameter is taken from.
         name: name of the parameter.
@@ -77,6 +81,13 @@ def plot_parameters(
         }
     fig, ax = figure_of(ax)
     rng = np.random.default_rng(0)
+    # the marker with the whiskers is the statistic, not another data point:
+    # it is named once for the figure, since every group draws the same thing
+    summary_label = (
+        f"{'geometric mean' if scale is Scale.LOG else 'mean'} "
+        f"[{ci_level * 100:g} % CI]"
+    )
+    summary_handle: Any = None
     positions = np.arange(1, len(groups) + 1)
     values = [g.finite_values for g in groups.values()]
     ax.boxplot(values, positions=positions, widths=0.5, showfliers=False, zorder=1)
@@ -109,7 +120,7 @@ def plot_parameters(
                 if np.isfinite(s.ci_low)
                 else None
             )
-            ax.errorbar(
+            container = ax.errorbar(
                 [pos + 0.3],
                 [center],
                 yerr=err,
@@ -118,7 +129,13 @@ def plot_parameters(
                 capsize=3,
                 linestyle="none",
                 zorder=3,
+                label=summary_label if summary_handle is None else None,
             )
+            if summary_handle is None:
+                summary_handle = container
+    if summary_handle is not None:
+        # only the statistic is named: the groups are the ticks of the x axis
+        ax.legend(handles=[summary_handle], fontsize="small")
     ax.set_xticks(positions, list(groups))
     ax.set_ylabel(axis_label(name, unit_label(sample.unit)))
     if by is not None:
