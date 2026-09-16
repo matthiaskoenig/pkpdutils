@@ -145,15 +145,25 @@ def terminal_fit(
         regressable = regressable & ~exclude
     flags = np.zeros(n_rows, dtype=np.int64)
 
-    fit = _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
-    if windows is None:
-        return fit
-    given = np.isfinite(windows).all(axis=1)
+    given = (
+        np.zeros(n_rows, dtype=bool)
+        if windows is None
+        else np.isfinite(windows).all(axis=1)
+    )
     if not given.any():
-        return fit
+        return _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
+    assert windows is not None
     with np.errstate(invalid="ignore"):
         inside = regressable & (tp >= windows[:, :1]) & (tp <= windows[:, 1:2])
-    return _merge_fits(fit, _fit_selected(tp, y, inside, phase, flags), given)
+    windowed = _fit_selected(tp, y, inside, phase, flags)
+    if given.all():
+        # every row carries a window, the rule of the batch decides nothing
+        return windowed
+    return _merge_fits(
+        _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask),
+        windowed,
+        given,
+    )
 
 
 def _merge_fits(base: TerminalFit, other: TerminalFit, use: np.ndarray) -> TerminalFit:

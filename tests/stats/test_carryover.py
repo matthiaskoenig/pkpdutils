@@ -66,6 +66,53 @@ def test_the_table_reports_the_predose_value_against_the_maximum() -> None:
     assert carryover_table(batch, result, threshold=0.10)["flagged"].sum() == 0
 
 
+def test_the_value_at_the_dose_of_a_bolus_is_not_a_predose_value() -> None:
+    """After a bolus the sample at the dose time carries the post-dose value."""
+    values = np.stack([10.0 * np.exp(-0.2 * TIME) for _ in range(3)])
+    bolus = Timecourses.from_arrays(
+        TIME,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        dose={"amount": np.full(3, 100.0), "unit": "mg"},
+        route=Route.IV_BOLUS,
+        substance="drug",
+    )
+    table = carryover_table(bolus, nca(bolus, options=OPTIONS))
+    # the value at t = 0 is Cmax itself, reading it would flag every subject
+    assert np.isnan(table["predose"].to_numpy()).all()
+    assert table["flagged"].tolist() == [False, False, False]
+
+
+def test_a_sample_strictly_before_the_dose_is_the_predose_value() -> None:
+    """A bolus schedule with a sample before the dose reports that value."""
+    time = np.concatenate([[-0.5], TIME])
+    values = np.stack(
+        [
+            np.concatenate([[carry], 10.0 * np.exp(-0.2 * TIME)])
+            for carry in (0.0, 0.8, 0.2)
+        ]
+    )
+    bolus = Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": ["a", "b", "c"]},
+        dose={"amount": np.full(3, 100.0), "unit": "mg"},
+        route=Route.IV_BOLUS,
+        substance="drug",
+    )
+    table = carryover_table(bolus, nca(bolus, options=OPTIONS))
+    assert table["predose"].tolist() == [0.0, 0.8, 0.2]
+    # Cmax is 10, so 0.8 is 8 % and 0.2 is 2 % of it
+    assert table["fraction"].to_numpy() == pytest.approx([0.0, 0.08, 0.02])
+    assert table["flagged"].tolist() == [False, True, False]
+
+
 def test_a_batch_without_a_predose_sample_flags_nothing() -> None:
     batch = Timecourses.from_arrays(
         TIME[1:],

@@ -394,7 +394,6 @@ def carryover_table(
     result: ParameterResult,
     *,
     threshold: float = 0.05,
-    dim: str | None = None,
 ) -> pd.DataFrame:
     r"""The pre-dose concentration of every subject against its own maximum.
 
@@ -406,9 +405,14 @@ def carryover_table(
     statistical test for carryover "is not considered relevant", so this
     comparison replaces it.
 
-    The pre-dose value of a sample is its value at the dose time, or the last
-    value before it when the schedule has no sample at the dose; a sample
-    without one has no pre-dose value and is not flagged.
+    The pre-dose value of a sample is the last value **strictly before** its
+    dose time. A sample recorded at the dose time counts as a pre-dose sample
+    for an extravascular route only, where it is drawn before the dose is
+    swallowed; after an intravenous bolus or during an infusion the value at
+    the dose time is the post-dose value of this period and says nothing about
+    the previous one (reading it would flag every subject with a fraction of
+    1). A sample whose schedule carries no value before the dose has no
+    pre-dose value: `predose` is `NaN` and the sample is not flagged.
 
     Args:
         batch: the timecourses of the period, one sample per subject
@@ -417,23 +421,18 @@ def carryover_table(
     Keyword Args:
         threshold: the share of \(C_\mathrm{max}\) above which the sample is
             flagged, 0.05 of the three guidances
-        dim: the sample dimension whose labels name the subjects, the single
-            sample dimension of the batch by default
 
     Returns:
         One row per sample with the sample dimensions, `predose`, `cmax`,
         `fraction` and `flagged`.
 
     Raises:
-        ValueError: if the result carries no `cmax`, if `dim` is no sample
-            dimension, or if the batch and the result do not have the same
-            samples.
+        ValueError: if the result carries no `cmax`, or if the batch and the
+            result do not have the same samples.
     """
     if "cmax" not in result.ds.data_vars:
         raise ValueError("the result carries no 'cmax'")
     dims = tuple(str(d) for d in batch.sample_dims)
-    if dim is not None and dim not in dims:
-        raise ValueError(f"'{dim}' is not a sample dimension {dims}")
     n_rows = batch.n_samples
     if result.ds["cmax"].size != n_rows:
         raise ValueError(
@@ -448,9 +447,15 @@ def carryover_table(
         if dose_time is None
         else np.asarray(dose_time, dtype=np.float64).reshape(n_rows)
     )
+    route = batch.route
+    # a sample at the dose time is a pre-dose sample of an extravascular period
+    # only; after a bolus or during an infusion it carries the post-dose value
+    at_dose = route is None or not route.is_iv
     with np.errstate(invalid="ignore"):
-        # the last sample at or before the dose which carries a value
-        candidate = np.isfinite(c) & np.isfinite(t) & (t <= time[:, None] + 0.0)
+        measured = np.isfinite(c) & np.isfinite(t)
+        candidate = measured & (
+            (t <= time[:, None]) if at_dose else (t < time[:, None])
+        )
     has_predose = candidate.any(axis=1)
     order = np.where(candidate, t, -np.inf).argmax(axis=1)
     predose = np.where(
@@ -500,9 +505,13 @@ def carryover_labels(
         The labels, as strings, in the order of the samples.
 
     Raises:
-        ValueError: as `carryover_table`.
+        ValueError: if `dim` is no sample dimension of the batch, or as
+            `carryover_table`.
     """
-    table = carryover_table(batch, result, threshold=threshold, dim=dim)
+    table = carryover_table(batch, result, threshold=threshold)
+    if dim not in table.columns:
+        dims = [str(d) for d in batch.sample_dims]
+        raise ValueError(f"'{dim}' is not a sample dimension {dims} of the batch")
     return [str(label) for label in table.loc[table["flagged"], dim]]
 
 

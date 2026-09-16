@@ -240,7 +240,9 @@ The ratios, the tests and the samples behind them are on the [Statistics](statis
 
 A subject whose pre-dose concentration in a period exceeds 5 % of its own \(C_\mathrm{max}\) of that period carries drug from the previous period. ICH M13A[^ich_m13a] (2.2.3.3), the FDA guidance for ANDAs[^fda_anda] and the EMA guideline[^ema_be] draw the same line and ask for the subject to be dropped from the evaluation of that period; M13A adds that a statistical test for carryover "is not considered relevant", so this comparison replaces it (the sequence effect `p_sequence` of the crossover analysis stays in the result as a diagnostic).
 
-`carryover_table(batch, result)` reads the pre-dose value of every sample - the value at the dose time, or the last one before it - against the \(C_\mathrm{max}\) of the same sample, and `bioequivalence(..., carryover="flag" | "exclude", test_batch=..., reference_batch=...)` acts on it: `"flag"` names the subjects in `BEParameter.carryover` and leaves the analysis alone, `"exclude"` drops them from every parameter and names them there as well.
+`carryover_table(batch, result)` reads the pre-dose value of every sample against the \(C_\mathrm{max}\) of the same sample. The pre-dose value is the last value strictly before the dose time; a sample recorded at the dose time counts only for an extravascular route, where it is drawn before the dose is taken, and never after an intravenous bolus or during an infusion, whose sample at the dose time is the post-dose value of this period. A period without a value before the dose has no pre-dose value (`predose` is `NaN`) and is not flagged.
+
+`bioequivalence(..., carryover="flag" | "exclude", test_batch=..., reference_batch=...)` acts on it: `"flag"` names the subjects in `BEParameter.carryover` and leaves the analysis alone, `"exclude"` drops them from every parameter and names them there as well.
 
 ```python
 import numpy as np

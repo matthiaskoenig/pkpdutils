@@ -67,7 +67,13 @@ from pkpdutils.parallel import (
     resolve_workers,
     split_rows,
 )
-from pkpdutils.result import base_name, check_coordinate_collision, sample_coordinates
+from pkpdutils.result import (
+    SUMMARY_SUFFIXES,
+    UNCERTAINTY_SUFFIXES,
+    base_name,
+    check_coordinate_collision,
+    sample_coordinates,
+)
 from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
@@ -765,6 +771,32 @@ def compute_parameters(
     return out
 
 
+def reserved_variables(values: dict[str, np.ndarray]) -> set[str]:
+    """Every name the result of an analysis can carry, for the name of a partial area.
+
+    A named partial area (`NCAOptions.partial_aucs`) becomes a variable of the
+    result and may not take a name the analysis writes itself. At the point
+    where the areas are computed the parameters are known, while `flags`, `n`,
+    the status variables, the uncertainty variables of a group batch and the
+    summary variables of `pkpdutils.result.ParameterResult.summarize` are
+    written afterwards, so their names are derived here.
+
+    Args:
+        values: the parameters of the rows so far
+
+    Returns:
+        The names of the parameters, of `flags` and `n`, of the boolean and
+        text variables and of every derived variable of a parameter
+        (`pkpdutils.result.UNCERTAINTY_SUFFIXES` and `SUMMARY_SUFFIXES`).
+    """
+    names = set(values) | {"flags", "n"} | BOOLEAN_VARIABLES | TEXT_VARIABLES
+    return names | {
+        f"{name}{suffix}"
+        for name in names
+        for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES)
+    }
+
+
 def evaluate_acceptance(
     values: dict[str, np.ndarray], acceptance: Acceptance, *, n_rows: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -1283,7 +1315,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
 
     units: dict[str, str] = {}
     if options.partial_aucs:
-        collision = sorted(set(options.partial_aucs) & set(values))
+        collision = sorted(set(options.partial_aucs) & reserved_variables(values))
         if collision:
             raise ValueError(
                 f"the partial areas {collision} carry the name of a variable of "
@@ -1677,7 +1709,9 @@ def named_partial_aucs(
 
     Returns:
         One `(N,)` array per named area and the rows whose area was completed
-        with the terminal regression.
+        with the terminal regression; a row which reaches beyond the last
+        measurable value without a terminal phase is `NaN` and is not among
+        them, since nothing was extrapolated.
     """
     n_rows = t.shape[0]
     nan = np.full(n_rows, np.nan)
@@ -1717,7 +1751,9 @@ def named_partial_aucs(
             )
         total = observed + np.where(beyond, tail, 0.0)
         out[name] = np.where(np.isfinite(tlast), total, np.nan)
-        extrapolated |= beyond
+        # a row without a terminal phase has no tail to add: its area is `NaN`
+        # and nothing was extrapolated, so it is not flagged either
+        extrapolated |= beyond & np.isfinite(tail)
     return out, extrapolated
 
 

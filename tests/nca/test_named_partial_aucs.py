@@ -119,11 +119,33 @@ def test_the_area_of_a_multiple_dose_row_is_relative_to_the_first_dose() -> None
     )
 
 
-def test_a_name_which_collides_with_a_result_variable_raises() -> None:
+@pytest.mark.parametrize(
+    "name", ["auc_last", "flags", "n", "accepted", "excluded", "cmax_sd", "cmax_n"]
+)
+def test_a_name_which_collides_with_a_result_variable_raises(name: str) -> None:
     batch = curve().to_batch(dim="individual")
-    options = NCAOptions(partial_aucs={"auc_last": (0.0, 12.0)})
+    options = NCAOptions(partial_aucs={name: (0.0, 12.0)})
     with pytest.raises(ValueError, match="carry the name of a variable"):
         nca(batch, options=options)
+
+
+def test_an_area_beyond_the_last_sample_without_a_terminal_phase_is_not_flagged() -> (
+    None
+):
+    """Nothing is extrapolated without a terminal phase, so the area is `NaN`."""
+    flat = Timecourse(
+        time=np.array([0.0, 1.0, 2.0, 3.0]),
+        value=np.array([1.0, 1.0, 1.0, 1.0]),
+        time_unit="hr",
+        unit="mg/l",
+        dose=DOSE,
+        substance="drug",
+        label="s1",
+    )
+    result = nca_single(flat, options=NCAOptions(partial_aucs={"auc_0_8": (0.0, 8.0)}))
+    assert np.isnan(float(result["lambda_z"]))
+    assert np.isnan(float(result["auc_0_8"]))
+    assert "PARTIAL_EXTRAPOLATED" not in result.flags()
 
 
 def test_a_reversed_interval_is_rejected_by_the_options() -> None:
