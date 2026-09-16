@@ -226,10 +226,12 @@ def resolve_spread(
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     se = None if timecourses.se is None else timecourses.se.reshape(n_rows, n_time)
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
+    # one count per row, or one per row and time point: both convert the
+    # spread of a point, the second one with the count of that point
     n = (
         None
         if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)[:, None]
+        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows, -1)
     )
     if kind is BootstrapSpread.SE:
         if se is not None:
@@ -521,8 +523,8 @@ def bootstrap(
     }
     n_subjects = (
         None
-        if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)
+        if timecourses.n_subjects is None
+        else np.asarray(timecourses.n_subjects, dtype=np.float64).reshape(n_rows)
     )
     return reduce_replicates(
         replicates,
@@ -613,8 +615,8 @@ def delta(
     z = float(norm.ppf(1.0 - alpha / 2.0))
     n_subjects = (
         None
-        if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)
+        if timecourses.n_subjects is None
+        else np.asarray(timecourses.n_subjects, dtype=np.float64).reshape(n_rows)
     )
     any_usable = usable.any(axis=1)
     step = np.where(usable, h, 1.0)

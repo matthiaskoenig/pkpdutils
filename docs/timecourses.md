@@ -4,6 +4,41 @@ A pharmacokinetic timecourse is the concentration of a substance in a tissue ove
 
 ## Concepts
 
+Everything the package does starts at a `Timecourse` or a `Timecourses` batch, whichever way the data came in, and ends at a `ParameterResult` which the statistics and the figures read:
+
+```mermaid
+flowchart LR
+  subgraph inputs["inputs"]
+    ARR["arrays<br/>from_arrays"]
+    DF["long table<br/>from_dataframe"]
+    IO["event records / PKNCA / ADNCA<br/>pkpdutils.io"]
+    SIM["simulation<br/>from_dataset, from_xresult"]
+  end
+  DOSE["Dose<br/>amount, unit, route, time, duration"]
+  DOSING["Dosing<br/>amounts, times, durations<br/>single / from_doses / regimen"]
+  TC["Timecourse<br/>time, value, sd, se, n<br/>units, metadata"]
+  TCS["Timecourses<br/>xarray.Dataset, time + sample dims<br/>select, groupby, mean, dose_normalized"]
+  NCA["nca / nca_single"]
+  FIT["fit_timecourse / fit_timecourses / fit_table"]
+  RES["ParameterResult<br/>NCAResult | FitResult<br/>summarize, summary_table"]
+  PS["ParameterSample"]
+  STATS["pkpdutils.stats<br/>compare, ratio, tost, ddi, meta"]
+  PLOT["pkpdutils.plot"]
+
+  DOSE --> DOSING --> TC
+  ARR --> TCS
+  DF --> TCS
+  IO --> TCS
+  SIM --> TCS
+  TC -->|from_timecourses, to_batch| TCS
+  TCS -->|sel / isel| TC
+  TCS --> NCA --> RES
+  TCS --> FIT --> RES
+  RES -->|sample| PS --> STATS
+  RES --> PLOT
+  TCS --> PLOT
+```
+
 **Single curve.** A `Timecourse` holds the sampling times and the values with their units, an optional dose, and metadata (substance, label, tissue). It is a frozen [pydantic](https://docs.pydantic.dev) model: the arrays are converted to `float64`, sorted by time, and duplicate times or an unknown unit raise a `ValueError` when the object is created (a dimensionless value is spelled `unit="dimensionless"`, the empty string is not a unit). Missing values are `NaN` in `value`; every analysis drops them.
 
 **Group data.** Publications report the mean curve of a group with the standard deviation or the standard error and the number of subjects. A `Timecourse` carries these as `sd`, `se` and `n`; the missing one of `sd` and `se` is derived from the other with \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\). The uncertainty analyses of the package propagate them to the parameters, see [Uncertainty](uncertainty.md).
@@ -50,7 +85,7 @@ print(shifted.dosing.first.time)  # -36.0
 | --- | --- | --- |
 | `value` | `(*sample, time)` | the values, `NaN` for missing points |
 | `sd`, `se` | `(*sample, time)` | standard deviation and error of group data (optional) |
-| `n` | `(*sample)` | number of subjects of group data (optional), one number per sample; an `n` which varies over the time points of a curve is reduced to its maximum with a warning |
+| `n` | `(*sample)` or `(*sample, time)` | the counts behind the values of group data (optional): one number per sample, or one per time point when a count varies over the curve (the group curve of a ragged batch); `n_subjects` reads the number of subjects of a sample back either way |
 | `dose_amount`, `dose_time`, `dose_duration` | `(*sample, dose_index)` | the dosing protocol of every sample (optional), the doses at the front of the row and the remaining columns `NaN`; `dose_duration` is `NaN` without infusion |
 | `time` (coordinate) | `(time)` | the shared sampling grid, or an integer index for ragged data |
 | `times` | `(*sample, time)` | the sampling times per sample, only for ragged data |
@@ -79,11 +114,26 @@ print(tc.value_q)  # a pint quantity
 print(tc.to_dataframe())
 ```
 
+```text
+[0.08660254 0.14433757 0.11547005 0.08660254 0.02886751 0.01443376
+ 0.00288675]
+[1.2 2.5 2.1 1.3 0.5 0.2 0.03] milligram / liter
+   time  value    sd        se     n
+0   0.5   1.20  0.30  0.086603  12.0
+1   1.0   2.50  0.50  0.144338  12.0
+2   2.0   2.10  0.40  0.115470  12.0
+3   4.0   1.30  0.30  0.086603  12.0
+4   8.0   0.50  0.10  0.028868  12.0
+5  12.0   0.20  0.05  0.014434  12.0
+6  24.0   0.03  0.01  0.002887  12.0
+```
+
 A batch from arrays, with the individuals as coordinate labels:
 
 ```python
 import numpy as np
-from pkpdutils import Timecourses
+
+from pkpdutils import Dose, Route, Timecourses
 
 time = np.array([0.5, 1, 2, 4, 8, 12, 24])
 values = np.random.default_rng(0).uniform(0, 3, size=(3, time.size))
@@ -103,22 +153,97 @@ for tc in tcs:  # iteration over the samples
     print(tc.label)
 ```
 
+The curve with the uncertainty of its group and the batch of three individuals, as `examples/timecourses.py` builds them:
+
+![One group curve with error bars next to a batch of three individual curves](images/timecourses.png)
+
+### Doses and coordinates of a batch
+
+`dose=` takes three forms. A single `Dose` or a single `Dosing` gives every sample of the batch the same protocol, as above. A **mapping** gives every sample its own doses, which is what a dose escalation, a crossover or a study with weight based dosing needs: `amount` (and `time`, `duration`) are arrays of the sample shape for one dose per sample, or of the shape `(*sample_shape, n_dose)` for one protocol per sample, padded with `NaN`; `unit` is the dose unit of the whole batch and the route is given by `route=`, since a mapping carries none.
+
+```python
+import numpy as np
+from pkpdutils import Route, Timecourses
+
+time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+doses = np.array([50.0, 100.0, 200.0])
+values = doses[:, None] / 40 * np.exp(-0.2 * time[None, :])
+tcs = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose",),
+    coords={"dose": doses},
+    dose={"amount": doses, "unit": "mg"},  # one dose per sample
+    route=Route.ORAL,
+    substance="drug",
+)
+print(tcs.first_dose_amount, tcs.n_dose)
+
+bid = np.tile(np.array([100.0, 100.0]), (3, 1))  # two doses per sample
+tcs = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose",),
+    coords={"dose": doses},
+    dose={"amount": bid, "time": np.tile([0.0, 12.0], (3, 1)), "unit": "mg"},
+    route=Route.ORAL,
+)
+print(tcs.n_doses)
+```
+
+```text
+[ 50. 100. 200.] 1
+[2 2 2]
+```
+
+`coords` names the samples and carries everything else that is known about them: a non-dimension coordinate is given as `(dimension, values)` and travels through every analysis into the result, where `summary_table(by=...)`, `plot_timecourse(by=...)` and the design detection of a bioequivalence study read it. The period and the sequence of a 2x2 crossover are exactly such coordinates, see [Statistics](statistics.md):
+
+```python
+coords = {
+    "individual": ["s1", "s2", "s3"],
+    "sex": ("individual", ["m", "f", "f"]),
+    "weight": ("individual", [82.0, 61.0, 74.0]),
+}
+```
+
 From a long table (one row per sample and time point) with a dose column, and from a list of `Timecourse` objects:
 
 ```python
+import pandas as pd
+from pkpdutils import Route, Timecourse, Timecourses
+
+df = pd.DataFrame(
+    {
+        "subject": ["a", "a", "a", "a", "b", "b", "b"],
+        "time": [0.5, 1, 2, 4, 1, 4, 8],
+        "value": [1.0, 2.0, 1.5, 0.8, 1.8, 1.0, 0.4],
+        "dose": [50, 50, 50, 50, 100, 100, 100],
+    }
+)
 tcs = Timecourses.from_dataframe(
     df,
-    sample=["study", "group"],
+    sample=["subject"],
     time_unit="hr",
     unit="mg/l",
-    sd="sd",
-    n="n",
     dose_amount="dose",
     dose_unit="mg",
     route=Route.ORAL,
 )
-tcs = Timecourses.from_timecourses([tc_a, tc_b], dim="group")
-tcs = tc.to_batch(dim="individual", label="s1")  # one curve as a batch of one
+print(tcs.sample_dims, tcs.sample_shape, tcs.first_dose_amount)
+
+tc_a, tc_b = tcs.sel(subject="a"), tcs.sel(subject="b")
+grouped = Timecourses.from_timecourses([tc_a, tc_b], dim="group")
+one = tc_a.to_batch(dim="individual", label="s1")  # one curve as a batch of one
+print(grouped.sample_shape, one.sample_shape)
+```
+
+```text
+('subject',) (2,) [ 50. 100.]
+(2,) (1,)
 ```
 
 The labels of the samples keep the dtype of what they came from: a subject column of integers gives an integer coordinate in `from_dataframe`, as the `labels` of `from_timecourses` do.
@@ -127,7 +252,7 @@ The labels of the samples keep the dtype of what they came from: a subject colum
 
 ```python
 aligned = tcs.relative_to_dose()  # every first dose at time 0
-last = tcs.relative_to_dose(which="last")
+last = tcs.relative_to_dose(which="last")  # `tcs`: the batch of the snippet above
 ```
 
 ### Selecting, grouping and averaging a batch
@@ -135,22 +260,59 @@ last = tcs.relative_to_dose(which="last")
 A study arrives as one batch whose groups are coordinates on the individual dimension (the treatment, the dose group, the sex), so the four methods below cut the batch into the pieces an analysis or a figure needs. `select` keeps a batch (`sel` returns a single `Timecourse` and needs a label for every sample dimension), `groupby` walks the groups of a coordinate in the order of their first appearance, `mean` reduces a sample dimension to the group curve with its spread, and `dose_normalized` divides the values by the dose so that the curves of a dose escalation can be overlaid.
 
 ```python
+import numpy as np
+
+from pkpdutils import Route, Timecourses
+
+time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+rates = [0.20, 0.25, 0.18, 0.30]
+values = np.stack([2.5 * np.exp(-k * time) for k in rates])
+tcs = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("individual",),
+    coords={
+        "individual": ["s1", "s2", "s3", "s4"],
+        "treatment": ("individual", ["test", "reference", "test", "reference"]),
+        "weight": ("individual", [82.0, 61.0, 74.0, 95.0]),
+    },
+    dose={"amount": np.full(4, 100.0), "unit": "mg"},
+    route=Route.ORAL,
+    substance="drug",
+)
+
 arm = tcs.select(treatment="test")  # a label, a list of labels or a slice
 heavy = tcs.select(weight=slice(80.0, 100.0))  # a coordinate along a sample dimension
+print(arm.n_samples, heavy.n_samples)
 
-for dose, group in tcs.groupby("dose_group"):
-    print(dose, group.n_samples)
+for treatment, group in tcs.groupby("treatment"):
+    print(treatment, group.n_samples)
 
-group_curve = tcs.select(treatment="test").mean("individual")
-print(group_curve.sd, group_curve.n)  # mean +- SD of the group, n subjects
-normalized = tcs.dose_normalized()  # values per dose, unit "unit / dose_unit"
+group_curve = arm.mean("individual")
+print(group_curve.values.round(3))
+print(group_curve.ds["sd"].values.round(3), group_curve.ds["n"].values)
+
+normalized = tcs.dose_normalized()  # values per dose amount
+print(normalized.ds["value"].attrs["units"])
 ```
 
-`mean(dim, spread="sd" | "se", min_n=1)` averages the samples which have a finite value at a time point, carries their standard deviation and standard error (the statistic `spread` names is the one computed from the curves, the other follows from \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\)) and the number of subjects `n`, and sets a point covered by fewer than `min_n` samples to `NaN`. The samples need a shared sampling grid; a ragged batch is placed on the union of its grids first, and `relative_to_dose` aligns samples which were dosed at different times. The group curve carries the dosing protocol of its samples when they share one and the protocol of the first sample with a warning when they do not; it is a `Timecourses` again, so `nca` propagates its spread to the parameters, see [Uncertainty](uncertainty.md).
+```text
+2 2
+test 2
+reference 2
+[2.273 2.068 1.71  1.17  0.549 0.258 0.027]
+[0.016 0.029 0.048 0.066 0.062 0.043 0.009] 2.0
+1 / liter
+```
 
-From a simulation: a dataset with a `_time` dimension and scan dimensions, e.g. the `XResult` of [sbmlsim](https://matthiaskoenig.github.io/sbmlsim):
+`mean(dim, spread="sd" | "se", min_n=1)` averages the samples which have a finite value at a time point, carries their standard deviation and standard error and the count `n` of every time point, and sets a point covered by fewer than `min_n` samples to `NaN`. The count is the one of its own time point, so \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\) holds everywhere, also on a ragged group whose late points carry fewer subjects than its early ones; `n_subjects` is the number of subjects of the group, the largest of the counts. The samples need a shared sampling grid; a ragged batch is placed on the union of its grids first, and `relative_to_dose` aligns samples which were dosed at different times. The group curve carries the dosing protocol of its samples when they share one and the protocol of the first sample with a warning when they do not; it is a `Timecourses` again, so `nca` propagates its spread to the parameters, see [Uncertainty](uncertainty.md).
+
+From a simulation: a dataset with a `_time` dimension and scan dimensions, with `xres` the `XResult` of a [sbmlsim](https://matthiaskoenig.github.io/sbmlsim) simulation and `ds` an `xarray.Dataset` shaped like one (`examples/timecourses.py` builds such a dataset in `batch_from_simulation`):
 
 ```python
+# not executed
 tcs = Timecourses.from_xresult(
     xres, "[Cve_mid]", dose=Dose(amount=7.5, unit="mg", route=Route.IV_BOLUS)
 )

@@ -204,6 +204,60 @@ def format_value(value: Any) -> str:
     return str(value)
 
 
+def is_number(value: Any) -> bool:
+    """Whether a coordinate value is a number, so that a unit belongs to it.
+
+    Args:
+        value: the value, a number, a numpy scalar or anything else.
+
+    Returns:
+        `True` for an integer or a floating point number, a numpy scalar of
+        one included; `False` for a boolean, a string and everything else.
+    """
+    if isinstance(value, np.generic):
+        value = value.item()
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def value_with_unit(
+    ds: xr.Dataset,
+    name: str,
+    value: Any,
+    *,
+    units: Mapping[str, str | None] | None = None,
+) -> str:
+    """One coordinate value with the unit of its coordinate: `50 mg`.
+
+    The unit is `attrs["units"]` of the coordinate `name`, or the entry of
+    `units`, which a caller uses for a coordinate whose unit lives elsewhere
+    (the `dose` of a batch, whose unit is the dose unit of the batch); a
+    dimensionless coordinate and one without a unit give the value alone.
+
+    Only a number carries a unit: a coordinate whose values are the names of
+    the groups (`dose` as `"low"` and `"high"`, an arm, a treatment) is a
+    label, so it is written as it is instead of as `low mg`.
+
+    Args:
+        ds: the dataset the coordinate is read from.
+        name: name of the coordinate.
+        value: the value to format.
+
+    Keyword Args:
+        units: unit per coordinate name, used when the coordinate itself
+            carries none.
+
+    Returns:
+        The value, followed by its unit when there is one.
+    """
+    text = format_value(value)
+    if name not in ds.coords or not is_number(value):
+        return text
+    unit = str(ds.coords[name].attrs.get("units", "")) or (
+        (units or {}).get(name) or ""
+    )
+    return f"{text} {unit}" if unit and unit != "dimensionless" else text
+
+
 def sample_title(
     ds: xr.Dataset,
     index: Sequence[int],
@@ -235,12 +289,9 @@ def sample_title(
     parts = []
     for dim, position in zip(sample_dims, index, strict=True):
         if dim in ds.coords:
-            text = format_value(ds.coords[dim].to_numpy()[position])
-            unit = str(ds.coords[dim].attrs.get("units", "")) or (
-                (units or {}).get(dim) or ""
+            text = value_with_unit(
+                ds, dim, ds.coords[dim].to_numpy()[position], units=units
             )
-            if unit and unit != "dimensionless":
-                text = f"{text} {unit}"
         else:
             text = str(position)
         parts.append(f"{dim} = {text}")

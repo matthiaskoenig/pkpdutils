@@ -1,15 +1,24 @@
 """Multiple dosing: the parameters of every dosing interval and the steady state.
 
 Run from the root of the repository with `python -m examples.steady_state`.
-Writes `steady_state.png` into the working directory.
+Writes `steady_state.png` and `steady_state_troughs.png` into the working
+directory.
 """
 
 import numpy as np
 
-from pkpdutils import Dose, Dosing, NCAOptions, Route, Timecourse, nca_single
+from pkpdutils import (
+    AUCMethod,
+    Dose,
+    Dosing,
+    NCAOptions,
+    Route,
+    Timecourse,
+    nca_single,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, superposition
-from pkpdutils.plot import plot_timecourse
+from pkpdutils.nca import superposition
+from pkpdutils.plot import plot_timecourse, plot_troughs
 
 k, c0, tau, n_doses = 0.15, 8.0, 12.0, 10
 dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
@@ -69,3 +78,8 @@ if __name__ == "__main__":
     fig = plot_timecourse(predicted)
     fig.savefig("steady_state.png", dpi=120)
     console.print("written: steady_state.png")
+
+    # the trough of every dosing interval: steady state is where it stops rising
+    troughs = plot_troughs(result, x="interval")
+    troughs.savefig("steady_state_troughs.png", dpi=120)
+    console.print("written: steady_state_troughs.png")

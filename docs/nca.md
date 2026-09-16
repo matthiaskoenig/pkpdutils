@@ -16,13 +16,38 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Steady state.** The steady state parameters describe the last complete interval, under the assumption that repeated dosing has reached a state where every interval looks the same: with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation, the swing, the clearance at steady state \(\mathrm{CL}_\mathrm{ss}\), and the accumulation ratio, predicted from the terminal phase or observed as the ratio of the exposure of the last and the first interval of the protocol (`accumulation_ratio_obs`, `NaN` for a single dose protocol or when the first interval is incomplete).
 
-**The reference dose.** With more than one dose the point parameters (\(C_\mathrm{max}\), \(t_\mathrm{max}\), \(C_\mathrm{last}\), \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), the extrapolated areas, the terminal phase, \(\mathrm{MRT}\)) are computed from the last dose on: the values before it are dropped and the times are relative to it, the same analysis a single dose curve given with its last dose only would get. With one dose this is the whole curve, as today.
+**The reference dose.** With more than one dose the point parameters (\(C_\mathrm{max}\), \(t_\mathrm{max}\), \(C_\mathrm{last}\), \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), the extrapolated areas, the terminal phase, \(\mathrm{MRT}\)) are computed from the last dose on: the values before it are dropped and the times are relative to it, the same analysis a single dose curve given with its last dose only would get. With one dose the reference dose is that dose and the analysis covers the whole curve.
 
 **No single dose quantities.** That slice is not a single dose curve: it carries the exposure of every earlier dose as well, so dividing the dose by its area would report a clearance that is too low and a volume that is too small. A multiple dose analysis therefore reports \(\mathrm{CL}\), \(\mathrm{CL}/F\), \(V_z\), \(V_z/F\), \(V_\mathrm{ss}\), `auc_inf_dn` and `cmax_dn` as `NaN`; the clearance of such an analysis is \(\mathrm{CL}_\mathrm{ss} = D_K / \mathrm{AUC}_{0\text{-}\tau}\) (`cl_ss`, `cl_ss_f` after an extravascular dose) over the dosing interval. \(\mathrm{AUC}_{0\text{-}\infty}\), \(\mathrm{AUMC}_{0\text{-}\infty}\) and \(\mathrm{MRT}\) are reported and describe the exposure and the decline after the last dose, extrapolated with its terminal phase, not the single dose exposure of the substance. A single dose curve analysed with `tau` is a multiple dose analysis as well, so the same holds for it. The decision is taken per sample and not per batch, so a batch mixing single dose and multiple dose subjects reports \(\mathrm{CL}\)/\(\mathrm{CL}/F\) for its single dose samples and \(\mathrm{CL}_\mathrm{ss}\)/\(\mathrm{CL}_\mathrm{ss}/F\) for its multiple dose ones; it carries the union of the two sets of variables and every sample is `NaN` in the variables of the other path.
 
 **Routes.** A batch has one route. `IV_BOLUS` reports \(C_0\), \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\); `IV_INFUSION` corrects the \(\mathrm{MRT}\) by half the duration; `ORAL` (any extravascular route) reports \(\mathrm{CL}/F\), \(V_z/F\) and the half maximum during absorption (`cmax_half`, `tmax_half`).
 
 **Missing values and the limit of quantification.** `NaN` values are dropped; values below `lloq` become `NaN` (or 0 before the maximum with `BLQHandling.ZERO_BEFORE_TMAX`), and the sample is flagged `BLQ_TRUNCATED`.
+
+The whole analysis of a batch, from the values to the result, with the multiple dosing path on the right:
+
+```mermaid
+flowchart TD
+  IN["Timecourses<br/>(N, n_time)"] --> BLQ["lloq / BLQ handling<br/>NaN, flag BLQ_TRUNCATED"]
+  BLQ --> MD{"more than one dose<br/>or NCAOptions.tau?"}
+  MD -->|no| PACK
+  MD -->|yes| REF["reference dose<br/>drop the points before the last dose,<br/>times relative to it"]
+  REF --> PACK["pack_valid<br/>the valid points to the front of every row"]
+  PACK --> AUC["segment_areas<br/>linear / linear-up-log-down / log<br/>auc_last, aumc_last"]
+  PACK --> PEAK["cmax, tmax, clast, tlast<br/>c0 back-extrapolated for a bolus"]
+  PACK --> TERM["window_statistics<br/>every candidate window at once"]
+  TERM --> PICK["TerminalPhase rule<br/>BEST_FIT | LAST_N | ALL_AFTER_TMAX | MANUAL"]
+  PICK --> LZ["lambda_z, thalf, r2_adj, lambda_z_span<br/>flags POSITIVE_SLOPE, TOO_FEW_POINTS, SPAN_LOW"]
+  AUC --> EXTRAP["auc_inf_obs / auc_inf_pred<br/>auc_extrap_fraction, mrt"]
+  LZ --> EXTRAP
+  EXTRAP --> DOSEP["cl / cl_f, vz / vz_f, vss<br/>auc_inf_dn, cmax_dn<br/>(single dose analysis only)"]
+  MD -->|yes| IV["compute_intervals<br/>interval_auc, interval_cmax,<br/>interval_ctrough per interval"]
+  IV --> SS["compute_steady_state<br/>the last complete interval<br/>auc_tau, cavg, fluctuation, cl_ss,<br/>accumulation_ratio(_obs)"]
+  DOSEP --> OUT["NCAResult<br/>xarray.Dataset + attrs['units'] + flags"]
+  PEAK --> OUT
+  SS --> OUT
+  LZ --> OUT
+```
 
 ## Math
 
@@ -150,42 +175,112 @@ tc = Timecourse(
     substance="caffeine",
 )
 result = nca_single(tc)
-result.to_quantities()["auc_inf_obs"]  # pint quantity in hour * milligram / liter
-result.to_quantities()["cl_f"]  # liter / hour
-result.flags()  # e.g. []
+q = result.to_quantities()
+print(f"{q['auc_inf_obs']:~P}")  # hour * milligram / liter
+print(f"{q['cl_f']:~P}", f"{q['thalf']:~P}")
+print(result.flags())
 ```
 
-Options select the methods; the analysis of a batch returns the parameters over its sample dimensions:
+```text
+23.08206165659116 h⋅mg/l
+4.332368637072965 l/h 4.477500250658255 h
+[]
+```
+
+![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.png)
+
+Options select the methods; the analysis of a batch returns the parameters over its sample dimensions. The batch below is the dose escalation of `examples/nca_batch.py`, four individuals at three dose levels:
 
 ```python
-from pkpdutils import NCAOptions, TerminalPhase, Timecourses, nca
-from pkpdutils.nca import AUCMethod, TerminalMethod
+import numpy as np
+
+from pkpdutils import (
+    AUCMethod,
+    NCAOptions,
+    Route,
+    TerminalMethod,
+    TerminalPhase,
+    Timecourses,
+    nca,
+)
+
+# a dose escalation: four individuals at three dose levels
+rng = np.random.default_rng(1)
+time = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
+doses = np.array([50.0, 100.0, 200.0])
+individuals = ["s1", "s2", "s3", "s4"]
+ke = rng.uniform(0.15, 0.3, size=4)
+ka = rng.uniform(1.0, 3.0, size=4)
+values = np.stack(
+    [
+        np.stack(
+            [
+                d
+                / 40
+                * ka[j]
+                / (ka[j] - ke[j])
+                * (np.exp(-ke[j] * time) - np.exp(-ka[j] * time))
+                * rng.lognormal(0, 0.05, size=time.size)
+                for j in range(4)
+            ]
+        )
+        for d in doses
+    ]
+)
+batch = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose", "individual"),
+    coords={"dose": doses, "individual": individuals},
+    dose={"amount": np.broadcast_to(doses[:, None], (3, 4)), "unit": "mg"},
+    route=Route.ORAL,
+    substance="drug",
+)
 
 options = NCAOptions(
     auc_method=AUCMethod.LINEAR_LOG,
     terminal=TerminalPhase(method=TerminalMethod.BEST_FIT, min_points=3),
-    lloq=0.05,
+    lloq=0.001,
     extrapolation_warning=0.2,
 )
-result = nca(batch, options=options)  # batch: Timecourses over (study, individual)
-result.ds  # xarray.Dataset, one variable per parameter
-result["thalf"]  # DataArray over (study, individual), attrs["units"]
-result.to_dataframe()  # one row per sample, flags decoded
-result.flag_table()  # one boolean column per flag
+result = nca(batch, options=options)
+print(result["thalf"].dims, result["thalf"].attrs["units"])
+print(
+    result.to_dataframe()[
+        ["dose", "individual", "auc_inf_obs", "cmax", "thalf", "cl_f", "flags"]
+    ]
+    .head(4)
+    .to_string(index=False)
+)
 ```
+
+```text
+('dose', 'individual') hour
+ dose individual  auc_inf_obs     cmax    thalf      cl_f flags
+ 50.0         s1     5.407557 0.890678 3.023747  9.246319
+ 50.0         s2     4.121210 0.874586 2.414383 12.132360
+ 50.0         s3     7.287995 1.146958 3.888391  6.860598
+ 50.0         s4     4.078572 0.818410 2.371655 12.259193
+```
+
+`result.ds` is the `xarray.Dataset` behind it, one variable per parameter over `(dose, individual)`, and `result.flag_table()` is one boolean column per flag. `plot_nca_grid(batch, result, ncols=4)` draws the diagnostic panel of every sample of this batch:
+
+![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
 
 ### The parameter table of a publication
 
 `summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, and `layout` transposes the table or unfolds it into one row per parameter, group and statistic.
 
+With the `result` of the snippet above, whose sample dimensions are `(dose, individual)`, the statistics are taken over the individuals and the dose stays a column of the table:
+
 ```python
 from pkpdutils import summary_table
 
-result = nca(batch)  # batch: Timecourses over "individual", with a "dose_group"
 table = summary_table(
     result,
     "individual",
-    by="dose_group",
     parameters=["auc_inf_obs", "cmax", "tmax", "thalf", "cl_f"],
 )
 print(table.to_string(index=False))
@@ -196,49 +291,104 @@ geometric = result.summary_table(
 )
 ```
 
-| parameter | unit | dose_group | n | mean | sd | cv | geomean | geocv | median | min | max |
+| parameter | unit | dose | n | mean | sd | cv | geomean | geocv | median | min | max |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 50 mg | 6 | 73.7 | 28.2 | 38.3 % | 69.5 | 38.7 % | 71.5 | 39.5 | 125 |
-| cmax | milligram / liter | 50 mg | 6 | 8.60 | 3.30 | 38.3 % | 8.12 | 38.7 % | 8.35 | 4.61 | 14.5 |
-| tmax | hour | 50 mg | 6 | 2.00 | | | | | 2.00 | 2.00 | 2.00 |
-| auc_inf_obs | hour * milligram / liter | 100 mg | 6 | 141 | 52.3 | 37.1 % | 131 | 47.2 % | 141 | 57.3 | 218 |
-| cmax | milligram / liter | 100 mg | 6 | 16.5 | 6.11 | 37.1 % | 15.3 | 47.2 % | 16.5 | 6.69 | 25.4 |
-| tmax | hour | 100 mg | 6 | 2.00 | | | | | 2.00 | 2.00 | 2.00 |
+| auc_inf_obs | hour * milligram / liter | 50.0 | 4 | 5.22 | 1.51 | 28.9 % | 5.07 | 28.0 % | 4.76 | 4.08 | 7.29 |
+| cmax | milligram / liter | 50.0 | 4 | 0.933 | 0.146 | 15.7 % | 0.925 | 14.9 % | 0.883 | 0.818 | 1.15 |
+| tmax | hour | 50.0 | 4 | 1.25 | | | | | 1.00 | 1.00 | 2.00 |
+| thalf | hour | 50.0 | 4 | 2.92 | 0.708 | 24.2 % | 2.86 | 23.5 % | 2.72 | 2.37 | 3.89 |
+| cl_f | liter / hour | 50.0 | 4 | 10.1 | 2.58 | 25.5 % | 9.86 | 28.0 % | 10.7 | 6.86 | 12.3 |
+| auc_inf_obs | hour * milligram / liter | 100.0 | 4 | 10.4 | 2.92 | 27.9 % | 10.2 | 27.1 % | 9.58 | 8.22 | 14.4 |
+| cmax | milligram / liter | 100.0 | 4 | 1.88 | 0.209 | 11.1 % | 1.87 | 10.6 % | 1.79 | 1.75 | 2.19 |
+| tmax | hour | 100.0 | 4 | 1.00 | | | | | 1.00 | 1.00 | 1.00 |
+| thalf | hour | 100.0 | 4 | 2.93 | 0.727 | 24.8 % | 2.87 | 24.2 % | 2.73 | 2.35 | 3.91 |
+| cl_f | liter / hour | 100.0 | 4 | 10.1 | 2.51 | 24.9 % | 9.84 | 27.1 % | 10.6 | 6.94 | 12.2 |
+| auc_inf_obs | hour * milligram / liter | 200.0 | 4 | 21.0 | 5.62 | 26.8 % | 20.4 | 26.0 % | 19.3 | 16.6 | 28.6 |
+| cmax | milligram / liter | 200.0 | 4 | 3.69 | 0.250 | 6.78 % | 3.69 | 6.82 % | 3.70 | 3.38 | 3.99 |
+| tmax | hour | 200.0 | 4 | 1.00 | | | | | 1.00 | 1.00 | 1.00 |
+| thalf | hour | 200.0 | 4 | 2.97 | 0.791 | 26.6 % | 2.89 | 25.9 % | 2.75 | 2.33 | 4.05 |
+| cl_f | liter / hour | 200.0 | 4 | 10.0 | 2.39 | 23.9 % | 9.79 | 26.0 % | 10.5 | 6.98 | 12.0 |
 
-The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`.
+The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`. A parameter read from the sampling grid, such as \(t_\mathrm{max}\), carries no standard deviation and no geometric statistics, so those cells stay empty. `by` groups the samples by a coordinate along the dimension the statistics are taken over, which is what a study with one sample dimension and a dose group coordinate needs, see the first walk-through of [Workflows](workflows.md).
 
-Steady state, with the dosing interval:
+Multiple dosing and steady state: a curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without any further option, `nca_single` and `nca` the same way. `superposition` predicts such a curve from a single dose curve and a protocol:
 
 ```python
-from pkpdutils import Dosing
-from pkpdutils.nca import accumulation_ratio, superposition
+import numpy as np
 
+from pkpdutils import AUCMethod, Dose, Dosing, NCAOptions, Route, Timecourse, nca_single
+from pkpdutils.nca import superposition
+
+# one intravenous bolus, sampled over two days
 dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
-# the dosing interval of a curve given with its last dose only
-ss = nca(batch_ss, options=NCAOptions(tau=12))  # auc_tau, cavg, fluctuation, ...
-sd = nca(batch_single, options=NCAOptions(tau=12))
-ratio = accumulation_ratio(ss, sd)  # observed accumulation
-predicted = superposition(tc_single, Dosing.regimen(dose, interval=12, n_doses=10))
+t = np.array([0, 0.5, 1, 2, 4, 6, 8, 12, 16, 24, 36, 48])
+single = Timecourse(
+    time=t,
+    value=8.0 * np.exp(-0.15 * t),
+    time_unit="hr",
+    unit="mg/l",
+    dose=dose,
+    substance="drug",
+)
+
+# the curve of ten doses every twelve hours, predicted by superposition
+options = NCAOptions(auc_method=AUCMethod.LOG)
+protocol = Dosing.regimen(dose, interval=12, n_doses=10)
+predicted = superposition(single, protocol, options=options)
+
+# the protocol drives the analysis: every dosing interval, the steady state
+# parameters of the last one and the point parameters from the last dose on
+result = nca_single(predicted, options=options)
+print(
+    result.intervals()[["interval", "interval_auc", "interval_ctrough"]]
+    .tail(3)
+    .to_string(index=False)
+)
+q = result.to_quantities()
+for name in (
+    "n_doses",
+    "tau",
+    "auc_tau",
+    "cavg",
+    "fluctuation",
+    "accumulation_ratio",
+    "accumulation_ratio_obs",
+    "cl_ss",
+):
+    print(f"{name:<22} {q[name]:~P}")
+print(result.flags())
 ```
 
-A curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without `tau`, `nca_single` and `nca` the same way:
+```text
+ interval  interval_auc  interval_ctrough
+        8     53.333304          1.584268
+        9     53.333328          1.584269
+       10     53.333333          1.584269
+n_doses                10.0
+tau                    12.0 h
+auc_tau                53.333332521067746 h⋅mg/l
+cavg                   4.444444376755645 mg/l
+fluctuation            1.8
+accumulation_ratio     1.198033626515006
+accumulation_ratio_obs 1.198033608268978
+cl_ss                  1.8750000285562125 l/h
+['EXTRAPOLATED_TROUGH']
+```
+
+The intervals no longer change, which is what steady state means, and the predicted accumulation \(1/(1 - e^{-\lambda_z \tau})\) agrees with the observed one. The flag says that the sample at the end of an interval is the post-dose value of the next bolus, so the trough of those intervals was regressed rather than read, as "Multiple dosing" above describes. `plot_timecourse(predicted)` draws the curve with a dotted line at every dose time, the figure of `examples/steady_state.py`:
+
+![The predicted curve of ten doses every twelve hours with a dotted line at every dose time](images/steady_state.png)
+
+`accumulation_ratio` compares two analyses of the same dosing interval instead, the steady state study against a single dose study; with the `result` and the `single` curve of the snippet above:
 
 ```python
-from pkpdutils import Dosing, NCAOptions, nca_single
-from pkpdutils.nca import AUCMethod
+from pkpdutils.nca import accumulation_ratio
 
-protocol = Dosing.regimen(dose, interval=12, n_doses=4)
-tc_protocol = Timecourse(
-    time=..., value=..., dosing=protocol, time_unit="hr", unit="mg/l"
-)
-result = nca_single(tc_protocol, options=NCAOptions(auc_method=AUCMethod.LOG))
-result.intervals()  # one row per dosing interval: interval_auc, interval_cmax, ...
-result.to_quantities()["auc_tau"]  # the last, complete interval
-result.to_quantities()["accumulation_ratio_obs"]  # last interval over first interval
-result.flags()  # e.g. ['INCOMPLETE_INTERVAL'] when the last interval is not covered
+first_dose = nca_single(single, options=NCAOptions(auc_method=AUCMethod.LOG, tau=12))
+print(float(accumulation_ratio(result, first_dose)))  # 1.1980336082689775
 ```
 
-The per-interval parameters (`interval_*`, `NCAResult.intervals()`), the steady state parameters of the last interval and the point parameters from the last dose on are all part of the one result.
+The per-interval parameters (`interval_*`, `NCAResult.intervals()`), the steady state parameters of the last interval and the point parameters from the last dose on are all part of the one result. A batch is analysed the same way, and `NCAOptions(tau=...)` turns a single dose curve into a multiple dose analysis of one interval; the walk-through of a twice daily study is in [Workflows](workflows.md).
 
 Large batches are analysed in chunks of at most `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and the chunks are mapped in order over the workers of `NCAOptions(n_workers=...)`; both apply to the steady state path as well. The core is vectorized numpy and releases the GIL, so the workers are threads of the calling process (no `if __name__ == "__main__":` guard, no copy of the batch, a pool that starts in half a millisecond and is shared with every later call). The default `n_workers=None` decides by size: the calling thread up to 20 000 rows (`pkpdutils.parallel.NCA_WORKER_THRESHOLD`), where the analysis is faster than the pool, and one thread per usable core, at most 8, above it; `n_workers=1` forces the serial run and `n_workers=n` uses that many threads. The rows are cut into about one chunk per worker, so a large batch keeps every thread busy, and the temporaries of the core live for as many chunks as run at once: a parallel run holds `min(n_workers, n_chunks) * chunk_rows` rows of them, not `chunk_rows`, which is what a large batch pays for its speed. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md); partial areas come from `partial_auc`, whose interval may start before the first sample of a curve but not before its dose: the value at the dose is then 0 for an extravascular dose, the back-extrapolated \(C_0\) for a bolus and `NaN` for an infusion. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 

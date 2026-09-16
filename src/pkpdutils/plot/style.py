@@ -17,6 +17,10 @@ class PlotStyle:
         alpha: transparency of filled areas
         linewidth: width of lines
         markersize: size of markers
+        marker_max_points: most points a curve may have and still be drawn
+            with a marker per point; a longer curve (a simulation, a dense
+            sampling) is drawn as a line alone, since its markers would merge
+            into a band and hide the shape of the curve
         cmap: colormap of the samples of a batch
         limit_color: color of acceptance limits and interaction thresholds
         pooled_color: color of pooled effects
@@ -33,6 +37,7 @@ class PlotStyle:
     alpha: float = 0.2
     linewidth: float = 1.5
     markersize: float = 5.0
+    marker_max_points: int = 60
     cmap: str = "viridis"
     limit_color: str = "tab:red"
     pooled_color: str = "tab:orange"

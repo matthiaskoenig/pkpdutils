@@ -387,6 +387,29 @@ def test_events_round_trip_keeps_the_uncertainty() -> None:
     assert back == batch
 
 
+def test_write_events_of_a_count_per_time_point_writes_the_number_of_subjects() -> None:
+    # the group curve of a ragged batch counts every time point on its own; the
+    # event format has one `N` per subject, which is the size of the group
+    batch = Timecourses.from_arrays(
+        np.array([1.0, 2.0, 4.0]),
+        np.array([[1.0, 2.0, 1.0]]),
+        time_unit="hr",
+        unit="ng/ml",
+        sd=np.array([[0.1, 0.2, 0.1]]),
+        n=np.array([[3.0, 3.0, 2.0]]),
+        coords={"individual": ["group"]},
+        dose=Dose(amount=100, unit="mg"),
+    )
+    assert batch.ds["n"].dims == ("individual", "time")
+    table = write_events(batch)
+    assert table["N"].dropna().unique().tolist() == [3.0]
+    back = read_events(
+        table, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+    )
+    assert back.n is not None
+    np.testing.assert_allclose(back.n, [3.0])
+
+
 def test_write_events_without_uncertainty_has_no_extra_columns() -> None:
     batch = read_events(
         events(), time_unit="hr", unit="mg/l", dose_unit="mg", route=Route.ORAL

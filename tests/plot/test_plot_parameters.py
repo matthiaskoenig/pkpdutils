@@ -3,6 +3,7 @@ import warnings
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
+import pytest
 import xarray as xr
 from matplotlib.figure import Figure
 
@@ -48,6 +49,47 @@ def test_plot_parameters_groups() -> None:
     fig.canvas.draw()
     y_labels = [t.get_text() for t in ax.get_yticklabels(which="both")]
     assert not any("^" in label or "10^" in label for label in y_labels)
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_parameters_names_the_statistic_in_the_legend_once() -> None:
+    result = nca_result()
+    fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex")
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    # the groups are the ticks of the x axis, only the marker is named
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "geometric mean [95 % CI]"
+    ]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_parameters_legend_follows_the_scale_and_the_level() -> None:
+    result = nca_result()
+    fig = plot_parameters(
+        result, "cmax", "individual", scale=Scale.LINEAR, ci_level=0.90
+    )
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == ["mean [90 % CI]"]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_parameters_takes_the_scale_as_a_string() -> None:
+    # `scale="log"` is the analysis of `scale=Scale.LOG`, as in `pkpdutils.stats`
+    result = nca_result()
+    fig = plot_parameters(result, "cmax", "individual", scale="log")
+    legend = fig.axes[0].get_legend()
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "geometric mean [95 % CI]"
+    ]
+    linear = plot_parameters(result, "cmax", "individual", scale="linear")
+    linear_legend = linear.axes[0].get_legend()
+    assert linear_legend is not None
+    assert [text.get_text() for text in linear_legend.get_texts()] == ["mean [95 % CI]"]
+    with pytest.raises(ValueError, match="not a valid Scale"):
+        plot_parameters(result, "cmax", "individual", scale="geometric")
     matplotlib.pyplot.close("all")
 
 

@@ -184,7 +184,7 @@ The examples are runnable scripts in `examples/`, they are not part of the packa
 python -m examples.timecourses
 ```
 
-An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_example_scripts.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md`.
+An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_examples.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md` and the [Gallery](gallery.md), which shows the figure and the core snippet of every example.
 
 ## Documentation
 
@@ -213,6 +213,41 @@ The API reference is rendered from the docstrings by [mkdocstrings](https://mkdo
 ```
 
 Docstrings are therefore the place to document functions and classes, the markdown files provide the narrative around them. Adding a module to the reference means adding such a page and an entry to `nav` in `zensical.toml`.
+
+### Rendering the example figures
+
+The figures of the documentation are the figures of the examples, and they are committed to `docs/images/`, so that the build of the site stays a plain `zensical build` and does not run any analysis. `scripts/render_examples.py` refreshes them: it runs every example of `tests/examples/test_examples.py` as a module in a temporary directory, with the `Agg` backend and warnings as errors, and copies every PNG the example wrote into `docs/images/` under its own name. It prints the files it wrote and fails when an example fails or writes no figure at all.
+
+```bash
+uv run python scripts/render_examples.py                  # every example
+uv run python scripts/render_examples.py nca_single emax  # a selection
+```
+
+Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.png)`.
+
+A page only embeds a figure an example writes, so the committed images and the pages cannot drift apart: a snippet of the documentation which draws the same figure as an example builds the same data, and a figure nothing produces is described in a sentence instead.
+
+### Snippets of the documentation
+
+Every ` ```python ` block of the user guide and of [Workflows](workflows.md) follows two rules:
+
+- **It runs.** The first block of the usage section of a page is self-contained (its imports, its data, the call and the output it prints) and runs from the root of the repository with warnings as errors:
+
+    ```bash
+    uv run python -W error snippet.py
+    ```
+
+    A later block of the same page may be a fragment, but then it names in a comment or in the sentence before it where every object it uses comes from ("the `batch` of the snippet above"). The output a snippet prints is shown below it, as a `text` block or as a markdown table, and is pasted from a run, never written by hand.
+
+    `tests/docs/test_snippets.py` keeps this honest: it runs the blocks of every page in the order they appear and in one namespace per page, in a temporary working directory with the files of `docs/data/` next to them, in a subprocess with `-W error`. A fragment which names objects the page cannot build (the result of another page, a simulation, a study a reader brings) carries the comment `# not executed` as its first line and is skipped; every other block has to run.
+
+- **It is formatted.** `ruff format` formats the code blocks of the markdown files as well, so `ruff format --check` covers the documentation and a snippet is written the way ruff would write it:
+
+    ```bash
+    uv run ruff format docs/
+    ```
+
+The walk-throughs of [Workflows](workflows.md) are the longest of these snippets: they simulate their study in the first lines so that a reader can paste them anywhere, and the figures they save are the figures of the examples of the same data.
 
 ### Files for agents { #files-for-agents }
 

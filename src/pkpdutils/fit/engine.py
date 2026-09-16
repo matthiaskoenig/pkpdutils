@@ -1011,6 +1011,36 @@ def _as_rows(
     return x_arr, y_arr, sd_arr, single
 
 
+def _named(
+    result: FitResult, x_name: str | None = None, y_name: str | None = None
+) -> FitResult:
+    """The result with the names of its variables in `attrs`.
+
+    `attrs["x_name"]` and `attrs["y_name"]` name what was fitted against
+    what, so that a figure of the result labels its axes with them
+    (`plot_fit`, `plot_dose_proportionality`) instead of `x` and `y`. A name
+    which is `None` is not written, and a result without the attributes falls
+    back to `x` and `y` in the figures.
+
+    Args:
+        result: the result of the engine.
+        x_name: name of the independent variable, `None` to leave it out.
+        y_name: name of the dependent variable, `None` to leave it out.
+
+    Returns:
+        The result carrying the names which were given, the result itself
+        when neither was.
+    """
+    names = {
+        key: value
+        for key, value in (("x_name", x_name), ("y_name", y_name))
+        if value is not None
+    }
+    if not names:
+        return result
+    return FitResult(result.ds.assign_attrs(**names), result.model)
+
+
 def fit(
     model: Model,
     x: Any,
@@ -1020,6 +1050,8 @@ def fit(
     options: FitOptions | None = None,
     x_unit: str = "dimensionless",
     y_unit: str = "dimensionless",
+    x_name: str | None = None,
+    y_name: str | None = None,
     dims: Sequence[str] | None = None,
     coords: dict[str, Any] | None = None,
 ) -> FitResult:
@@ -1033,6 +1065,12 @@ def fit(
         options: the options, defaults for `None`
         x_unit: unit of `x`
         y_unit: unit of `y`
+        x_name: name of the independent variable, stored as `attrs["x_name"]`
+            and used as the axis label by the figures of the fit
+            (`concentration`, `dose`, `weight`); the figures fall back to `x`
+            without it, as the arrays carry no name of their own
+        y_name: name of the dependent variable, stored as `attrs["y_name"]`,
+            the label of the value axis (`effect`, `auc_inf_obs`)
         dims: sample dimension names for a 2-D `y`, `("sample",)` by default
         coords: coordinate labels of the sample dimensions
 
@@ -1052,7 +1090,7 @@ def fit(
             "2-D data has exactly one sample dimension; use fit_timecourses or fit_table for more"
         )
     rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
-    return build_result(
+    result = build_result(
         model,
         rows,
         x=x_arr,
@@ -1064,6 +1102,7 @@ def fit(
         coords=coords or {},
         options=options,
     )
+    return _named(result, x_name, y_name)
 
 
 def _cv(se: float, value: float) -> float:

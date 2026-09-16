@@ -390,7 +390,7 @@ def test_from_timecourses_mixed_routes_raise() -> None:
         )
 
 
-def test_from_timecourses_varying_n_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_from_timecourses_keeps_a_varying_n_per_time_point() -> None:
     timecourses = [
         Timecourse(
             time=T,
@@ -411,13 +411,22 @@ def test_from_timecourses_varying_n_warns(caplog: pytest.LogCaptureFixture) -> N
             label="b",
         ),
     ]
-    with caplog.at_level(logging.WARNING, logger="pkpdutils.timecourse"):
-        tcs = Timecourses.from_timecourses(timecourses)
+    tcs = Timecourses.from_timecourses(timecourses)
     tcs_n = tcs.n
     assert tcs_n is not None
-    np.testing.assert_allclose(tcs_n, [6, 8])
-    assert "'a'" in caplog.text
-    assert "'n'" in caplog.text
+    # the count of every time point is kept, a single number is broadcast
+    np.testing.assert_allclose(tcs_n, [[4, 4, 6, 6], [8, 8, 8, 8]])
+    n_subjects = tcs.n_subjects
+    assert n_subjects is not None
+    np.testing.assert_allclose(n_subjects, [6, 8])
+    # the standard error follows from the scatter with the count of its point
+    se = tcs.se
+    assert se is not None
+    np.testing.assert_allclose(se[0], 0.1 * V[0] / np.sqrt([4, 4, 6, 6]))
+    # and the curves come back with their own counts
+    back = list(tcs)
+    np.testing.assert_allclose(np.asarray(back[0].n), [4, 4, 6, 6])
+    np.testing.assert_allclose(np.asarray(back[1].n), [8, 8, 8, 8])
 
 
 def test_from_timecourses_partial_spread_warns(
@@ -1367,7 +1376,11 @@ def test_mean_with_missing_points_and_min_n() -> None:
     assert n is not None and sd is not None and se is not None
     np.testing.assert_allclose(group.values, [2.0, 2.0, 4.0, 5.0])
     assert np.isnan(sd[1])  # one value, no scatter
-    np.testing.assert_allclose(n, 2.0)
+    # `n` is the count of its own time point, the second one has one curve
+    np.testing.assert_allclose(n, [2.0, 1.0, 2.0, 2.0])
+    n_subjects = group.n_subjects
+    assert n_subjects is not None
+    np.testing.assert_allclose(n_subjects, 2.0)
     # se = sd / sqrt(n) with the stored n
     np.testing.assert_allclose(se[0], sd[0] / np.sqrt(2.0))
     # `min_n` drops the points which not every sample covers
@@ -1420,6 +1433,45 @@ def test_mean_of_a_ragged_batch_uses_the_union_grid() -> None:
     group = tcs.mean("individual")
     np.testing.assert_allclose(group.times, [0.0, 1.0, 1.5, 2.0])
     np.testing.assert_allclose(group.values, [2.0, 2.0, 4.0, 4.0])
+
+
+def test_mean_of_a_ragged_batch_counts_every_time_point() -> None:
+    # three subjects on three grids: the late points carry fewer subjects than
+    # the early ones, so `n` has to be the count of its own time point
+    grids = [
+        np.array([1.0, 2.0, 4.0, 8.0]),
+        np.array([1.0, 2.0, 4.0, 8.0, 12.0, 24.0]),
+        np.array([2.0, 4.0, 8.0]),
+    ]
+    curves = [
+        Timecourse(
+            time=grid,
+            value=factor * 10.0 * np.exp(-0.1 * grid),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+            substance="caffeine",
+            label=label,
+        )
+        for grid, factor, label in zip(
+            grids, (1.0, 1.3, 0.7), ("s1", "s2", "s3"), strict=True
+        )
+    ]
+    group = Timecourses.from_timecourses(curves).mean("individual")
+    np.testing.assert_allclose(group.times, [1.0, 2.0, 4.0, 8.0, 12.0, 24.0])
+    n, sd, se = group.n, group.sd, group.se
+    assert n is not None and sd is not None and se is not None
+    np.testing.assert_allclose(n, [2.0, 3.0, 3.0, 3.0, 1.0, 1.0])
+    # at t = 1 two of the three curves contribute and `se = sd / sqrt(2)`
+    assert n[0] == 2.0
+    np.testing.assert_allclose(se[0], sd[0] / np.sqrt(2.0))
+    np.testing.assert_allclose(se, sd / np.sqrt(n))
+    # the group has three subjects, the count of its best covered point
+    n_subjects = group.n_subjects
+    assert n_subjects is not None
+    assert float(n_subjects) == 3.0
+    # and the curve of the group carries the counts of its points
+    np.testing.assert_allclose(np.asarray(group.sel().n), n)
 
 
 def test_mean_rejects_an_unknown_dimension() -> None:

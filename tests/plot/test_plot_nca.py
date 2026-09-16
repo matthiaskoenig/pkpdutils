@@ -74,7 +74,27 @@ def test_plot_nca_single() -> None:
     fig = plot_nca(tc, result, title="test")
     assert len(fig.axes) == 2
     assert fig.axes[1].get_yscale() == "log"
-    assert "test" in fig.axes[0].get_title()
+    assert fig.get_suptitle() == "test"
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_titles_the_figure_once_and_names_the_scales() -> None:
+    tc = oral()
+    fig = plot_nca(tc, nca_single(tc), title="subject 1")
+    # the sample is named once, over the figure, not in both panels
+    assert fig.get_suptitle() == "subject 1"
+    assert [ax.get_title() for ax in fig.axes] == ["linear", "semi-logarithmic"]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_with_given_axes_titles_the_first_panel() -> None:
+    tc = oral()
+    fig, axes = matplotlib.pyplot.subplots(ncols=2)
+    fig.suptitle("the title of the caller")
+    plot_nca(tc, nca_single(tc), title="subject 1", axes=axes)
+    # a figure of the caller keeps its own title
+    assert fig.get_suptitle() == "the title of the caller"
+    assert axes[0].get_title() == "subject 1"
     matplotlib.pyplot.close(fig)
 
 
@@ -82,11 +102,18 @@ def test_plot_nca_from_batch_result_with_indexers_and_flags_in_title() -> None:
     batch = Timecourses.from_timecourses([oral(1.0, "slow"), oral(4.0, "fast")])
     result = nca(batch)
     fig = plot_nca(batch.sel(individual="fast"), result, individual="fast")
-    assert "fast" in fig.axes[0].get_title()
+    assert "fast" in fig.get_suptitle()
     short = Timecourse(time=[1, 2, 3], value=[1, 3, 2], time_unit="hr", unit="mg/l")
     fig2 = plot_nca(short, nca_single(short))
-    assert "TOO_FEW_POINTS" in fig2.axes[0].get_title()
+    assert "TOO_FEW_POINTS" in fig2.get_suptitle()
     matplotlib.pyplot.close("all")
+
+
+def test_plot_nca_titles_the_figure_with_the_label_of_the_curve() -> None:
+    tc = oral(label="healthy volunteers")
+    fig = plot_nca(tc, nca_single(tc))
+    assert fig.get_suptitle() == "healthy volunteers"
+    matplotlib.pyplot.close(fig)
 
 
 def test_plot_nca_iv_bolus_marks_c0() -> None:
@@ -364,6 +391,27 @@ def test_plot_troughs_draws_into_the_given_ax_and_without_a_spread() -> None:
     assert ax.containers
     assert fig.get_layout_engine() is None
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_troughs_names_the_statistic_in_the_title() -> None:
+    batch = trough_batch()
+    result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
+    assert plot_troughs(result).axes[0].get_title() == "mean ± sd over individual"
+    assert (
+        plot_troughs(result, spread="se", by="arm").axes[0].get_title()
+        == "mean ± se over individual"
+    )
+    assert (
+        plot_troughs(result, spread=None).axes[0].get_title() == "mean over individual"
+    )
+    # a result of a single curve draws that curve, there is no statistic
+    single = nca_single(
+        multiple_dose_tc(n_doses=3), options=NCAOptions(auc_method=AUCMethod.LOG)
+    )
+    assert plot_troughs(single).axes[0].get_title() == ""
+    # and `plot_intervals` draws one line per sample, not a reduction
+    assert plot_intervals(result, "interval_ctrough").axes[0].get_title() == ""
+    matplotlib.pyplot.close("all")
 
 
 def test_plot_troughs_raises_without_intervals_and_for_an_unknown_axis() -> None:

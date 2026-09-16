@@ -19,13 +19,21 @@ The registry defines `none` (dimensionless count, for data without a unit) and `
 ## API
 
 ```python
-from pkpdutils.units import Q_, check_dose_unit, normalize_clearance, ureg
+from pkpdutils.units import Q_, check_dose_unit, normalize_clearance, normalize_volume
 
 dose = Q_(100, "mg")
 cl = Q_(120, "ml/min")
-print(normalize_clearance(cl))  # 7.2 liter / hour
+print(dose, normalize_clearance(cl), normalize_volume(Q_(4200, "ml")))
 check_dose_unit("mg/kg")  # ok
-check_dose_unit("mg/l")  # ValueError
+try:
+    check_dose_unit("mg/l")  # a concentration is not a dose
+except ValueError as error:
+    print(error)
+```
+
+```text
+100 milligram 7.199999999999999 liter / hour 4.2 liter
+A dose must be in ('[mass]', '[substance]', '[activity_amount]', '[mass] / [mass]', '[substance] / [mass]', '[activity_amount] / [mass]'), not '[mass] / [length] ** 3' ('mg/l')
 ```
 
 The reference of the module is in [API: units](api/units.md).

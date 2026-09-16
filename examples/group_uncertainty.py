@@ -9,13 +9,24 @@ Run from the root of the repository with `python -m examples.group_uncertainty`.
 Writes `group_uncertainty.png` into the working directory.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 
-from pkpdutils import Dose, NCAOptions, Route, Timecourse, Timecourses, nca, nca_single
+from pkpdutils import (
+    AUCMethod,
+    BootstrapSpread,
+    Dose,
+    NCAOptions,
+    Route,
+    Timecourse,
+    Timecourses,
+    UncertaintyMethod,
+    nca,
+    nca_single,
+    partial_auc,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, UncertaintyMethod, partial_auc
-from pkpdutils.nca.options import BootstrapSpread
-from pkpdutils.plot import plot_timecourse
+from pkpdutils.plot import plot_mean_timecourse, plot_timecourse
 
 t = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
 mean = np.array([1.9, 2.6, 2.4, 1.8, 1.3, 0.95, 0.5, 0.12])
@@ -105,6 +116,14 @@ if __name__ == "__main__":
     console.rule("Partial AUC 0-6 h of the individuals")
     console.print(partial_auc(individuals, 0.5, 6.0).values.round(3))
 
-    fig = plot_timecourse(group)
+    # the two paths side by side: the reported group curve, whose sd the
+    # bootstrap and the delta method propagate, and the individual curves,
+    # whose parameters are summarized over the sample dimension
+    fig, axes = plt.subplots(ncols=2, figsize=(11, 4.2))
+    fig.set_layout_engine("constrained")
+    plot_timecourse(group, ax=axes[0])
+    axes[0].set_title("group curve: mean and sd of 10 subjects")
+    plot_mean_timecourse(individuals, spread="sd", panels=("linear",), axes=[axes[1]])
+    axes[1].set_title("individual curves: summarized over the subjects")
     fig.savefig("group_uncertainty.png", dpi=120)
     console.print("written: group_uncertainty.png")

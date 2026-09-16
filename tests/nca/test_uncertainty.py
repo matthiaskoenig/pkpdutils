@@ -83,6 +83,49 @@ def test_resolve_spread_from_sd_and_n() -> None:
     )
 
 
+def test_resolve_spread_of_a_count_per_time_point() -> None:
+    # the group curve of a ragged batch counts every time point on its own;
+    # the conversion between `sd` and `se` uses the count of the point
+    counts = np.array([4.0, 4.0, 4.0, 4.0, 2.0, 2.0, 2.0, 1.0])
+    curve = group_curve(n=None).model_copy(update={"n": counts})
+    tcs = Timecourses.from_timecourses([curve])
+    np.testing.assert_allclose(np.asarray(tcs.n), counts[None, :])
+    np.testing.assert_allclose(np.asarray(tcs.n_subjects), [4.0])
+    se = resolve_spread(tcs, NCAOptions(bootstrap_spread=BootstrapSpread.SE))
+    sd = resolve_spread(tcs, NCAOptions(bootstrap_spread=BootstrapSpread.SD))
+    np.testing.assert_allclose(se, sd / np.sqrt(counts)[None, :])
+
+
+def test_nca_of_a_ragged_group_curve() -> None:
+    # `Timecourses.mean` of a ragged batch: the analysis runs, reports the
+    # number of subjects of the group and propagates the spread of the points
+    grids = [np.array([1.0, 2.0, 4.0, 8.0]), T, np.array([2.0, 4.0, 8.0])]
+    curves = [
+        Timecourse(
+            time=grid,
+            value=factor * C0 * np.exp(-K * grid),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+            substance="x",
+            label=label,
+        )
+        for grid, factor, label in zip(
+            grids, (1.0, 1.3, 0.7), ("s1", "s2", "s3"), strict=True
+        )
+    ]
+    group = Timecourses.from_timecourses(curves).mean("individual")
+    result = nca(group, options=NCAOptions(seed=1, n_boot=200))
+    quantities = result.to_quantities()
+    assert float(quantities["n"].magnitude) == 3.0
+    assert np.isfinite(quantities["auc_inf_obs_se"].magnitude)
+    # `x_sd` is the between-subject scale of `x_se`, with the subjects of the group
+    np.testing.assert_allclose(
+        quantities["auc_inf_obs_sd"].magnitude,
+        quantities["auc_inf_obs_se"].magnitude * np.sqrt(3.0),
+    )
+
+
 def test_resample_values_shapes_and_distribution() -> None:
     rng = np.random.default_rng(0)
     c = np.array([[10.0, 5.0, np.nan, 1.0]])

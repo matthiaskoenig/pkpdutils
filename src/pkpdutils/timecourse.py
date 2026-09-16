@@ -1145,28 +1145,80 @@ def _check_sample_times(
     raise ValueError(f"sample {labels[i]}: 'time' contains duplicate values")
 
 
-def _one_n_per_sample(subjects: np.ndarray, labels: Sequence[Any]) -> np.ndarray:
-    """Reduce the number of subjects per time point to one number per sample.
+def _counts_per_sample(subjects: np.ndarray) -> np.ndarray:
+    """The largest count of every sample, `NaN` for a sample without one.
 
     Args:
-        subjects: the padded `n` column `(n_samples, n_time)`.
-        labels: the samples, in the order of the batch.
+        subjects: the counts `(n_samples, n_time)`, `NaN` where a sample has
+            no count at a time point (the padding of a shorter grid).
 
     Returns:
-        The maximum of every sample; a sample whose `n` varies over its time
-        points logs a warning.
+        One count per sample.
     """
-    maxima = np.nanmax(subjects, axis=1)
-    minima = np.nanmin(subjects, axis=1)
-    for i in np.flatnonzero(minima != maxima):
-        sample = int(i)
-        logger.warning(
-            "'n' varies over the time points of '%s', the batch keeps "
-            "one number per sample, the maximum %s",
-            labels[sample],
-            maxima[sample],
-        )
-    return maxima
+    finite = np.isfinite(subjects)
+    high = np.where(finite, subjects, -np.inf).max(axis=1)
+    return np.where(finite.any(axis=1), high, np.nan)
+
+
+def _counts_vary_over_time(subjects: np.ndarray) -> bool:
+    """Whether the count of a sample changes from one time point to another.
+
+    Args:
+        subjects: the counts `(n_samples, n_time)`, `NaN` where a sample has
+            no count at a time point.
+
+    Returns:
+        `True` when a sample carries two different counts, so that the batch
+        has to keep them per time point rather than one number per sample.
+    """
+    finite = np.isfinite(subjects)
+    low = np.where(finite, subjects, np.inf).min(axis=1)
+    return bool(np.any(finite.any(axis=1) & (low != _counts_per_sample(subjects))))
+
+
+def _count_layout(
+    rest: tuple[str, ...], count: np.ndarray
+) -> tuple[tuple[str, ...], np.ndarray, dict[str, str]]:
+    """The `n` variable of a group curve in the layout of the batch constructors.
+
+    A count which is the same at every time point of a group is stored per
+    sample, as `from_timecourses` stores it, so a group curve of a batch on a
+    shared grid round trips through the constructors unchanged; a count which
+    varies along the grid (a ragged batch) is stored over `time`.
+
+    Args:
+        rest: the remaining sample dimensions of the group curve.
+        count: the counts, shape `(*rest, n_time)`.
+
+    Returns:
+        The `(dims, data, attrs)` triple of the variable.
+    """
+    attrs = {"units": "dimensionless"}
+    first = count[..., :1]
+    if count.shape[-1] and np.all(count == first):
+        return (rest, first[..., 0], attrs)
+    return ((*rest, TIME_DIM), count, attrs)
+
+
+def _batch_counts(subjects: np.ndarray) -> np.ndarray:
+    """The `n` of a batch: one count per sample, or the counts per time point.
+
+    A batch keeps one number per sample, the usual group data, and the whole
+    `(n_samples, n_time)` block when a sample counts its time points
+    separately, as the group curve of `Timecourses.mean` on a ragged batch
+    does; `Timecourses.n_subjects` reads the number of subjects back either
+    way.
+
+    Args:
+        subjects: the counts `(n_samples, n_time)`, `NaN` where a sample has
+            no count at a time point.
+
+    Returns:
+        The counts in the layout the batch keeps.
+    """
+    return (
+        subjects if _counts_vary_over_time(subjects) else _counts_per_sample(subjects)
+    )
 
 
 def _check_dose_amounts(amounts: np.ndarray, labels: Sequence[Any]) -> None:
@@ -1579,7 +1631,8 @@ class _SampleArrays:
         values: the values
         sd: the standard deviations, `None` without
         se: the standard errors, `None` without
-        n: the number of subjects per sample, `None` without
+        n: the counts, one per sample or one per sample and time point,
+            `None` without
         dose_amount: the dose amounts, `None` without doses
         dose_time: the dose times, `None` without doses
         dose_duration: the infusion durations, `None` without doses
@@ -1616,8 +1669,9 @@ class Timecourses:
     scan. Its variables are
 
     - `value` over `(*sample_dims, time)`, the values; `NaN` marks missing points,
-    - `sd`, `se` over the same dimensions and `n` over the sample dimensions,
-      for group data (optional),
+    - `sd`, `se` over the same dimensions and `n` over the sample dimensions
+      (or over `(*sample_dims, time)` when a count varies over the curve), for
+      group data (optional),
     - `dose_amount`, `dose_time`, `dose_duration` over the sample dimensions and
       the dose dimension `dose_index` (optional, the three of them together;
       `dose_duration` is a variable of every batch with doses and is `NaN` where
@@ -1639,7 +1693,10 @@ class Timecourses:
 
     A batch has one route: curves with different routes go into separate
     batches (a deliberate restriction of the 1.0.0 data model). `n` is one
-    number per sample, not one per time point.
+    number per sample, or one per sample and time point when a count varies
+    over the curve, as it does for the group curve of a ragged batch
+    (`Timecourses.mean`); `n_subjects` is the number of subjects of a sample
+    in either layout.
 
     Several sample dimensions span their cartesian product, which can have
     combinations without data (no curve was measured for them). Such a sample
@@ -1795,8 +1852,30 @@ class Timecourses:
 
     @property
     def n(self) -> np.ndarray | None:
-        """Number of subjects per sample, `None` without."""
+        """Counts behind the values, `None` without.
+
+        One number per sample, or one per sample and time point when the batch
+        carries a count per point, as the group curve of `mean` does; a
+        `Timecourse` keeps `n` the same way. `n_subjects` reduces the second
+        form to one number per sample.
+        """
         return self._optional("n")
+
+    @property
+    def n_subjects(self) -> np.ndarray | None:
+        """Number of subjects per sample, `None` without.
+
+        The stored `n` when it is one number per sample, and the largest count
+        over the time points when it is one per time point: the number of
+        subjects of a group is the number behind its best covered point.
+        """
+        n = self._optional("n")
+        if n is None or TIME_DIM not in self.ds["n"].dims:
+            return n
+        with warnings.catch_warnings():
+            # a sample without a single count gives `NaN`, not an error
+            warnings.simplefilter("ignore", RuntimeWarning)
+            return np.asarray(np.nanmax(n, axis=-1), dtype=np.float64)
 
     @property
     def dose_amount(self) -> np.ndarray | None:
@@ -1914,7 +1993,9 @@ class Timecourses:
             coords: coordinate values per sample dimension (labels of the samples)
             sd: standard deviations with the shape of `values`
             se: standard errors with the shape of `values`
-            n: number of subjects, one number or an array of shape `sample_shape`
+            n: the counts, one number, an array of shape `sample_shape` (one
+                count per sample) or an array of the shape of `values` (one
+                count per sample and time point)
             dose: one `Dose` or one `Dosing` protocol for all samples, or a
                 mapping with `amount`, `unit` and optionally `time` and
                 `duration`; the arrays of the mapping have the shape
@@ -1982,20 +2063,31 @@ class Timecourses:
                 )
             data_vars[name] = (all_dims, arr, {"units": unit})
         if n is not None:
-            n_arr = np.broadcast_to(
-                np.asarray(n, dtype=np.float64), sample_shape
-            ).copy()
-            data_vars["n"] = (dims, n_arr, {"units": "dimensionless"})
+            # `n` is one count per sample, or one per sample and time point
+            # when it has the shape of the values (the group curve of `mean`)
+            n_raw = np.asarray(n, dtype=np.float64)
+            per_time = n_raw.shape == values_arr.shape
+            n_arr = (
+                n_raw.copy()
+                if per_time
+                else np.broadcast_to(n_raw, sample_shape).copy()
+            )
+            root_n = np.sqrt(n_arr) if per_time else np.sqrt(n_arr)[..., None]
+            data_vars["n"] = (
+                all_dims if per_time else dims,
+                n_arr,
+                {"units": "dimensionless"},
+            )
             if "sd" in data_vars and "se" not in data_vars:
                 data_vars["se"] = (
                     all_dims,
-                    data_vars["sd"][1] / np.sqrt(n_arr)[..., None],
+                    data_vars["sd"][1] / root_n,
                     {"units": unit},
                 )
             elif "se" in data_vars and "sd" not in data_vars:
                 data_vars["sd"] = (
                     all_dims,
-                    data_vars["se"][1] * np.sqrt(n_arr)[..., None],
+                    data_vars["se"][1] * root_n,
                     {"units": unit},
                 )
 
@@ -2042,11 +2134,12 @@ class Timecourses:
 
         Either all or no curves carry a dosing protocol, and all protocols need
         the same route and unit; curves with different routes go into separate
-        batches. The protocols are padded to the longest one. A batch
-        keeps one `n` per sample: an `n` which varies over the time points of a
-        curve is reduced to its maximum and logs a warning. `sd`, `se` and `n`
-        are kept only when every curve carries them; a field which some curves
-        are missing is dropped for the whole batch and logs a warning.
+        batches. The protocols are padded to the longest one. The batch keeps
+        one `n` per sample, and the counts per time point when the `n` of a
+        curve varies over its time points (`n_subjects` reads the number of
+        subjects back either way). `sd`, `se` and `n` are kept only when every
+        curve carries them; a field which some curves are missing is dropped
+        for the whole batch and logs a warning.
 
         Args:
             timecourses: the curves
@@ -2138,19 +2231,16 @@ class Timecourses:
         n_values = [tc.n for tc in timecourses]
         n: np.ndarray | None = None
         if all(v is not None for v in n_values):
-            maxima: list[float] = []
-            for label, v in zip(labels, n_values, strict=True):
-                assert v is not None
-                maximum = float(np.nanmax(v))
-                if np.ndim(v) > 0 and float(np.nanmin(v)) != maximum:
-                    logger.warning(
-                        "'n' varies over the time points of '%s', the batch keeps "
-                        "one number per sample, the maximum %s",
-                        label,
-                        maximum,
-                    )
-                maxima.append(maximum)
-            n = np.array(maxima)
+            # a curve carries its count as one number or per time point; the
+            # batch keeps the counts per time point when one of them varies
+            counts = padded(
+                [
+                    np.broadcast_to(np.asarray(v, dtype=np.float64), tc.time.shape)
+                    for tc, v in zip(timecourses, n_values, strict=True)
+                ]
+            )
+            assert counts is not None
+            n = _batch_counts(counts)
 
         protocols = [tc.dosing for tc in timecourses]
         without_dose = [
@@ -2217,7 +2307,9 @@ class Timecourses:
             value: name of the value column
             sd: name of the standard deviation column
             se: name of the standard error column
-            n: name of the column with the number of subjects (constant per sample)
+            n: name of the column with the number of subjects; the batch keeps
+                one number per sample, and the counts per time point when the
+                column varies within a sample
             dose_amount: name of the dose column (constant per sample without
                 `dose_time`, one value per dose time with it)
             dose_unit: unit of the doses, required with `dose_amount`
@@ -2295,8 +2387,9 @@ class Timecourses:
         spread = {"sd": padded(sd), "se": padded(se)}
         subjects = padded(n)
         if subjects is not None:
-            # the batch keeps one `n` per sample; `sd` and `se` are derived
-            # from each other per time point, as a single curve does
+            # `sd` and `se` are derived from each other per time point, as a
+            # single curve does; the batch keeps one `n` per sample unless a
+            # sample counts its time points separately
             with np.errstate(invalid="ignore"):
                 root = np.sqrt(subjects)
             if spread["se"] is None and spread["sd"] is not None:
@@ -2332,7 +2425,7 @@ class Timecourses:
             },
             sd=spread["sd"],
             se=spread["se"],
-            n=None if subjects is None else _one_n_per_sample(subjects, keys),
+            n=None if subjects is None else _batch_counts(subjects),
             dose=dose,
             route=route,
             substance=substance,
@@ -2625,7 +2718,14 @@ class Timecourses:
             if array is not None:
                 data[name] = np.asarray(array[index][mask], dtype=np.float64)
         if arrays.n is not None:
-            data["n"] = float(arrays.n[index])
+            row = arrays.n[index]
+            # one count per time point (the group curve of `mean`) travels
+            # into the curve as it is, one count per sample as the number
+            data["n"] = (
+                np.asarray(row[mask], dtype=np.float64)
+                if np.ndim(row) > 0
+                else float(row)
+            )
         dosing = self._dosing_at(arrays, index)
         if dosing is not None:
             data["dosing"] = dosing
@@ -3000,17 +3100,21 @@ class Timecourses:
         arithmetic mean \(\bar c_j\) of the samples with a finite value there,
         their standard deviation \(s_j\) (\(n_j - 1\) degrees of freedom) and
         the standard error \(s_j / \sqrt{n_j}\); a point covered by fewer than
-        `min_n` samples is `NaN`. `n` is the largest number of samples a time
-        point of the curve is covered by, the number of subjects of the group.
+        `min_n` samples is `NaN`.
 
-        The group curve carries `sd` and `se`. The statistic `spread` names is
-        the one computed from the curves and the other follows from it through
-        the relation \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\) of the stored `n`,
-        which a `Timecourse` keeps as well: with `"sd"` the standard deviation
-        is the scatter of the curves, with `"se"` the standard error is the
-        scatter divided by the root of the count of its own time point. The
-        two agree wherever every sample covers the point and differ only at a
-        point some samples are missing from.
+        `n` is the count \(n_j\) of its own time point, not one number for the
+        curve, so that \(\mathrm{se}_j = s_j/\sqrt{n_j}\) holds at every point
+        of a ragged group as well, where the late points carry fewer subjects
+        than the early ones. `Timecourses.n_subjects` is the number of
+        subjects of the group, the largest of the counts.
+
+        The group curve carries `sd` and `se`: the standard deviation is the
+        scatter of the samples at the point and the standard error follows
+        from it through the count of the point. `spread` names the statistic
+        which is computed from the curves and is kept for the symmetry with
+        `plot_mean_timecourse`; since `n` is the count of the point itself,
+        the two statistics imply each other and the result is the same either
+        way.
 
         The samples need a shared sampling grid; a ragged batch is placed on
         the union of the grids of its samples first, with `NaN` where a sample
@@ -3026,7 +3130,7 @@ class Timecourses:
         Args:
             dim: the sample dimension to reduce.
             spread: the statistic which is computed from the curves, the other
-                one is derived from it through `n`.
+                one is derived from it through `n`; both give the same pair.
             min_n: fewest samples a time point must be covered by.
 
         Returns:
@@ -3061,13 +3165,14 @@ class Timecourses:
             scatter = np.where(
                 enough & (count > 1), np.nanstd(values, axis=0, ddof=1), np.nan
             )
-            n = np.max(np.where(enough, count, 0.0), axis=-1)
-            root_n = np.sqrt(n)[..., None]
+            # `n` is the count of the point, so the two statistics imply each
+            # other wherever the count is the same
+            root_n = np.sqrt(count)
             if spread == "sd":
                 sd = scatter
                 se = sd / root_n
             else:
-                se = scatter / np.sqrt(count)
+                se = scatter / root_n
                 sd = se * root_n
 
         unit = batch.unit
@@ -3075,7 +3180,7 @@ class Timecourses:
             "value": ((*rest, TIME_DIM), mean, {"units": unit}),
             "sd": ((*rest, TIME_DIM), sd, {"units": unit}),
             "se": ((*rest, TIME_DIM), se, {"units": unit}),
-            "n": (rest, n, {"units": "dimensionless"}),
+            "n": _count_layout(rest, count),
         }
         ds = xr.Dataset(
             data_vars=data_vars,

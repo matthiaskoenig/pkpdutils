@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from pkpdutils.fit.engine import build_result, fit_rows
+from pkpdutils.fit.engine import _named, build_result, fit_rows
 from pkpdutils.fit.model import Model
 from pkpdutils.fit.options import FitOptions
 from pkpdutils.fit.result import FitResult
@@ -15,24 +15,6 @@ from pkpdutils.timecourse import Timecourse, Timecourses
 #: the placeholder name of a batch which does not name its substance; the
 #: figures then label the value axis `value` instead of `substance`
 _UNNAMED_SUBSTANCE = "substance"
-
-
-def _named(result: FitResult, x_name: str, y_name: str) -> FitResult:
-    """The result with the names of its variables in `attrs`.
-
-    `attrs["x_name"]` and `attrs["y_name"]` name what was fitted against
-    what, so that a figure of the result labels its axes with them
-    (`plot_fit`, `plot_dose_proportionality`) instead of `x` and `y`.
-
-    Args:
-        result: the result of the engine.
-        x_name: name of the independent variable.
-        y_name: name of the dependent variable.
-
-    Returns:
-        The result carrying the two names.
-    """
-    return FitResult(result.ds.assign_attrs(x_name=x_name, y_name=y_name), result.model)
 
 
 def fit_timecourse(

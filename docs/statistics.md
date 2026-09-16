@@ -4,6 +4,28 @@ Statistics on pharmacokinetic parameters: comparisons of two groups, geometric m
 
 ## Concepts
 
+Every analysis of this page starts at a `ParameterSample`, whether the numbers come from an analysis of the package or from a publication:
+
+```mermaid
+flowchart LR
+  NR["NCAResult"] -->|"sample(name, dim, **indexers)"| PS
+  FR["FitResult"] -->|"sample(name, dim, **indexers)"| PS
+  PUB["published numbers<br/>ParameterSample(mean=, sd=, n=)<br/>or (geomean=, geocv=, n=)"] --> PS
+  PS["ParameterSample<br/>values + labels + coords<br/>or summary moments"]
+  PS --> SUM["summarize -> Summary"]
+  PS --> CMP["compare -> TestResult<br/>t / Welch / rank / permutation"]
+  PS --> RAT["ratio -> RatioResult (GMR, CI)<br/>ratio_table"]
+  RAT --> DDI["ddi_classification -> DDIResult<br/>ddi_table"]
+  PS --> TOST["tost / bioequivalence -> BEResult"]
+  TOST --> DES{"Design detected"}
+  DES --> X1["2x2 crossover<br/>(period + sequence coordinates)"]
+  DES --> X2["paired (the same labels)"]
+  DES --> X3["parallel"]
+  PS --> ES["effect_size -> EffectSize"]
+  ES --> META["meta_analysis<br/>fixed_effect, random_effects,<br/>heterogeneity"]
+  CMP --> MC["multiple_comparison<br/>Holm / Bonferroni / BH"]
+```
+
 **Log-normal parameters.** Exposure, clearance, volume and half-life are positive and skewed: their logarithms are close to normal. The statistics therefore run on the log scale by default (`Scale.LOG`): differences of the logarithms are ratios of geometric means, intervals are symmetric on the log scale and asymmetric around the ratio, and the geometric mean and the geometric coefficient of variation \(\mathrm{CV}_g = \sqrt{e^{\sigma^2} - 1}\) describe a group. `Scale.LINEAR` compares arithmetic means, for parameters like \(t_\mathrm{max}\) or an effect which may be negative; `summarize` on `Scale.LINEAR` tolerates a non-positive value and reports `geomean`/`geocv` as `NaN` instead, while `Scale.LOG` raises on one.
 
 **Individual and summary data.** With the individual values of a group every test of scipy is available; a publication often gives only the mean, the standard deviation and the number of subjects. A summary sample is analysed with the Welch t test from its moments; on the log scale the moments of the logarithm follow from the log-normal relations \(\sigma^2 = \ln(1 + \mathrm{sd}^2/\mathrm{mean}^2)\) and \(\mu = \ln\mathrm{mean} - \sigma^2/2\), or directly from the geometric mean and CV when they are reported.
@@ -56,54 +78,94 @@ with \(\mathrm{var}(\hat F) = \mathrm{var}(\hat P) = \sigma_d^2 (1/n_A + 1/n_B)\
 
 The `effect` of `compare` is `a - b` on the linear scale and the ratio of the geometric means `a / b` on the log scale; `ratio`, `tost` and `ddi_classification` report test over reference and with over without the perpetrator. `p_value` of a `BEParameter` is the larger of the two one-sided p values, `bioequivalent` is `p_value < (1 - ci_level) / 2`, which is the interval within the limits.
 
-**Confidence levels and argument order.** `ci_level` is 0.95 everywhere except `ratio`, `tost` and `bioequivalence`, which default to 0.90, the regulatory interval of the two one-sided tests: the 90 % interval of the ratio is the interval the bioequivalence decision reads[^schuirmann]. Every function takes `ci_level` as a keyword, so a comparison at another level is one argument away. The samples of a comparison are given test (or treatment) first: `compare(a, b)`, `ratio(test, reference)`, `tost(test, reference)`, `bioequivalence(test, reference)`; the meta-analysis reverses it, `effect_size(control, treatment)` and `Study(label, control, treatment)`, the convention of its own literature[^hedges].
+**Confidence levels and argument order.** `ci_level` is 0.95 everywhere except `ratio`, `tost`, `bioequivalence` and `ddi_table`, which default to 0.90, the regulatory interval of the two one-sided tests: the 90 % interval of the ratio is the interval the bioequivalence decision reads[^schuirmann]. Every function takes `ci_level` as a keyword, so a comparison at another level is one argument away. The samples of a comparison are given test (or treatment) first: `compare(a, b)`, `ratio(test, reference)`, `tost(test, reference)`, `bioequivalence(test, reference)`; the meta-analysis reverses it, `effect_size(control, treatment)` and `Study(label, control, treatment)`, the convention of its own literature[^hedges].
 
 ## API
 
-A sample from a result or from numbers:
+A sample comes from a result with `sample(name, dim, **indexers)` or from the numbers of a publication; `summarize` describes it, `compare` tests two of them against each other and `ratio` reports the geometric mean ratio with its 90 % interval:
 
 ```python
-from pkpdutils import ParameterSample
+import numpy as np
+
+from pkpdutils import ParameterSample, Route, Timecourses, compare, nca, ratio
 from pkpdutils.stats import Scale, summarize
 
-auc = result.sample(
-    "auc_inf_obs", "individual"
-)  # individual values with labels and coordinates
-published = ParameterSample(
-    mean=45.2, sd=12.1, n=12, name="cl", unit="l/hr"
-)  # summary data
-geometric = ParameterSample(geomean=42.0, geocv=0.28, n=12)
-summarize(auc)  # geometric mean with its interval, quantiles, CV
-summarize(auc, scale=Scale.LINEAR).ci_low
+# two parallel groups of eight subjects, smokers clear the drug 40 % faster
+time = np.array([0.5, 1, 2, 4, 8, 12, 24])
+rng = np.random.default_rng(5)
+
+
+def group(ke: float, label: str) -> Timecourses:
+    values = np.stack(
+        [
+            2.5
+            * np.exp(-ke * rng.lognormal(0, 0.2) * time)
+            * rng.lognormal(0, 0.05, time.size)
+            for _ in range(8)
+        ]
+    )
+    return Timecourses.from_arrays(
+        time,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": [f"{label}{i}" for i in range(8)]},
+        dose={"amount": np.full(8, 100.0), "unit": "mg"},
+        route=Route.IV_BOLUS,
+        substance="drug",
+    )
+
+
+smokers = nca(group(0.28, "sm")).sample("cl", "individual")
+non_smokers = nca(group(0.20, "ns")).sample("cl", "individual")
+
+s = summarize(smokers)  # geometric mean with its interval, quantiles, CV
+print(f"n={s.n} geomean={s.geomean:.4g} geocv={s.geocv:.3g}")
+print(f"ci=[{s.ci_low:.4g}, {s.ci_high:.4g}] {s.unit}")
+print(f"arithmetic mean {summarize(smokers, scale=Scale.LINEAR).mean:.4g}")
+
+test = compare(smokers, non_smokers)  # Welch t on the log scale
+print(test.test, round(test.p_value, 5), round(test.effect, 3), round(test.hedges_g, 2))
+r = ratio(smokers, non_smokers)  # the same effect as a ratio with a 90 % interval
+print(round(r.gmr, 3), round(r.ci_low, 3), round(r.ci_high, 3), r.paired)
+
+published = ParameterSample(mean=45.2, sd=12.1, n=12, name="cl", unit="l/hr")
+print(f"{compare(smokers, published).p_value:.3g}")  # Welch t from mean, sd, n
 ```
 
-Compare two groups:
+```text
+n=8 geomean=12.02 geocv=0.14
+ci=[10.69, 13.5] liter / hour
+arithmetic mean 12.12
+welch_t 0.00115 1.403 1.96
+1.403 1.214 1.621 False
+5.08e-11
+```
+
+The effect of a comparison on the log scale is the ratio of the geometric means, so `compare` and `ratio` report the same 1.403 with different intervals: the 95 % interval of the test and the 90 % interval of the ratio.
+
+The other tests, the pairing and the correction for multiple comparisons, with the samples of the snippet above and `before`/`after` two samples of the same subjects:
 
 ```python
-from pkpdutils import compare
+# not executed
 from pkpdutils.stats import Alternative, TestMethod, multiple_comparison
 
-smokers = result.sample(
-    "cl", "individual", group="smokers"
-)  # "group" is another sample dimension of result
-non_smokers = result.sample("cl", "individual", group="non-smokers")
-test = compare(
-    smokers, non_smokers
-)  # Welch t on the log scale, effect = ratio of geometric means
-test.p_value, test.effect, (test.ci_low, test.ci_high), test.hedges_g
 compare(smokers, non_smokers, test=TestMethod.MANN_WHITNEY)
 compare(before, after, paired=True, alternative=Alternative.LESS)
-compare(published_a, published_b)  # Welch t from mean, sd, n
+tests = [compare(smokers, non_smokers), compare(before, after, paired=True)]
 multiple_comparison([t.p_value for t in tests])  # Holm
 ```
 
-Ratios and bioequivalence:
+Ratios and bioequivalence, with `test_result` and `reference_result` two `NCAResult` objects of the same subjects (the walk-through of a 2x2 crossover is in [Workflows](workflows.md)):
 
 ```python
+# not executed
 from pkpdutils import bioequivalence, ratio
 
 r = ratio(
-    test_auc, reference_auc
+    test_result.sample("auc_inf_obs", "individual"),
+    reference_result.sample("auc_inf_obs", "individual"),
 )  # paired by label when both carry the same subjects, 90 % interval
 be = bioequivalence(test_result, reference_result, parameters=["auc_inf_obs", "cmax"])
 be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
@@ -112,6 +174,7 @@ be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
 `ratio_table` formats the ratios of a study the way a paper prints them: one row per parameter with the point estimate and its interval in percent of the reference, the numbers rounded to `digits` significant digits as strings. It takes a mapping of `RatioResult` objects or the result of `bioequivalence`, which adds the within-subject coefficient of variation, the acceptance limits and the verdict.
 
 ```python
+# not executed
 from pkpdutils.stats import ratio_table
 
 # parameter, unit, n_test, n_reference, gmr, ci_low, ci_high, ci_level and,
@@ -120,20 +183,38 @@ ratio_table(be)
 ratio_table({"auc_inf_obs": r}, percent=False, digits=4)  # plain ratios
 ```
 
+`ratio_table(be)` of the crossover of [Workflows](workflows.md):
+
 | parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 12 | 12 | 95.6 % | 88.6 % | 103 % | 90 % | 10.3 % | 80.0 - 125.0 % | True |
+| auc_inf_obs | hour * milligram / liter | 12 | 12 | 93.2 % | 92.2 % | 94.2 % | 90 % | 1.46 % | 80.0 - 125.0 % | True |
+| auc_last | hour * milligram / liter | 12 | 12 | 93.0 % | 91.9 % | 94.1 % | 90 % | 1.62 % | 80.0 - 125.0 % | True |
+| cmax | milligram / liter | 12 | 12 | 81.9 % | 79.3 % | 84.6 % | 90 % | 4.39 % | 80.0 - 125.0 % | False |
+
+The ratios of a 2x2 crossover against the acceptance limits and the individual values behind them (`examples/bioequivalence.py`):
+
+![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
+
+![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.png)
 
 A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequence` along the individual dimension of both batches; they are given to `Timecourses.from_arrays` as `coords={"individual": ids, "period": ("individual", periods), "sequence": ("individual", sequences)}` and travel through the NCA to the result. Without them two results with the same individuals are paired, otherwise the groups are parallel; `design=Design.PARALLEL` overrides the detection.
 
 Drug-drug interactions:
 
 ```python
+# not executed
 from pkpdutils import ddi_classification
 from pkpdutils.stats import DDIThresholds, substrate_sensitivity
 
+# `inhibited` and `control`: the NCAResult of the two arms of the study
 ddi = ddi_classification(
-    ratio(inhibited_auc, control_auc), cmax_ratio=ratio(inhibited_cmax, control_cmax)
+    ratio(
+        inhibited.sample("auc_inf_obs", "individual"),
+        control.sample("auc_inf_obs", "individual"),
+    ),
+    cmax_ratio=ratio(
+        inhibited.sample("cmax", "individual"), control.sample("cmax", "individual")
+    ),
 )
 ddi.kind, ddi.strength, ddi.uncertain
 ddi_classification(3.2, ci=(2.4, 4.3), thresholds=DDIThresholds.ema())
@@ -143,20 +224,28 @@ substrate_sensitivity(6.1)
 `ddi_table` does the same over several parameters of two results: it takes every parameter from both, forms the ratio with and without the perpetrator and classifies it, so that the exposure and the maximum are read next to each other. The classes are defined for the \(\mathrm{AUC}\) and are applied to every parameter of the table.
 
 ```python
+# not executed
 from pkpdutils.stats import ddi_table
 
-ddi_table(with_inhibitor, without_inhibitor, ["auc_inf_obs", "cmax"], dim="individual")
+# the `inhibited` and `control` results of the snippet above
+ddi_table(inhibited, control, ["auc_inf_obs", "cmax"], dim="individual")
 ```
+
+The interaction study of [Workflows](workflows.md), an inhibitor which lowers the elimination of the substrate to 35 %:
 
 | parameter | unit | n_test | n_reference | ratio | ci_low | ci_high | kind | strength | uncertain | source |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 12 | 12 | 2.62 | 2.33 | 2.94 | inhibitor | moderate | False | FDA 2020 |
-| cmax | milligram / liter | 12 | 12 | 1.40 | 1.28 | 1.53 | inhibitor | weak | False | FDA 2020 |
+| auc_inf_obs | hour * milligram / liter | 10 | 10 | 2.88 | 2.46 | 3.36 | inhibitor | moderate | False | FDA 2020 |
+| cmax | milligram / liter | 10 | 10 | 1.07 | 0.904 | 1.26 | none | none | True | FDA 2020 |
+
+![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
 
 Meta-analysis:
 
 ```python
-from pkpdutils import meta_analysis
+import numpy as np
+
+from pkpdutils import ParameterSample, meta_analysis
 from pkpdutils.stats import EffectKind, Study, effects_from_arrays, random_effects
 
 studies = [
@@ -164,14 +253,54 @@ studies = [
         "Smith 1990",
         control=ParameterSample(mean=1.2, sd=0.4, n=10),
         treatment=ParameterSample(mean=2.0, sd=0.6, n=10),
-    )
+    ),
+    Study(
+        "Jones 1998",
+        control=ParameterSample(mean=1.4, sd=0.5, n=24),
+        treatment=ParameterSample(mean=2.1, sd=0.7, n=22),
+    ),
+    Study(
+        "Meyer 2004",
+        control=ParameterSample(mean=1.1, sd=0.3, n=16),
+        treatment=ParameterSample(mean=2.4, sd=0.8, n=16),
+    ),
 ]
 meta = meta_analysis(studies, EffectKind.LOG_RATIO)
-meta.random.estimate, meta.heterogeneity.i2, meta.to_dataframe()
-random_effects(
-    effects_from_arrays(log_ratios, variances, labels=labels, kind=EffectKind.LOG_RATIO)
-)  # effects computed elsewhere
+print(
+    f"random effect {meta.random.estimate:.3f} "
+    f"[{meta.random.ci_low:.3f}, {meta.random.ci_high:.3f}]"
+)
+print(
+    f"fixed effect  {meta.fixed.estimate:.3f}, "
+    f"tau2 {meta.heterogeneity.tau2:.4f}, I2 {meta.heterogeneity.i2:.1f} %"
+)
+print(meta.to_dataframe().round(4).to_string(index=False))
+
+# effects computed elsewhere
+pooled = random_effects(
+    effects_from_arrays(
+        np.array([0.51, 0.41, 0.78]),
+        np.array([0.02, 0.01, 0.03]),
+        labels=["Smith 1990", "Jones 1998", "Meyer 2004"],
+        kind=EffectKind.LOG_RATIO,
+    )
+)
+print(f"{pooled.estimate:.3f}, p = {pooled.p_value:.2e}")
 ```
+
+```text
+random effect 0.566 [0.345, 0.788]
+fixed effect  0.565, tau2 0.0255, I2 66.8 %
+     label  estimate     se  ci_low  ci_high  n_control  n_treatment  weight_fixed  weight_random
+Smith 1990    0.5204 0.1384  0.2492   0.7917         10           10        0.2134         0.2869
+Jones 1998    0.4128 0.0990  0.2189   0.6067         24           22        0.4174         0.3629
+Meyer 2004    0.7634 0.1052  0.5571   0.9696         16           16        0.3692         0.3502
+0.530, p = 1.83e-07
+```
+
+The three studies agree on the direction and disagree on the size, which is what \(I^2 = 66.8\) % says: the random effects interval is wider than the fixed effect one would be, and the weights of the three studies are more even under it.
+
+![The forest plot of five studies with the fixed and the random effect as diamonds](images/meta_analysis.png)
 
 `effects_from_arrays` defaults to `EffectKind.HEDGES_G` like `effect_size` and `meta_analysis`, so the kind of an effect computed elsewhere is given explicitly. Every scalar result carries `to_dict` (`Summary`, `TestResult`, `RatioResult`, `BEParameter`, `BEResult`, `EffectSize`, `PooledEffect`, `Heterogeneity`, `Study`, `MetaResult`, `DDIResult`) and every collection a `to_dataframe` (`BEResult`, `MetaResult`).
 

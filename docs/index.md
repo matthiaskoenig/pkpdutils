@@ -5,7 +5,7 @@
 
 ## Background
 
-A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug–drug interactions and meta-analysis.
+A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug-drug interactions and meta-analysis.
 
 All data structures are [xarray](https://xarray.dev) datasets with [pint](https://pint.readthedocs.io) units, so many timecourses, e.g. all individuals of a study or all runs of a simulation scan, are analysed in one vectorized call.
 
@@ -25,22 +25,39 @@ The methods behind the package are cited in [References](references.md).
 
 ## Quickstart
 
-```python
-from pkpdutils import Dose, Route, Timecourse, nca_single
+A study of twelve subjects in three dose groups, from the event table it arrives in to the parameter table and the figure of the report. The table is [study.csv](data/study.csv), which the first walk-through of [Workflows](workflows.md) builds:
 
-tc = Timecourse(
-    time=[0.5, 1, 2, 4, 8, 12, 24],
-    value=[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.03],
+```python
+import pandas as pd
+
+from pkpdutils import Route, Timecourses, nca, summary_table
+from pkpdutils.plot import plot_mean_timecourse
+
+# [study.csv](data/study.csv): ID, TIME, DV, AMT, EVID and the dose group
+events = pd.read_csv("study.csv")
+batch = Timecourses.from_events(
+    events,
     time_unit="hr",
     unit="mg/l",
-    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
-    substance="caffeine",
+    dose_unit="mg",
+    route=Route.ORAL,
+    covariates=["dose"],
 )
-result = nca_single(tc)
-print(result.to_dataframe().T)
+result = nca(batch)
+print(
+    summary_table(
+        result,
+        "individual",
+        by="dose",
+        parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
+    ).to_string(index=False)
+)
+plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
 ```
 
-Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md).
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
+
+The same steps with the table built in place, the parameters printed and four more walk-throughs (bioequivalence, drug-drug interaction, steady state, dose proportionality) are in [Workflows](workflows.md). Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md), or browse the [Gallery](gallery.md), a figure and a snippet for every example of the repository.
 
 ## How to cite
 

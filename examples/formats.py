@@ -12,9 +12,8 @@ Writes `events.csv` and `formats.png` into the working directory.
 import numpy as np
 import pandas as pd
 
-from pkpdutils import Dose, Dosing, NCAOptions, Route, Timecourses, nca
+from pkpdutils import AUCMethod, Dose, Dosing, NCAOptions, Route, Timecourses, nca
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod
 from pkpdutils.plot import plot_intervals
 
 #: a small CDISC ADaM ADNCA (ADPC) extract: one row per concentration record,

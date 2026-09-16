@@ -903,7 +903,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         # the delta method reports the rows whose terminal window moved
         flags = flags | uncertainty.pop("flags").astype(flags.dtype)
         values.update(uncertainty)
-    n_subjects = timecourses.n
+    n_subjects = timecourses.n_subjects
     values["n"] = (
         np.full(n_rows, np.nan)
         if n_subjects is None

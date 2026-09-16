@@ -12,14 +12,16 @@ from matplotlib.lines import Line2D
 
 from pkpdutils.plot._common import (
     axes_of,
+    axis_label,
     dose_markers,
     figure_of,
-    format_value,
     group_colors,
     group_order,
     log_scale,
     sample_colors,
     sample_labels,
+    unit_label,
+    value_with_unit,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import Timecourse, Timecourses
@@ -59,6 +61,10 @@ def _draw_curve(
 ) -> None:
     """One curve with optional error bars.
 
+    A curve of more than `style.marker_max_points` points is drawn as a line
+    without markers: a simulated or densely sampled curve otherwise becomes a
+    solid band of markers which hides its shape.
+
     Args:
         ax: axes to draw on
         tc: the curve
@@ -68,13 +74,14 @@ def _draw_curve(
         style: colors and markers
         alpha: transparency of the line and the markers
     """
+    marker = style.data_marker if tc.time.size <= style.marker_max_points else "none"
     err = tc.se if tc.se is not None else tc.sd
     if errorbars and err is not None:
         ax.errorbar(
             tc.time,
             tc.value,
             yerr=err,
-            marker=style.data_marker,
+            marker=marker,
             linestyle="-",
             color=color,
             label=label,
@@ -87,7 +94,7 @@ def _draw_curve(
         ax.plot(
             tc.time,
             tc.value,
-            marker=style.data_marker,
+            marker=marker,
             linestyle="-",
             color=color,
             label=label,
@@ -143,6 +150,50 @@ def _group_handles(color_of: Mapping[str, Any], style: PlotStyle) -> list[Artist
         )
         for label, color in color_of.items()
     ]
+
+
+def _group_legend_title(batch: Timecourses, by: str | None) -> str | None:
+    """The title of the legend of a grouped figure, `dose [mg]`.
+
+    The unit of the grouping coordinate is written once into the title of the
+    legend, rather than into every entry of it. A coordinate whose values are
+    labels (`dose` as `"low"` and `"high"`) carries no unit.
+
+    Args:
+        batch: the batch the coordinate belongs to.
+        by: name of the grouping coordinate, `None` for no legend title.
+
+    Returns:
+        The name of the coordinate with its unit, `None` without `by`.
+    """
+    if by is None:
+        return None
+    unit = ""
+    if by in batch.ds.coords:
+        numeric = np.issubdtype(batch.ds[by].dtype, np.number)
+        unit = (
+            str(batch.ds[by].attrs.get("units", ""))
+            or (batch.dose_unit if by == "dose" and numeric else "")
+            or ""
+        )
+    return axis_label(by, unit_label(unit) if unit else "")
+
+
+def _facet_value(batch: Timecourses, facet: str, value: Any) -> str:
+    """The value of a facet coordinate for the title of its panel, with its unit.
+
+    Args:
+        batch: the batch the coordinate belongs to.
+        facet: name of the coordinate the panels come from.
+        value: the value of the panel.
+
+    Returns:
+        The value, followed by the unit of the coordinate when the value is a
+        number and the coordinate has one (the dose unit of the batch for
+        `dose`); a label (`"low"`) is written as it is.
+    """
+    units = {"dose": batch.dose_unit} if "dose" in batch.ds.coords else {}
+    return value_with_unit(batch.ds, facet, value, units=units)
 
 
 def plot_timecourse(
@@ -238,7 +289,13 @@ def plot_timecourse(
             style=style,
             drawn=set(),
         )
-        _finish_panel(panel, first, log_y=log_y, max_legend=max_legend, legend_title=by)
+        _finish_panel(
+            panel,
+            first,
+            log_y=log_y,
+            max_legend=max_legend,
+            legend_title=_group_legend_title(batch, by),
+        )
         return fig
 
     panels = list(batch.groupby(facet))
@@ -259,13 +316,13 @@ def plot_timecourse(
             style=style,
             drawn=drawn,
         )
-        panel.set_title(f"{facet} = {format_value(value)}")
+        panel.set_title(f"{facet} = {_facet_value(batch, facet, value)}")
         _finish_panel(
             panel,
             first,
             log_y=log_y,
             max_legend=max_legend if k == 0 else 0,
-            legend_title=by,
+            legend_title=_group_legend_title(batch, by),
             handles=handles,
         )
     return fig
@@ -452,7 +509,11 @@ def plot_mean_timecourse(
         # the number of curves the group was reduced from, which is what the
         # `n` of a study figure means; a time point some of them are missing
         # from carries fewer, in the `n` of the mean curve
-        name_of = "mean" if value is None else format_value(value)
+        # a group is named by its coordinate value with the unit of that
+        # coordinate (`50 mg`), as the panel titles of `plot_nca_grid` are
+        name_of = (
+            "mean" if value is None or by is None else _facet_value(batch, by, value)
+        )
         reduced.append(
             _Group(
                 label=f"{name_of} (n = {group.n_samples})",

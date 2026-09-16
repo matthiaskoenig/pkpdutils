@@ -177,6 +177,27 @@ def test_plot_fit_labels_the_axes_from_the_names_of_the_front_end() -> None:
     matplotlib.pyplot.close(fig)
 
 
+def test_plot_fit_labels_the_axes_with_the_names_given_to_fit() -> None:
+    rng = np.random.default_rng(1)
+    y = 10 * np.exp(-0.2 * T) * rng.lognormal(0, 0.05, T.size)
+    result = fit(
+        MonoExp(),
+        T,
+        y,
+        x_unit="hr",
+        y_unit="mg/l",
+        x_name="concentration",
+        y_name="effect",
+        options=FitOptions(n_starts=2, seed=0),
+    )
+    assert result.ds.attrs["x_name"] == "concentration"
+    assert result.ds.attrs["y_name"] == "effect"
+    fig = plot_fit(result)
+    assert fig.axes[0].get_ylabel() == "effect [mg/l]"
+    assert fig.axes[1].get_xlabel() == "concentration [hr]"
+    matplotlib.pyplot.close(fig)
+
+
 def test_plot_fit_falls_back_to_x_and_y_without_the_names() -> None:
     result = monoexp_result()
     assert "x_name" not in result.ds.attrs
