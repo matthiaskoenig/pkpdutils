@@ -1560,3 +1560,73 @@ def test_select_a_dimension_without_labels_by_position() -> None:
     np.testing.assert_allclose(tcs.select(individual=[0, 2]).values, V[[0, 2]])
     # without labels a slice is the python slice, its stop is exclusive
     np.testing.assert_allclose(tcs.select(individual=slice(0, 2)).values, V[:2])
+
+
+def curves_with_limits() -> list[Timecourse]:
+    return [
+        Timecourse(
+            time=T,
+            value=V[i],
+            time_unit="hr",
+            unit="mg/l",
+            label=label,
+            lloq=limit,
+            substance="caffeine",
+        )
+        for i, (label, limit) in enumerate((("a", 0.1), ("b", 0.2), ("c", 0.1)))
+    ]
+
+
+def limits_of(batch: Timecourses) -> list[float]:
+    limits = batch.lloq
+    assert limits is not None
+    return [float(v) for v in limits]
+
+
+def test_lloq_travels_into_the_batch_and_back() -> None:
+    batch = Timecourses.from_timecourses(curves_with_limits(), dim="individual")
+    assert limits_of(batch) == [0.1, 0.2, 0.1]
+    assert batch.sel(individual="b").lloq == 0.2
+    assert [tc.lloq for tc in batch] == [0.1, 0.2, 0.1]
+    # the batch of curves without a limit carries none
+    plain = Timecourses.from_timecourses(
+        [tc.model_copy(update={"lloq": None}) for tc in curves_with_limits()],
+        dim="individual",
+    )
+    assert plain.lloq is None
+    assert plain.sel(individual="a").lloq is None
+
+
+def test_lloq_of_a_single_curve_is_positive() -> None:
+    with pytest.raises(ValueError, match="greater than 0"):
+        Timecourse(time=T, value=V[0], time_unit="hr", unit="mg/l", lloq=0.0)
+
+
+def test_lloq_round_trips_through_a_data_frame() -> None:
+    batch = Timecourses.from_timecourses(curves_with_limits(), dim="individual")
+    df = batch.to_dataframe()
+    assert df["lloq"].tolist() == [0.1] * 4 + [0.2] * 4 + [0.1] * 4
+    back = Timecourses.from_dataframe(
+        df,
+        sample=["individual"],
+        time_unit="hr",
+        unit="mg/l",
+        lloq="lloq",
+        substance="caffeine",
+    )
+    assert limits_of(back) == [0.1, 0.2, 0.1]
+
+
+def test_lloq_must_be_constant_within_a_sample() -> None:
+    df = Timecourses.from_timecourses(
+        curves_with_limits(), dim="individual"
+    ).to_dataframe()
+    df.loc[0, "lloq"] = 0.5
+    with pytest.raises(ValueError, match="not constant"):
+        Timecourses.from_dataframe(
+            df,
+            sample=["individual"],
+            time_unit="hr",
+            unit="mg/l",
+            lloq="lloq",
+        )

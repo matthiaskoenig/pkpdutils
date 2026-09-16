@@ -39,7 +39,7 @@ flowchart LR
   TCS --> PLOT
 ```
 
-**Single curve.** A `Timecourse` holds the sampling times and the values with their units, an optional dose, and metadata (substance, label, tissue). It is a frozen [pydantic](https://docs.pydantic.dev) model: the arrays are converted to `float64`, sorted by time, and duplicate times or an unknown unit raise a `ValueError` when the object is created (a dimensionless value is spelled `unit="dimensionless"`, the empty string is not a unit). Missing values are `NaN` in `value`; every analysis drops them.
+**Single curve.** A `Timecourse` holds the sampling times and the values with their units, an optional dose, and metadata (substance, label, tissue, the limit of quantification `lloq` of its assay). It is a frozen [pydantic](https://docs.pydantic.dev) model: the arrays are converted to `float64`, sorted by time, and duplicate times or an unknown unit raise a `ValueError` when the object is created (a dimensionless value is spelled `unit="dimensionless"`, the empty string is not a unit). Missing values are `NaN` in `value`; every analysis drops them. `lloq` travels into a batch as the coordinate `lloq` along its sample dimension, where the readers of [Formats](formats.md) also write it, and the [non-compartmental analysis](nca.md) reads it per sample when its options name no limit of their own.
 
 **Group data.** Publications report the mean curve of a group with the standard deviation or the standard error and the number of subjects. A `Timecourse` carries these as `sd`, `se` and `n`; the missing one of `sd` and `se` is derived from the other with \(\mathrm{se} = \mathrm{sd}/\sqrt{n}\). The uncertainty analyses of the package propagate them to the parameters, see [Uncertainty](uncertainty.md).
 

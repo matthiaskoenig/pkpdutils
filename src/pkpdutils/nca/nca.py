@@ -29,13 +29,18 @@ from pkpdutils.nca.auc import (
     insert_point,
     interpolate_at,
     pack_valid,
+    segment_areas,
     take_rows,
     time_above_threshold,
 )
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_UNITS
 from pkpdutils.nca.options import (
+    C0_BACK_EXTRAPOLATION,
+    C0_FIRST_VALUE,
+    C0_NONE,
     AUCMethod,
-    BLQHandling,
+    BLQAction,
+    BLQRules,
     C0Method,
     Kind,
     NCAFlag,
@@ -43,7 +48,12 @@ from pkpdutils.nca.options import (
     TerminalMethod,
     UncertaintyMethod,
 )
-from pkpdutils.nca.result import NCAResult, parameter_unit
+from pkpdutils.nca.result import (
+    DOSE_COORDINATE,
+    DOSE_NORMALIZED_SUFFIX,
+    NCAResult,
+    parameter_unit,
+)
 from pkpdutils.nca.terminal import terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
 from pkpdutils.parallel import (
@@ -61,6 +71,10 @@ logger = logging.getLogger(__name__)
 #: below it the row is flagged `NCAFlag.SPAN_LOW`
 SPAN_MINIMUM: float = 2.0
 
+#: variables of a result which are integer codes and not measurements; a row
+#: group which does not report one of them carries its 0 (`merge_rows`)
+INTEGER_VARIABLES: frozenset[str] = frozenset({"flags", "c0_method"})
+
 #: unit expression per parameter, see `pkpdutils.nca.result.parameter_unit`
 PARAMETER_UNITS: dict[str, str] = {
     "cmax": "{unit}",
@@ -68,16 +82,23 @@ PARAMETER_UNITS: dict[str, str] = {
     "cmin": "{unit}",
     "tmin": "{time}",
     "clast": "{unit}",
+    "clast_pred": "{unit}",
     "tlast": "{time}",
+    "tlag": "{time}",
     "c0": "{unit}",
+    "c0_method": "dimensionless",
     "cmax_half": "{unit}",
     "tmax_half": "{time}",
     "auc_last": "({unit}) * ({time})",
+    "auc_all": "({unit}) * ({time})",
     "auc_partial": "({unit}) * ({time})",
     "auc_inf_obs": "({unit}) * ({time})",
     "auc_inf_pred": "({unit}) * ({time})",
     "auc_extrap_fraction": "dimensionless",
+    "auc_back_extrap_fraction": "dimensionless",
+    "aumc_back_extrap_fraction": "dimensionless",
     "aumc_last": "({unit}) * ({time}) ** 2",
+    "aumc_all": "({unit}) * ({time}) ** 2",
     "aumc_inf": "({unit}) * ({time}) ** 2",
     "mrt": "{time}",
     "lambda_z": "1 / ({time})",
@@ -97,6 +118,12 @@ PARAMETER_UNITS: dict[str, str] = {
     "vss": "({dose}) / ({unit})",
     "auc_inf_dn": "(({unit}) * ({time})) / ({dose})",
     "cmax_dn": "({unit}) / ({dose})",
+    "auc_last_dn": "(({unit}) * ({time})) / ({dose})",
+    "auc_all_dn": "(({unit}) * ({time})) / ({dose})",
+    "auc_tau_dn": "(({unit}) * ({time})) / ({dose})",
+    "cavg_dn": "({unit}) / ({dose})",
+    "cmax_ss_dn": "({unit}) / ({dose})",
+    "c0_dn": "({unit}) / ({dose})",
     "e0": "{unit}",
     "emax_obs": "{unit}",
     "temax": "{time}",
@@ -136,8 +163,9 @@ def unit_expression(name: str) -> str:
 
     Returns:
         The unit expression of `PARAMETER_UNITS`, the one of the parameter a
-        derived variable belongs to, or `"dimensionless"` for `n` and the
-        dimensionless derived variables.
+        derived variable belongs to, the expression of a parameter per dose for
+        a dose normalized variable `x_dn` (`NCAResult.dose_normalized`), or
+        `"dimensionless"` for `n` and the dimensionless derived variables.
 
     Raises:
         KeyError: if the name belongs to no known parameter.
@@ -146,6 +174,10 @@ def unit_expression(name: str) -> str:
         return PARAMETER_UNITS[name]
     if name == "n" or name.endswith(("_geocv", "_n")):
         return "dimensionless"
+    if name.endswith(DOSE_NORMALIZED_SUFFIX):
+        normalized = name[: -len(DOSE_NORMALIZED_SUFFIX)]
+        if normalized in PARAMETER_UNITS:
+            return f"({PARAMETER_UNITS[normalized]}) / ({{dose}})"
     base = base_name(name)
     if base is None or base not in PARAMETER_UNITS:
         raise KeyError(f"No unit expression for '{name}'")
@@ -183,7 +215,7 @@ def positive_dose(dose_amount: np.ndarray) -> np.ndarray:
 
 def bolus_c0(
     tp: np.ndarray, cp: np.ndarray, n_valid: np.ndarray, options: NCAOptions
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     r"""Concentration at time 0 of an intravenous bolus, per row.
 
     With `C0Method.LOG_BACK_EXTRAPOLATION` the first two samples are
@@ -191,8 +223,23 @@ def bolus_c0(
 
     $$C_0 = \exp\left(\ln C_1 - \frac{\ln C_2 - \ln C_1}{t_2 - t_1} t_1\right),$$
 
-    the estimate of Gabrielsson & Weiner (2016, ch. 2.8); the first sample is
-    used when the two samples do not decline or with `C0Method.FIRST_VALUE`.
+    the estimate of Gabrielsson & Weiner (2016, ch. 2.8). The back
+    extrapolation needs two samples which decline, so it is used when the row
+    carries two valid points, both values are positive, the second value is
+    below the first and the second time is after the first; in every other case
+    the first observed value is used, which is the documented fallback chain of
+    Phoenix WinNonlin ("if the regression yields a slope >= 0, or at least one
+    of the first two y-values is zero ... then the first observed y-value is
+    used"). `C0Method.FIRST_VALUE` always takes the first value and
+    `C0Method.NONE` estimates nothing: `c0` is `NaN`, no point is inserted and
+    the areas start at the first sample.
+
+    The inserted point never enters the terminal regression, which reads the
+    observed values, and the rule of a row is reported in `c0_method`
+    (`C0_NONE`, `C0_BACK_EXTRAPOLATION`, `C0_FIRST_VALUE`). For an
+    extravascular single dose the value at the dose time is 0 and for a steady
+    state interval the minimum observed value of the interval
+    (`pkpdutils.nca.intervals`), neither of them an estimate of `C0`.
 
     Args:
         tp: packed times `(N, n)`, relative to the dose
@@ -201,42 +248,164 @@ def bolus_c0(
         options: the options, `c0_method` is used
 
     Returns:
-        The estimate per row `(N,)`.
+        The estimate per row `(N,)` and the rule which produced it, one of
+        `C0_NONE`, `C0_BACK_EXTRAPOLATION` and `C0_FIRST_VALUE` per row.
     """
+    n_rows = tp.shape[0]
+    if options.c0_method is C0Method.NONE:
+        return np.full(n_rows, np.nan), np.full(n_rows, C0_NONE, dtype=np.int64)
     t1, c1 = tp[:, 0], cp[:, 0]
+    has_point = n_valid >= 1
+    first = np.where(has_point, c1, np.nan)
+    method = np.where(has_point, C0_FIRST_VALUE, C0_NONE).astype(np.int64)
+    if options.c0_method is not C0Method.LOG_BACK_EXTRAPOLATION:
+        return first, method
     t2 = np.where(n_valid > 1, tp[:, 1], np.nan)
     c2 = np.where(n_valid > 1, cp[:, 1], np.nan)
-    if options.c0_method is not C0Method.LOG_BACK_EXTRAPOLATION:
-        return c1
     with np.errstate(divide="ignore", invalid="ignore"):
         back = np.exp(np.log(c1) - (np.log(c2) - np.log(c1)) / (t2 - t1) * t1)
-        usable = (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)
-    return np.where(usable, back, c1)
+        usable = has_point & (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)
+    return (
+        np.where(usable, back, first),
+        np.where(usable, C0_BACK_EXTRAPOLATION, method).astype(np.int64),
+    )
 
 
-def _apply_lloq(c: np.ndarray, options: NCAOptions) -> tuple[np.ndarray, np.ndarray]:
-    """Remove values below the limit of quantification.
+def resolve_lloq(
+    options: NCAOptions, lloq: np.ndarray | None, n_rows: int
+) -> np.ndarray | None:
+    """The limit of quantification of every row.
 
     Args:
-        c: values `(N, n)`
-        options: the options, `lloq` and `blq` are used
+        options: the options, `lloq` is the limit of the whole analysis
+        lloq: the limit of every row `(N,)` (the per-sample `lloq` of the
+            batch), `None` without one
+        n_rows: number of rows `N`
 
     Returns:
-        The values and a boolean array of the rows with removed values.
+        One limit per row, `None` when neither the options nor the batch name
+        one. `NCAOptions.lloq` wins over the per-sample limit; a row whose
+        limit is `NaN` has none.
     """
-    if options.lloq is None:
-        return c, np.zeros(c.shape[0], dtype=bool)
+    if options.lloq is not None:
+        return np.full(n_rows, float(options.lloq))
+    if lloq is None:
+        return None
+    return np.asarray(lloq, dtype=np.float64).reshape(n_rows)
+
+
+def _imputed_value(
+    action: BLQAction | float, c: np.ndarray, limit: np.ndarray
+) -> np.ndarray:
+    """The value an action writes in place of a value below the limit.
+
+    Args:
+        action: the action of the position, neither `DROP` nor `KEEP`
+        c: values `(N, n)`, for the shape
+        limit: the limit of quantification per row `(N, 1)`
+
+    Returns:
+        The imputed values `(N, n)`.
+
+    Raises:
+        ValueError: for an action which imputes nothing.
+    """
+    if not isinstance(action, BLQAction):
+        return np.full(c.shape, float(action))
+    if action is BLQAction.ZERO:
+        return np.zeros(c.shape)
+    if action is BLQAction.LLOQ:
+        return np.broadcast_to(limit, c.shape)
+    if action is BLQAction.HALF_LLOQ:
+        return np.broadcast_to(0.5 * limit, c.shape)
+    raise ValueError(f"'{action}' imputes no value")
+
+
+def apply_blq(
+    c: np.ndarray, lloq: np.ndarray | None, rules: BLQRules
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Apply the rules for the values below the limit of quantification.
+
+    The rules are read by position (`first`, `middle`, `last`) or against the
+    maximum (`before_tmax`, `after_tmax`), see `BLQRules`; a position without a
+    rule drops its values. A row without a single measurable value is `first`
+    on the positional axis and `after_tmax` on the tmax axis.
+
+    Args:
+        c: values `(N, n)` in the time order of the curve
+        lloq: limit of quantification per row `(N,)`, `None` for no limit
+        rules: the rules
+
+    Returns:
+        The values, the rows in which a value was dropped or imputed
+        (`NCAFlag.BLQ_TRUNCATED`) and the mask of the values below the limit
+        which are still part of the curve, imputed or kept (`(N, n)`); the
+        terminal regression leaves those out unless
+        `BLQRules.terminal_regression`.
+    """
+    n_rows, n = c.shape
+    if lloq is None:
+        empty = np.zeros(c.shape, dtype=bool)
+        return c, np.zeros(n_rows, dtype=bool), empty
+    limit = np.asarray(lloq, dtype=np.float64).reshape(n_rows, 1)
     with np.errstate(invalid="ignore"):
-        below = c < options.lloq
-    truncated = below.any(axis=1)
-    if options.blq is BLQHandling.NAN:
-        return np.where(below, np.nan, c), truncated
-    kept = np.where(below, np.nan, c)
-    all_nan = np.isnan(kept).all(axis=1)
-    masked = np.where(np.isnan(kept), -np.inf, kept)
-    tmax_idx = np.where(all_nan, 0, masked.argmax(axis=1))
-    before = np.arange(c.shape[1])[None, :] < tmax_idx[:, None]
-    return np.where(below & before, 0.0, kept), truncated
+        below = np.isfinite(c) & np.isfinite(limit) & (c < limit)
+    measurable = np.isfinite(c) & ~below
+    any_measurable = measurable.any(axis=1)
+    idx = np.arange(n)[None, :]
+    groups: list[tuple[np.ndarray, BLQAction | float | None]]
+    if rules.by_tmax:
+        masked = np.where(measurable, c, -np.inf)
+        tmax_idx = np.where(any_measurable, masked.argmax(axis=1), 0)[:, None]
+        groups = [
+            (below & (idx < tmax_idx), rules.before_tmax),
+            (below & (idx >= tmax_idx), rules.after_tmax),
+        ]
+    else:
+        # a row without a measurable value has no first and no last one, so
+        # `first` covers all of it (`n` is beyond every column)
+        first_idx = np.where(any_measurable, measurable.argmax(axis=1), n)[:, None]
+        last_idx = np.where(
+            any_measurable, n - 1 - measurable[:, ::-1].argmax(axis=1), n
+        )[:, None]
+        groups = [
+            (below & (idx < first_idx), rules.first),
+            (below & (idx > first_idx) & (idx < last_idx), rules.middle),
+            (below & (idx > last_idx), rules.last),
+        ]
+    values = c
+    changed = np.zeros(c.shape, dtype=bool)
+    in_curve = np.zeros(c.shape, dtype=bool)
+    for mask, rule in groups:
+        action = BLQAction.DROP if rule is None else rule
+        if action is BLQAction.KEEP:
+            in_curve |= mask
+            continue
+        if action is BLQAction.DROP:
+            values = np.where(mask, np.nan, values)
+            changed |= mask
+            continue
+        values = np.where(mask, _imputed_value(action, c, limit), values)
+        changed |= mask
+        in_curve |= mask
+    return values, changed.any(axis=1), in_curve
+
+
+def packed_mask(t: np.ndarray, c: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """A mask of the original columns of a row in the layout of `pack_valid`.
+
+    Args:
+        t: times `(N, n)`, as they are packed
+        c: values `(N, n)`, as they are packed
+        mask: the mask over the original columns `(N, n)`
+
+    Returns:
+        The mask over the packed columns `(N, n)`; a column which is not a
+        valid point is `False`.
+    """
+    valid = np.isfinite(t) & np.isfinite(c)
+    order = np.argsort(~valid, axis=1, kind="stable")
+    return np.take_along_axis(mask & valid, order, axis=1)
 
 
 def _effect_parameters(
@@ -294,6 +463,50 @@ def _effect_parameters(
     return out
 
 
+def _lag_time(
+    tp: np.ndarray,
+    cp: np.ndarray,
+    in_row: np.ndarray,
+    route: Route | None,
+    blq: np.ndarray,
+) -> np.ndarray:
+    r"""Lag time of the absorption of an extravascular dose, per row.
+
+    $$t_\mathrm{lag} = t_{j-1}, \qquad j = \min\{\, i : t_i \ge 0,\ C_i > 0 \,\},$$
+
+    the time of the last sample before the first measurable value after the
+    dose (Gabrielsson & Weiner 2016, ch. 2.8; Phoenix WinNonlin, which computes
+    `Tlag` "only when the dosing type is extravascular"). The times are
+    relative to the dose, so only samples at or after it are candidates: a
+    pre-dose sample is not a lag of the absorption. `NaN` when the first sample
+    after the dose is already measurable, when no value is measurable, and for
+    every intravenous route, which has no absorption phase.
+
+    Args:
+        tp: packed times `(N, n)`, relative to the dose
+        cp: packed values `(N, n)`
+        in_row: which packed columns are points of the row `(N, n)`
+        route: route of the batch
+        blq: packed values below the limit of quantification which a BLQ rule
+            kept or imputed `(N, n)`; they are not measurable values
+
+    Returns:
+        The lag time per row `(N,)`.
+    """
+    n_rows, n = tp.shape
+    if route is not Route.ORAL:
+        return np.full(n_rows, np.nan)
+    with np.errstate(invalid="ignore"):
+        after_dose = in_row & (tp >= 0.0)
+        measurable = after_dose & (cp > 0) & ~blq
+    has_measurable = measurable.any(axis=1)
+    first = np.where(has_measurable, measurable.argmax(axis=1), 0)
+    # the sample before it, which must itself be a sample after the dose
+    previous = np.clip(first - 1, 0, n - 1)
+    has_lag = has_measurable & (first > 0) & take_rows(after_dose, previous)
+    return np.where(has_lag, take_rows(tp, previous), np.nan)
+
+
 def compute_parameters(
     t: np.ndarray,
     c: np.ndarray,
@@ -303,6 +516,7 @@ def compute_parameters(
     dose_duration: np.ndarray | None,
     route: Route | None,
     options: NCAOptions,
+    lloq: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Single dose parameters of every row of `(N, n)` time and value arrays.
 
@@ -317,6 +531,8 @@ def compute_parameters(
         dose_duration: infusion duration per row (`NaN` without infusion), `None` for none
         route: route of the batch, `None` without doses
         options: the options
+        lloq: limit of quantification per row `(N,)`, `None` for none;
+            `NCAOptions.lloq` wins over it (`resolve_lloq`)
 
     Returns:
         One `(N,)` array per parameter (see `PARAMETER_UNITS`) and `flags`.
@@ -328,10 +544,22 @@ def compute_parameters(
         # of the curve and only the dose-dependent parameters stay `NaN`
         shift = np.where(np.isfinite(dose_time), dose_time, 0.0)
         t = t - shift[:, None]
-    c, truncated = _apply_lloq(c, options)
+    rules = options.blq_rules
+    c, truncated, blq_in_curve = apply_blq(
+        c, resolve_lloq(options, lloq, t.shape[0]), rules
+    )
     if options.kind is Kind.EFFECT:
         return _effect_parameters(t, c, truncated, options)
 
+    # a value below the limit which is still part of the curve is no quantified
+    # value: it enters the areas, but it is neither the last measurable value
+    # nor a point of the terminal regression
+    blq_packed = (
+        packed_mask(t, c, blq_in_curve)
+        if blq_in_curve.any()
+        else np.zeros(c.shape, dtype=bool)
+    )
+    exclude = None if rules.terminal_regression else blq_packed
     tp, cp, n_valid = pack_valid(t, c)
     n_rows, n = tp.shape
     idx = np.arange(n)[None, :]
@@ -354,21 +582,30 @@ def compute_parameters(
     if route is Route.ORAL:
         flags |= np.where(has_data & (imax == 0), NCAFlag.NO_ABSORPTION, 0)
 
-    # last measurable point
+    # last measurable point: a value below the limit which a BLQ rule kept or
+    # imputed is positive but not measurable
     with np.errstate(invalid="ignore"):
-        positive = in_row & (cp > 0)
+        positive = in_row & (cp > 0) & ~blq_packed
     has_positive = positive.any(axis=1)
     ilast = np.where(has_positive, n - 1 - positive[:, ::-1].argmax(axis=1), 0)
     clast = np.where(has_data & has_positive, take_rows(cp, ilast), nan)
     tlast = np.where(has_data & has_positive, take_rows(tp, ilast), nan)
 
+    # the lag time of an extravascular dose: the last sample at or after the
+    # dose before the first measurable value
+    tlag = _lag_time(tp, cp, in_row, route, blq_packed)
+
     # C0 of an intravenous bolus, inserted at t = 0 for the areas
     c0 = nan.copy()
+    c0_method = np.full(n_rows, C0_NONE, dtype=np.int64)
+    insert = np.zeros(n_rows, dtype=bool)
     tp_area, cp_area, n_area = tp, cp, n_valid
     if route is Route.IV_BOLUS:
-        c0 = np.where(has_data, bolus_c0(tp, cp, n_valid, options), nan)
+        estimate, rule = bolus_c0(tp, cp, n_valid, options)
+        c0 = np.where(has_data, estimate, nan)
+        c0_method = np.where(has_data, rule, C0_NONE).astype(np.int64)
         with np.errstate(invalid="ignore"):
-            insert = has_data & (tp[:, 0] > 0)
+            insert = has_data & (tp[:, 0] > 0) & np.isfinite(c0)
         tp_area, cp_area, n_area = insert_point(
             tp, cp, n_valid, np.where(insert, 0.0, np.nan), np.where(insert, c0, np.nan)
         )
@@ -378,6 +615,12 @@ def compute_parameters(
     )
     auc_last = np.where(has_data & has_positive, auc_last, nan)
     aumc_last = np.where(has_data & has_positive, aumc_last, nan)
+
+    # to the last observation instead of the last positive one: the trailing
+    # zeros and the values a BLQ rule imputed are part of it
+    auc_all, aumc_all = auc_aumc(tp_area, cp_area, n_area, options.auc_method)
+    auc_all = np.where(has_data, auc_all, nan)
+    aumc_all = np.where(has_data, aumc_all, nan)
 
     # terminal phase
     manual_mask = None
@@ -389,7 +632,15 @@ def compute_parameters(
         valid = np.isfinite(t) & np.isfinite(c)
         order = np.argsort(~valid, axis=1, kind="stable")
         manual_mask = np.take_along_axis(original & valid, order, axis=1)
-    fit = terminal_fit(tp, cp, n_valid, imax, options.terminal, manual_mask=manual_mask)
+    fit = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        imax,
+        options.terminal,
+        manual_mask=manual_mask,
+        exclude=exclude,
+    )
     flags |= np.where(has_data, fit.flags, 0)
     with np.errstate(divide="ignore", invalid="ignore"):
         lambda_z = -fit.slope
@@ -424,12 +675,15 @@ def compute_parameters(
         "cmin": cmin,
         "tmin": tmin,
         "clast": clast,
+        "clast_pred": np.where(has_data, clast_pred, nan),
         "tlast": tlast,
         "auc_last": auc_last,
+        "auc_all": auc_all,
         "auc_inf_obs": auc_inf_obs,
         "auc_inf_pred": auc_inf_pred,
         "auc_extrap_fraction": extrap,
         "aumc_last": aumc_last,
+        "aumc_all": aumc_all,
         "aumc_inf": aumc_inf,
         "mrt": mrt,
         "lambda_z": lambda_z,
@@ -445,7 +699,19 @@ def compute_parameters(
     }
     if route is Route.IV_BOLUS:
         out["c0"] = c0
+        out["c0_method"] = c0_method
+        # the segment from the dose to the first sample: the share of the
+        # exposure which the estimate of C0 contributes rather than the data
+        area, moment = segment_areas(tp_area, cp_area, n_area, options.auc_method)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out["auc_back_extrap_fraction"] = np.where(
+                has_data, np.where(insert, area[:, 0], 0.0) / auc_inf_obs, nan
+            )
+            out["aumc_back_extrap_fraction"] = np.where(
+                has_data, np.where(insert, moment[:, 0], 0.0) / aumc_inf, nan
+            )
     if route is Route.ORAL:
+        out["tlag"] = tlag
         out["cmax_half"] = cmax_half
         out["tmax_half"] = tmax_half
     if dose_amount is not None and route is not None:
@@ -605,7 +871,8 @@ def merge_rows(
     """Stack the parameters of row groups which need not carry the same variables.
 
     A group which does not report a variable of another group is `NaN` in it
-    (0 in `flags`, an integer variable), so that the result of a batch is the
+    (0 in the integer variables `flags` and `c0_method`, whose 0 is "none" in
+    both cases), so that the result of a batch is the
     union of the variables of its groups: a single dose row of a mixed batch
     carries `NaN` in the steady state variables and a multiple dose row `NaN`
     in `cl`, `vz`, `vss`, `auc_inf_dn` and `cmax_dn`; `n_doses`, which
@@ -647,7 +914,7 @@ def merge_rows(
             shape = (n_rows, widths[name]) if widths[name] else (n_rows,)
             missing = (
                 np.zeros(shape, dtype=np.int64)
-                if name == "flags"
+                if name in INTEGER_VARIABLES
                 else np.full(shape, np.nan)
             )
             blocks.append(missing)
@@ -669,12 +936,13 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
 
     Args:
         args: the times, the values, the dose arrays over the dose dimension,
-            the route, the options and the mask of the multiple dose rows.
+            the route, the options, the mask of the multiple dose rows and the
+            limit of quantification per row.
 
     Returns:
         The parameters of the rows of the chunk, in their order.
     """
-    t, c, dose_amount, dose_time, dose_duration, route, options, multiple = args
+    t, c, dose_amount, dose_time, dose_duration, route, options, multiple, lloq = args
     if multiple.any() and not multiple.all():
         groups = [~multiple, multiple]
         order = np.concatenate([np.flatnonzero(mask) for mask in groups])
@@ -689,6 +957,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
                     route,
                     options,
                     multiple[mask],
+                    None if lloq is None else lloq[mask],
                 )
             )
             for mask in groups
@@ -711,6 +980,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
             dose_duration=dose_duration,
             route=route,
             options=options,
+            lloq=lloq,
         )
     amount, time, duration = reference_dose(
         dose_amount, dose_time, dose_duration, last=False
@@ -723,6 +993,7 @@ def _compute_chunk(args: tuple[Any, ...]) -> dict[str, np.ndarray]:
         dose_duration=duration,
         route=route,
         options=options,
+        lloq=lloq,
     )
 
 
@@ -735,6 +1006,7 @@ def run_rows(
     dose_duration: np.ndarray | None,
     route: Route | None,
     options: NCAOptions,
+    lloq: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
 
@@ -773,6 +1045,8 @@ def run_rows(
         dose_duration: infusion durations per row `(N, n_dose)`, `None` for none
         route: route of the batch
         options: the options
+        lloq: limit of quantification per row `(N,)`, `None` for none;
+            `NCAOptions.lloq` wins over it (`resolve_lloq`)
 
     Returns:
         One `(N,)` array per parameter and `flags`, and one `(N, K)` array per
@@ -797,6 +1071,7 @@ def run_rows(
             route,
             options,
             multiple[rows],
+            None if lloq is None else lloq[rows],
         )
         for rows in chunks
     ]
@@ -881,6 +1156,8 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     dose_time = flat(timecourses.dose_time)
     dose_duration = flat(timecourses.dose_duration)
     route = timecourses.route
+    batch_lloq = timecourses.lloq
+    lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
 
     values = run_rows(
         t,
@@ -890,6 +1167,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         dose_duration=dose_duration,
         route=route,
         options=options,
+        lloq=lloq,
     )
 
     # `flags` is the last variable of the result, the uncertainty variables and
@@ -918,11 +1196,58 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             n_flagged,
             n_rows,
         )
-    return _to_result(values, timecourses, shape)
+    return _to_result(
+        values,
+        timecourses,
+        shape,
+        dose=reference_dose_amount(
+            dose_amount, dose_time, dose_duration, options, n_rows=n_rows
+        ),
+    )
+
+
+def reference_dose_amount(
+    dose_amount: np.ndarray | None,
+    dose_time: np.ndarray | None,
+    dose_duration: np.ndarray | None,
+    options: NCAOptions,
+    *,
+    n_rows: int,
+) -> np.ndarray | None:
+    """The dose amount every row is analysed against.
+
+    The first dose of the protocol for a single dose row and the last one for a
+    multiple dose row (`is_multiple_dose`), the dose the parameters of the row
+    are divided by (`cl`, `cl_ss`, the dose normalized variables of
+    `pkpdutils.nca.result.NCAResult.dose_normalized`).
+
+    Args:
+        dose_amount: dose amounts `(N, n_dose)`, `None` without doses
+        dose_time: dose times `(N, n_dose)`, `None` without doses
+        dose_duration: infusion durations `(N, n_dose)`, `None` for none
+        options: the options, `tau` is used by `is_multiple_dose`
+
+    Keyword Args:
+        n_rows: number of rows `N`
+
+    Returns:
+        The amount per row `(N,)`, `None` for a batch without doses.
+    """
+    if dose_amount is None:
+        return None
+    multiple = is_multiple_dose(dose_amount, dose_time, options, n_rows=n_rows)
+    first, _, _ = reference_dose(dose_amount, dose_time, dose_duration, last=False)
+    last, _, _ = reference_dose(dose_amount, dose_time, dose_duration, last=True)
+    assert first is not None and last is not None
+    return np.where(multiple, last, first)
 
 
 def _to_result(
-    values: dict[str, np.ndarray], timecourses: Timecourses, shape: tuple[int, ...]
+    values: dict[str, np.ndarray],
+    timecourses: Timecourses,
+    shape: tuple[int, ...],
+    *,
+    dose: np.ndarray | None = None,
 ) -> NCAResult:
     """Build the result dataset over the sample dimensions of the batch.
 
@@ -935,6 +1260,12 @@ def _to_result(
         timecourses: the analysed batch
         shape: the sample shape the arrays are reshaped to
 
+    Keyword Args:
+        dose: the dose amount of every row `(N,)`, which travels into the
+            result as the coordinate `dose_amount` so that a parameter can be
+            normalized by it afterwards (`NCAResult.dose_normalized`); `None`
+            for a batch without doses
+
     Returns:
         The result.
 
@@ -943,6 +1274,12 @@ def _to_result(
             a data variable of the result (`check_coordinate_collision`).
     """
     coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
+    if dose is not None and DOSE_COORDINATE not in coords:
+        coords[DOSE_COORDINATE] = xr.DataArray(
+            np.asarray(dose, dtype=np.float64).reshape(shape),
+            dims=timecourses.sample_dims,
+            attrs={"units": timecourses.dose_unit},
+        )
     data_vars: dict[str, Any] = {}
     n_intervals = 0
     for name, array in values.items():
@@ -960,7 +1297,7 @@ def _to_result(
                 (array * factor).reshape((*shape, n_intervals)),
                 {"units": unit},
             )
-        elif name == "flags":
+        elif name in INTEGER_VARIABLES:
             data_vars[name] = (
                 timecourses.sample_dims,
                 array.reshape(shape).astype(np.int64),
@@ -1035,7 +1372,7 @@ def _insert_dose_value(
     with np.errstate(invalid="ignore"):
         insert = (n_valid >= 1) & (tp[:, 0] > 0)
     value = (
-        bolus_c0(tp, cp, n_valid, options)
+        bolus_c0(tp, cp, n_valid, options)[0]
         if route is Route.IV_BOLUS
         else np.zeros(tp.shape[0])
     )
@@ -1043,7 +1380,7 @@ def _insert_dose_value(
         tp,
         cp,
         n_valid,
-        np.where(insert, 0.0, np.nan),
+        np.where(insert & np.isfinite(value), 0.0, np.nan),
         np.where(insert, value, np.nan),
     )
 

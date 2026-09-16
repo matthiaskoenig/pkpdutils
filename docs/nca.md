@@ -6,7 +6,9 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Exposure.** The area under the concentration–time curve, \(\mathrm{AUC}\), is proportional to the amount of drug that reached the systemic circulation [^fda_bioavailability]. \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) is measured up to the last quantifiable concentration \(C_\mathrm{last}\); \(\mathrm{AUC}_{0\text{-}\infty}\) adds the tail after \(t_\mathrm{last}\), predicted from the terminal phase. The fraction of \(\mathrm{AUC}_{0\text{-}\infty}\) that is extrapolated tells how much of the exposure was not observed; above 20 % the estimate is considered unreliable (flag `EXTRAPOLATION_HIGH`).
 
-**Peak.** \(C_\mathrm{max}\) and \(t_\mathrm{max}\) are read from the observed points. After an extravascular dose they reflect the balance of absorption and elimination; after an intravenous bolus the concentration at time zero, \(C_0\), is not observed and is back-extrapolated from the first two points.
+**Peak.** \(C_\mathrm{max}\) and \(t_\mathrm{max}\) are read from the observed points. After an extravascular dose they reflect the balance of absorption and elimination, and the time of the last sample before the first measurable value is the lag of the absorption, \(t_\mathrm{lag}\); after an intravenous bolus the concentration at time zero, \(C_0\), is not observed and is back-extrapolated from the first two points.
+
+**The \(C_0\) of a bolus.** The back extrapolation needs two samples which decline, so `C0Method.LOG_BACK_EXTRAPOLATION` (the default) falls back to the first observed value when the row has fewer than two points, when one of the two values is not positive, when the second value is not below the first or when the second time is not after the first, the fallback chain of Phoenix WinNonlin[^phoenix]. `C0Method.FIRST_VALUE` always takes the first value and `C0Method.NONE` estimates nothing: \(C_0\) is `NaN`, no point is inserted at the dose and the areas start at the first sample. Which rule a sample took is the variable `c0_method` (0 none, 1 back extrapolation, 2 first value) and how much of the exposure the estimate contributes is `auc_back_extrap_fraction`, the area of the segment from the dose to the first sample over \(\mathrm{AUC}_{0\text{-}\infty}\) (`aumc_back_extrap_fraction` for the moment); both are 0 when the first sample is taken at the dose. The inserted point never enters the terminal regression. For an extravascular single dose the value at the dose time is 0 and for a steady state interval the minimum observed value of the interval, neither of them an estimate of \(C_0\).
 
 **Terminal phase.** When absorption and distribution are over, the concentration declines mono-exponentially, \(C(t) = C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}\). The terminal rate constant \(\lambda_z\) is the slope of \(\ln C\) against \(t\) over the terminal points; the half-life is \(t_{1/2} = \ln 2 / \lambda_z\). Which points belong to the terminal phase is a judgement: the default `BEST_FIT` rule takes the window with the largest adjusted \(R^2\) among all windows of at least three points that end at \(t_\mathrm{last}\) and start after \(t_\mathrm{max}\), preferring more points when the adjusted \(R^2\) is equal within a tolerance, as Phoenix does. `LAST_N`, `ALL_AFTER_TMAX` (the rule of pkdb_analysis 0.3.1) and `MANUAL` are the alternatives. `TerminalPhase.exclude_cmax` (default `True`) restricts every window to start after \(t_\mathrm{max}\); with `exclude_cmax=False` the window start is unrestricted and every window of at least `min_points` points ending at \(t_\mathrm{last}\) is a candidate, including windows that begin before or at the maximum, which is how a curve that only rises reports `POSITIVE_SLOPE` instead of `TOO_FEW_POINTS`. How far the window reaches is the quality criterion every regulatory review asks for: the span \(\mathrm{span} = (t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\) (`lambda_z_span`, from `lambda_z_t_first` and `lambda_z_t_last`) counts the half-lives the regression covers, and a span below 2 flags the row `SPAN_LOW`: the half-life of such a curve is extrapolated from less than one doubling of the elimination and carries little information.
 
@@ -22,13 +24,13 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Routes.** A batch has one route. `IV_BOLUS` reports \(C_0\), \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\); `IV_INFUSION` corrects the \(\mathrm{MRT}\) by half the duration; `ORAL` (any extravascular route) reports \(\mathrm{CL}/F\), \(V_z/F\) and the half maximum during absorption (`cmax_half`, `tmax_half`).
 
-**Missing values and the limit of quantification.** `NaN` values are dropped; values below `lloq` become `NaN` (or 0 before the maximum with `BLQHandling.ZERO_BEFORE_TMAX`), and the sample is flagged `BLQ_TRUNCATED`.
+**Missing values and the limit of quantification.** `NaN` values are dropped; a value below the limit of quantification is handled by the rule its position asks for (`BLQRules`, "BLQ rules" below), by default dropped as `BLQHandling.NAN` does, and the sample is flagged `BLQ_TRUNCATED` where a value was dropped or imputed. The limit is `NCAOptions.lloq`, or, when the options name none, the limit of the sample itself: the `lloq` of a `Timecourse` and the coordinate `lloq` of a batch, which the readers of [Formats](formats.md) fill from the data (ADNCA `ALLOQ`), so that a study with two assays or two analytes is analysed with a limit per subject.
 
 The whole analysis of a batch, from the values to the result, with the multiple dosing path on the right:
 
 ```mermaid
 flowchart TD
-  IN["Timecourses<br/>(N, n_time)"] --> BLQ["lloq / BLQ handling<br/>NaN, flag BLQ_TRUNCATED"]
+  IN["Timecourses<br/>(N, n_time)"] --> BLQ["lloq (options or per sample)<br/>BLQRules per position<br/>drop / keep / impute, flag BLQ_TRUNCATED"]
   BLQ --> MD{"more than one dose<br/>or NCAOptions.tau?"}
   MD -->|no| PACK
   MD -->|yes| REF["reference dose<br/>drop the points before the last dose,<br/>times relative to it"]
@@ -115,13 +117,18 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | --- | --- | --- | --- | --- |
 | `cmax`, `tmax` | \(C_\mathrm{max}\), \(t_\mathrm{max}\) | maximum observed value and its time | value, time | |
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum observed value and its time | value, time | |
-| `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last positive value and its time | value, time | |
+| `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | |
+| `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\), which `auc_inf_pred` extrapolates with | value | \(\lambda_z\) |
+| `tlag` | \(t_\mathrm{lag}\) | time of the last sample after the dose before the first measurable value | time | `ORAL` |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 | value | `IV_BOLUS` |
+| `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | `IV_BOLUS` |
 | `cmax_half`, `tmax_half` | | value closest to \(C_\mathrm{max}/2\) before the maximum and its time | value, time | `ORAL` |
-| `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area to the last positive value | value·time | |
+| `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area to the last measurable value | value·time | |
+| `auc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area to the last observation, the trailing zeros and the values a BLQ rule imputed included; equal to `auc_last` when the last observation is positive | value·time | |
 | `auc_inf_obs`, `auc_inf_pred` | \(\mathrm{AUC}_{0\text{-}\infty}\) | area extrapolated with the observed or predicted \(C_\mathrm{last}\) | value·time | \(\lambda_z\) |
 | `auc_extrap_fraction` | | \((\mathrm{AUC}_{0\text{-}\infty} - \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) / \mathrm{AUC}_{0\text{-}\infty}\) | – | \(\lambda_z\) |
-| `aumc_last`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve | value·time² | \(\lambda_z\) for `_inf` |
+| `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes, 0 with a sample at the dose | – | `IV_BOLUS` |
+| `aumc_last`, `aumc_all`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation and to infinity | value·time² | \(\lambda_z\) for `_inf` |
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
@@ -131,6 +138,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\), single dose analysis |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose, single dose analysis |
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose, single dose analysis |
+| `x_dn` | | any parameter per dose, from `NCAResult.dose_normalized` ("Dose normalization" below) | unit of `x`/dose | dose |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over the last complete dosing interval | value·time | protocol (≥ 2 doses) or `tau` |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, value at the end, average over the last interval | value | protocol (≥ 2 doses) or `tau` |
 | `fluctuation`, `swing`, `accumulation_ratio` | | see Math | – | protocol (≥ 2 doses) or `tau` |
@@ -269,6 +277,76 @@ print(
 
 ![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
 
+### BLQ rules
+
+A value below the lower limit of quantification is not a measurement: the assay only says that it is below the limit. Which number the analysis puts in its place decides how much of the tail of the curve is counted as exposure, and the tools slice the profile on two incompatible axes to decide it. `BLQRules` expresses both, one rule per position, each `BLQAction.DROP`, `KEEP`, `ZERO`, `LLOQ`, `HALF_LLOQ` or a number to impute:
+
+- by **position**: `first` (before the first measurable value), `middle` (between two measurable values), `last` (after the last measurable value), as PKNCA[^pknca] and Pumas do;
+- by the **maximum**: `before_tmax` and `after_tmax`, as PKanalix does.
+
+A rule set uses one axis or the other, never both, and a position without a rule drops its values. An imputed value enters the areas, so `auc_all` is where the imputation shows; a value which `KEEP` keeps is treated the same way. Neither is a quantified value, so neither becomes \(C_\mathrm{last}\) and neither enters the terminal regression unless `terminal_regression=True` asks for it, which is what ICH M13A[^ich_m13a] requires: values below the limit are "treated as zero in PK parameter calculations" and "omitted from the calculation of kel and t1/2". The presets are `BLQRules.ich_m13a()`, `BLQRules.pkanalix()` and `BLQRules.pumas()`; the two classic values `BLQHandling.NAN` (the default, everything dropped) and `BLQHandling.ZERO_BEFORE_TMAX` stay and are the rule sets `NCAOptions.blq_rules` spells out.
+
+```python
+import numpy as np
+
+from pkpdutils import BLQRules, Dose, NCAOptions, Route, Timecourse, nca_single
+
+# a curve whose last two samples are below the limit of quantification of 0.1
+blq_curve = Timecourse(
+    time=[0.0, 0.5, 1, 2, 4, 8, 12, 16],
+    value=[0.02, 2.0, 4.0, 3.0, 1.5, 0.75, 0.05, 0.03],
+    time_unit="hr",
+    unit="mg/l",
+    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+    substance="drug",
+    lloq=0.1,  # the limit of the curve, `NCAOptions.lloq` overrides it
+)
+for name, rules in (
+    ("drop (default)", None),
+    ("ich_m13a", BLQRules.ich_m13a()),
+    ("pkanalix", BLQRules.pkanalix()),
+    ("pumas", BLQRules.pumas()),
+):
+    options = NCAOptions() if rules is None else NCAOptions(blq=rules)
+    q = nca_single(blq_curve, options=options).to_quantities()
+    print(
+        f"{name:<14} tlast={q['tlast'].magnitude:5.1f} "
+        f"auc_last={q['auc_last'].magnitude:6.3f} "
+        f"auc_all={q['auc_all'].magnitude:6.3f} "
+        f"n_points={q['lambda_z_n_points'].magnitude:.0f}"
+    )
+```
+
+```text
+drop (default) tlast=  8.0 auc_last=13.632 auc_all=13.632 n_points=3
+ich_m13a       tlast=  8.0 auc_last=14.132 auc_all=15.632 n_points=3
+pkanalix       tlast=  8.0 auc_last=14.132 auc_all=15.366 n_points=3
+pumas          tlast=  8.0 auc_last=14.137 auc_all=15.328 n_points=3
+```
+
+The last measurable point is the same under every rule set, as is the terminal regression; what differs is the area, which grows with the imputed head and tail.
+
+### Dose normalization
+
+`NCAResult.dose_normalized()` returns a copy of the result with the dose normalized variable `x_dn` of every concentration and exposure parameter, \(x_\mathrm{dn} = x / D\) with the dose of the sample, the form ICH M13A[^ich_m13a] compares strengths with and the CDISC `*D` family; `dose_normalized(["cmax", "auc_last"])` normalizes the parameters given instead. The dose of every sample travels into the result as the coordinate `dose_amount`, so a summary of a sample dimension no longer carries it: normalize first, summarize afterwards. `auc_inf_dn` and `cmax_dn` are part of every single dose analysis anyway.
+
+```python
+normalized = result.dose_normalized()
+print(
+    normalized.to_dataframe()[["dose", "individual", "auc_last_dn", "cmax_dn"]]
+    .head(2)
+    .to_string(index=False)
+)
+print(normalized["auc_last_dn"].attrs["units"])
+```
+
+```text
+ dose individual  auc_last_dn  cmax_dn
+ 50.0         s1     0.107610 0.017814
+ 50.0         s2     0.082334 0.017492
+hour / liter
+```
+
 ### The parameter table of a publication
 
 `summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, `layout` transposes the table or unfolds it into one row per parameter, group and statistic, and `unit_style="short"` writes the units in the short symbols of pint (`mg/l` instead of `milligram / liter`). On the console, `pkpdutils.console.print_table(table, title=...)` renders the frame as a rich table, and `console.print(result)` renders a result itself (`NCAResult.rich_table(parameters=..., transpose=...)`): one row per variable with a column per sample for a handful of samples, one row per sample with the parameters in the header (`cmax [mg/l]`) for many, three significant digits, the flags by name.
@@ -406,3 +484,5 @@ Large batches are analysed in chunks of at most `NCAOptions(chunk_rows=5000)` ro
 [^yeh_kwan]: Yeh KC, Kwan KC. *J Pharmacokinet Biopharm.* 1978;6(1):79-98. See [References](references.md#non-compartmental-analysis).
 [^purves]: Purves RD. *J Pharmacokinet Biopharm.* 1992;20(3):211-226. See [References](references.md#non-compartmental-analysis).
 [^fda_poppk]: U.S. Food and Drug Administration. *Population Pharmacokinetics.* 2022. See [References](references.md#regulatory-guidance).
+[^ich_m13a]: International Council for Harmonisation. *ICH M13A: Bioequivalence for Immediate-Release Solid Oral Dosage Forms.* 2024. See [References](references.md#regulatory-guidance).
+[^pknca]: Denney W, Duvvuri S, Buckeridge C. Simple, automatic noncompartmental analysis: the PKNCA R package. *J Pharmacokinet Pharmacodyn.* 2015;42:S65. See [References](references.md#data-formats).

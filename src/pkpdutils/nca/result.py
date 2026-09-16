@@ -9,9 +9,12 @@ time_unit)` converted to `liter / hour` (or per kilogram), a volume converted
 to `liter` (or per kilogram), see `pkpdutils.units`.
 """
 
+from collections.abc import Sequence
 from functools import lru_cache
 
+import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX, INTERVAL_UNITS
 from pkpdutils.nca.options import NCAFlag
@@ -24,6 +27,20 @@ from pkpdutils.units import (
     normalize_volume,
     ureg,
 )
+
+#: name of the coordinate carrying the dose amount of every sample of a result
+DOSE_COORDINATE = "dose_amount"
+
+#: suffix of a dose normalized variable (`NCAResult.dose_normalized`)
+DOSE_NORMALIZED_SUFFIX = "_dn"
+
+#: unit expressions of the parameters `NCAResult.dose_normalized` normalizes by
+#: default: the concentrations and the exposures
+DOSE_NORMALIZED_EXPRESSIONS: tuple[str, ...] = ("{unit}", "({unit}) * ({time})")
+
+#: parameters whose dose normalized variable carries a name of its own, from
+#: before the general rule existed
+DOSE_NORMALIZED_NAMES: dict[str, str] = {"auc_inf_obs": "auc_inf_dn"}
 
 
 @lru_cache(maxsize=CACHE_SIZE)
@@ -57,6 +74,23 @@ def parameter_unit(
         raise ValueError(f"'{expression}' needs a dose unit")
     raw = expression.format(unit=unit, time=time_unit, dose=dose_unit or "")
     quantity = Q_(1.0, ureg.parse_units(raw))
+    converted = normalize_clearance(normalize_volume(quantity))
+    return str(converted.units), float(converted.magnitude)
+
+
+@lru_cache(maxsize=CACHE_SIZE)
+def _per_dose(unit: str, dose_unit: str) -> tuple[str, float]:
+    """Unit of a parameter per dose and the factor to it.
+
+    Args:
+        unit: unit of the parameter, as the result reports it
+        dose_unit: unit of the doses
+
+    Returns:
+        The canonical unit string of the parameter per dose and the factor a
+        magnitude in the raw unit is multiplied with, as `parameter_unit`.
+    """
+    quantity = Q_(1.0, ureg.parse_units(f"({unit}) / ({dose_unit})"))
     converted = normalize_clearance(normalize_volume(quantity))
     return str(converted.units), float(converted.magnitude)
 
@@ -98,6 +132,92 @@ class NCAResult(ParameterResult):
         "ctrough",
         "accumulation_ratio",
     )
+
+    @property
+    def dose(self) -> xr.DataArray | None:
+        """The dose amount of every sample, `None` for a result without doses.
+
+        The coordinate `dose_amount` the analysis carries over from the batch:
+        the first dose of a single dose sample and the last dose of a multiple
+        dose one, the dose its parameters are divided by.
+        """
+        if DOSE_COORDINATE not in self.ds.coords:
+            return None
+        return self.ds.coords[DOSE_COORDINATE]
+
+    def dose_normalized_parameters(self) -> list[str]:
+        """The parameters `dose_normalized` normalizes without being asked.
+
+        Returns:
+            The concentration and exposure parameters of the result, those
+            whose unit expression is `{unit}` or `({unit}) * ({time})`
+            (`DOSE_NORMALIZED_EXPRESSIONS`), in the order of the dataset;
+            a parameter which is itself dose normalized is left out.
+        """
+        from pkpdutils.nca.nca import PARAMETER_UNITS
+
+        return [
+            name
+            for name in self.parameters
+            if not name.endswith(DOSE_NORMALIZED_SUFFIX)
+            and PARAMETER_UNITS.get(name) in DOSE_NORMALIZED_EXPRESSIONS
+        ]
+
+    def dose_normalized(self, parameters: Sequence[str] | None = None) -> "NCAResult":
+        r"""A copy of the result with the dose normalized variables of its parameters.
+
+        The dose normalized variable of a parameter is the parameter divided by
+        the dose of its sample,
+
+        $$x_\mathrm{dn} = \frac{x}{D},$$
+
+        with the unit of the parameter per dose unit; `NaN` where the sample
+        has no positive dose (a placebo arm). It is the form ICH M13A (2024)
+        asks for when strengths are compared, and the `*D` family of the CDISC
+        codelist (Phoenix `AUClast_D`, `Cmax_D`; PKNCA `pk.calc.dn`).
+
+        The variable is named `x_dn`, except for `auc_inf_obs`, whose
+        normalized variable is the `auc_inf_dn` every analysis already reports
+        (`DOSE_NORMALIZED_NAMES`). Normalize before summarizing: the summary of
+        a dimension carries no dose coordinate any more.
+
+        Args:
+            parameters: the parameters to normalize, the concentrations and
+                exposures of the result by default
+                (`dose_normalized_parameters`).
+
+        Returns:
+            A copy of the result with one dose normalized variable per
+            parameter added.
+
+        Raises:
+            ValueError: if the result carries no dose (an analysis of a batch
+                without doses), or if a name is not a parameter of the result.
+        """
+        dose = self.dose
+        if dose is None:
+            raise ValueError(
+                "the result carries no dose, so no parameter can be normalized "
+                "by it; the analysed batch has no dose amounts"
+            )
+        names = list(
+            self.dose_normalized_parameters() if parameters is None else parameters
+        )
+        missing = [name for name in names if name not in self.ds.data_vars]
+        if missing:
+            raise ValueError(f"{missing} are no parameters of the result")
+        dose_unit = str(dose.attrs.get("units", ""))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            amount = dose.where(dose > 0.0)
+        ds = self.ds.copy()
+        for name in names:
+            unit, factor = _per_dose(self.units(name), dose_unit)
+            normalized = (self.ds[name] / amount) * factor
+            normalized.attrs = {"units": unit}
+            ds[DOSE_NORMALIZED_NAMES.get(name, f"{name}{DOSE_NORMALIZED_SUFFIX}")] = (
+                normalized
+            )
+        return NCAResult(ds)
 
     @property
     def has_intervals(self) -> bool:
