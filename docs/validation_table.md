@@ -110,6 +110,7 @@ The comparison of `pkpdutils.nca` against the published reference values of `tes
 | theoph | PKNCA | linear_log | `tlast` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `tmax` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `auc_last` | 1 | 7.8e-11 | 1e-04 | pknca-theoph-vignette |
+| theoph | PKNCA | linear_log | `auc_partial` | 1 | 4.8e-09 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `cmax_geomean` | 1 | 4.4e-04 | 1e-02 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `cmax_geocv` | 1 | 1.3e-03 | 1e-02 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `auc_last_geomean` | 1 | 5.0e-04 | 1e-02 | pknca-theoph-vignette |

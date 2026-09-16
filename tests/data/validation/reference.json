@@ -5661,6 +5661,36 @@
       }
     }
   },
+  "partial_cases": {
+    "theoph-pknca-partial": {
+      "dataset": "theoph",
+      "comparator": "PKNCA",
+      "source": "pknca-theoph-vignette",
+      "options": {
+        "auc_method": "linear_log",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": true
+        }
+      },
+      "window": [
+        0.0,
+        12.12
+      ],
+      "note": "the vignette prints auclast of subject 1 for the automatic interval 0 to 24 h. PKNCA sums the trapezoids between the observations which fall inside an interval and does not interpolate at its end, so it truncates the interval to the last observation before 24 h, which is at 12.12 h for this subject. The number is compared through partial_auc over exactly that window.",
+      "references": {
+        "1": {
+          "auc_partial": {
+            "value": 92.365442,
+            "unit": "hour * milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          }
+        }
+      }
+    }
+  },
   "summary_cases": {
     "theoph-pknca-summary": {
       "dataset": "theoph",
@@ -5675,7 +5705,7 @@
           "exclude_cmax": true
         }
       },
-      "note": "the summary of `pk.nca` over all twelve subjects the vignette prints: the geometric mean with the geometric coefficient of variation, the arithmetic mean and standard deviation of the half-life and the median with the range of tmax; PKNCA prints the coefficients of variation in percent, they are stored as fractions",
+      "note": "the summary of `pk.nca` over all twelve subjects the vignette prints: the geometric mean with the geometric coefficient of variation, the arithmetic mean and standard deviation of the half-life and the median with the range of tmax. The vignette prints two summaries, both over the twelve subjects: `summary(results_obj_automatic)`, whose 0 to Inf row carries cmax, tmax, half.life and aucinf.obs, and `summary(results_obj_manual)`, whose single 0 to Inf row carries auclast as well; auc_last_geomean and auc_last_geocv are taken from the second, since the auclast of the automatic summary belongs to its 0 to 24 h interval. PKNCA prints the coefficients of variation in percent, they are stored as fractions.",
       "references": {
         "cmax_geomean": {
           "value": 8.65,

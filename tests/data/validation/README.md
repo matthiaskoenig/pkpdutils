@@ -53,8 +53,9 @@ Denney B. **Computing NCA Parameters for Theophylline.** PKNCA vignette. <https:
 The vignette runs `pk.nca` on `datasets::Theoph` with the PKNCA defaults (`auc.method = "lin up/log down"`, `min.hl.points = 3`, `allow.tmax.in.half.life = FALSE`) and prints
 
 - the per-subject results of subject 1 (`cmax`, `tmax`, `tlast`, `clast.obs`, `lambda.z`) and of subject 6 (the same plus `auclast`), which are the case `theoph-pknca`;
-- the summary over all twelve subjects, which is the case `theoph-pknca-summary`. PKNCA prints a coefficient of variation in percent; it is stored as the fraction `pkpdutils` reports.
+- the `auclast` of subject 1 over the automatic interval 0 to 24 h, which is the case `theoph-pknca-partial`. PKNCA sums the trapezoids between the observations which fall inside an interval and does not interpolate at its end, so it truncated the interval to the last observation before 24 h, at 12.12 h for this subject; the case carries that window and is compared through `partial_auc`;
+- the summary over all twelve subjects, which is the case `theoph-pknca-summary`. The vignette prints two summaries, `summary(results_obj_automatic)` and `summary(results_obj_manual)`, both over the twelve subjects; `auc_last_geomean` and `auc_last_geocv` come from the second, whose single 0 to Inf row carries `auclast`, since the `auclast` of the automatic summary belongs to its 0 to 24 h interval. PKNCA prints a coefficient of variation in percent; it is stored as the fraction `pkpdutils` reports.
 
-The vignette prints no per-subject clearance, volume or mean residence time, so the reference file carries none for PKNCA. It also prints `auclast` over the interval 0 to 24 h, which is not comparable to `partial_auc` and is not recorded, see `docs/validation.md`.
+The vignette prints no per-subject clearance, volume or mean residence time, so the reference file carries none for PKNCA.
 
 No R installation was used: every number of this directory is transcribed from the sources above.
