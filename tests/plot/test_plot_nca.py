@@ -2,6 +2,7 @@ import matplotlib
 import matplotlib.pyplot
 import numpy as np
 import pytest
+from matplotlib.collections import PolyCollection
 from matplotlib.container import ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
@@ -72,10 +73,12 @@ def test_plot_nca_single() -> None:
     tc = oral()
     result = nca_single(tc)
     fig = plot_nca(tc, result, title="test")
-    assert len(fig.axes) == 2
+    # the linear panel, the logarithmic panel and the parameter table
+    assert len(fig.axes) == 3
     assert fig.axes[1].get_yscale() == "log"
     assert fig.get_suptitle() == "test"
-    matplotlib.pyplot.close(fig)
+    assert len(plot_nca(tc, result, annotate=False).axes) == 2
+    matplotlib.pyplot.close("all")
 
 
 def test_plot_nca_titles_the_figure_once_and_names_the_scales() -> None:
@@ -83,7 +86,8 @@ def test_plot_nca_titles_the_figure_once_and_names_the_scales() -> None:
     fig = plot_nca(tc, nca_single(tc), title="subject 1")
     # the sample is named once, over the figure, not in both panels
     assert fig.get_suptitle() == "subject 1"
-    assert [ax.get_title() for ax in fig.axes] == ["linear", "semi-logarithmic"]
+    assert [ax.get_title() for ax in fig.axes[:2]] == ["linear", "semi-logarithmic"]
+    assert fig.axes[2].get_title().startswith("parameters")
     matplotlib.pyplot.close(fig)
 
 
@@ -457,3 +461,166 @@ def test_plot_troughs_places_every_group_on_its_own_interval_times() -> None:
         np.asarray(slow_line.lines[0].get_xdata()), [24.0, 48.0, 72.0]
     )
     matplotlib.pyplot.close(fig)
+
+
+def individual() -> Timecourse:
+    """An individual oral curve, no spread, so no uncertainty analysis."""
+    t = np.array([0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 24])
+    return Timecourse(
+        time=t,
+        value=[0.9, 1.7, 2.6, 2.9, 2.8, 2.5, 2.2, 1.6, 1.2, 0.6, 0.1],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        substance="caffeine",
+    )
+
+
+def group_curve() -> Timecourse:
+    return Timecourse(
+        time=[0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 24],
+        value=[0.9, 1.7, 2.6, 2.9, 2.8, 2.5, 2.2, 1.6, 1.2, 0.6, 0.1],
+        sd=[0.2, 0.3, 0.4, 0.4, 0.4, 0.4, 0.3, 0.3, 0.2, 0.1, 0.03],
+        n=12,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        substance="caffeine",
+    )
+
+
+def test_plot_nca_annotates_the_parameters_on_the_plot() -> None:
+    tc = group_curve()
+    fig = plot_nca(tc, nca_single(tc))
+    texts = [text.get_text() for text in fig.axes[0].texts]
+    assert any(t.startswith("Cmax = 2.9") and "tmax = 1.5 hr" in t for t in texts)
+    assert any(
+        t.startswith("lambda_z = ") and "t1/2 = " in t and "n = " in t for t in texts
+    )
+    assert any(t.startswith("clast = ") and "tlast = 24 hr" in t for t in texts)
+    # the intervals of the uncertainty analysis are in the annotation
+    assert any("Cmax = 2.9 [" in t for t in texts)
+    # the parameter table of the third panel
+    table = fig.axes[2].texts[0].get_text()
+    assert "cmax" in table and "mg/l" in table and "[" in table
+    assert "extrapolated" in table and "thalf" in table and "cl_f" in table
+    assert fig.axes[2].get_title() == "parameters, 95 % interval"
+    # nothing on the plot without annotations
+    bare = plot_nca(tc, nca_single(tc), annotate=False)
+    assert not bare.axes[0].texts
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_nca_draws_the_spread_of_the_data() -> None:
+    tc = group_curve()
+    result = nca_single(tc)
+    fig = plot_nca(tc, result)
+    containers = [c for c in fig.axes[0].containers if isinstance(c, ErrorbarContainer)]
+    assert len(containers) == 1 and containers[0].get_label() == "data ± sd"
+    none = plot_nca(tc, result, spread=None)
+    assert not [c for c in none.axes[0].containers if isinstance(c, ErrorbarContainer)]
+    # a curve without a spread draws no error bars either
+    plain = individual()
+    bare = plot_nca(plain, nca_single(plain))
+    assert not [c for c in bare.axes[0].containers if isinstance(c, ErrorbarContainer)]
+    matplotlib.pyplot.close("all")
+
+
+def band_of(ax) -> PolyCollection | None:
+    for collection in ax.collections:
+        if isinstance(collection, PolyCollection) and "band" in collection.get_label():
+            return collection
+    return None
+
+
+def test_plot_nca_draws_the_confidence_band_of_the_regression() -> None:
+    tc = oral()
+    result = nca_single(tc)
+    fig = plot_nca(tc, result)
+    band = band_of(fig.axes[0])
+    assert band is not None and band.get_label() == "95 % band of the regression"
+    # the band widens away from the centre of the regression window
+    vertices = np.asarray(band.get_paths()[0].vertices)
+    values = _band_width(tc, result, 0.95)
+    assert values[-1] > values[0] > 0
+    assert vertices.shape[0] > 10
+    # a wider level gives a wider band
+    assert _band_width(tc, result, 0.99)[-1] > values[-1]
+    # a regression on two points has no band
+    two = Timecourse(time=[1, 2, 4, 8], value=[4, 3, 2, 1], time_unit="hr", unit="mg/l")
+    from pkpdutils import TerminalMethod, TerminalPhase
+
+    short = nca_single(
+        two,
+        options=NCAOptions(
+            terminal=TerminalPhase(method=TerminalMethod.LAST_N, n_points=3)
+        ),
+    )
+    assert band_of(plot_nca(two, short).axes[0]) is not None
+    matplotlib.pyplot.close("all")
+
+
+def _band_width(tc: Timecourse, result, ci_level: float) -> np.ndarray:
+    from pkpdutils.plot.nca import _terminal_band
+
+    values = {name: float(v.magnitude) for name, v in result.to_quantities().items()}
+    grid = np.linspace(
+        values["lambda_z_t_first"], values["tlast"] + 3 * values["thalf"], 5
+    )
+    band = _terminal_band(
+        np.asarray(tc.time), np.asarray(tc.value), values, grid, ci_level
+    )
+    assert band is not None
+    return np.log(band[1]) - np.log(band[0])
+
+
+def test_thalf_interval_follows_the_regression_without_an_uncertainty_analysis() -> (
+    None
+):
+    from scipy.stats import t as student_t
+
+    from pkpdutils.plot.nca import _thalf_interval, parameter_rows
+
+    tc = individual()
+    result = nca_single(tc)
+    values = {name: float(v.magnitude) for name, v in result.to_quantities().items()}
+    low, high = _thalf_interval(values, 0.95)
+    n = int(values["lambda_z_n_points"])
+    q = student_t.ppf(0.975, n - 2)
+    assert np.isclose(
+        low, np.log(2) / (values["lambda_z"] + q * values["lambda_z_stderr"])
+    )
+    assert np.isclose(
+        high, np.log(2) / (values["lambda_z"] - q * values["lambda_z_stderr"])
+    )
+    assert low < values["thalf"] < high
+    rows = parameter_rows(
+        values, {n: result.units(n) for n in values}, ("thalf", "cmax"), 0.95
+    )
+    assert rows[0][0] == "thalf" and rows[0][2].startswith("[") and rows[0][3] == "h"
+    assert rows[1] == ("cmax", f"{values['cmax']:.3g}", "", "mg/l")
+    # an uncertainty analysis supplies the interval itself
+    both = dict(values, thalf_ci_low=1.0, thalf_ci_high=2.0)
+    assert _thalf_interval(both, 0.95) == (1.0, 2.0)
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_nca_with_three_axes_draws_the_table_into_the_third() -> None:
+    tc = oral()
+    _, axes = matplotlib.pyplot.subplots(ncols=3)
+    plot_nca(tc, nca_single(tc), axes=axes)
+    assert axes[2].get_title().startswith("parameters") and axes[2].texts
+    fig2, two = matplotlib.pyplot.subplots(ncols=2)
+    plot_nca(tc, nca_single(tc), axes=two)
+    assert len(fig2.axes) == 2
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_nca_grid_has_the_band_but_no_annotations_by_default() -> None:
+    batch = Timecourses.from_timecourses([oral(1.0, "a"), oral(4.0, "b")])
+    fig = plot_nca_grid(batch, nca(batch))
+    assert band_of(fig.axes[0]) is not None
+    assert not fig.axes[0].texts
+    annotated = plot_nca_grid(batch, nca(batch), annotate=True)
+    assert annotated.axes[0].texts
+    matplotlib.pyplot.close("all")

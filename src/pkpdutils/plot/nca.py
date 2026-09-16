@@ -1,12 +1,13 @@
 """Diagnostic figures of the non-compartmental analysis."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
+from scipy.stats import t as student_t
 
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import decode_flags
@@ -15,6 +16,7 @@ from pkpdutils.plot._common import (
     axes_of,
     axis_label,
     dose_markers,
+    estimate_text,
     figure_of,
     format_value,
     group_colors,
@@ -56,33 +58,265 @@ def _sample_values(
     )
 
 
+#: the parameters the box of the NCA panel lists, in this order, when the
+#: result carries them; a clearance and a volume appear in the form of the
+#: route (`cl` or `cl_f`)
+PANEL_PARAMETERS: tuple[str, ...] = (
+    "cmax",
+    "tmax",
+    "auc_last",
+    "auc_inf_obs",
+    "thalf",
+    "cl",
+    "cl_f",
+    "vz",
+    "vz_f",
+    "mrt",
+    "auc_tau",
+    "cmin_ss",
+    "accumulation_ratio",
+)
+
+
+def _quantity_text(
+    values: Mapping[str, float],
+    units: Mapping[str, str] | None,
+    name: str,
+    digits: int = 3,
+) -> str:
+    """`value unit` of one parameter, the interval of an uncertainty analysis included.
+
+    Args:
+        values: the parameter magnitudes of the curve.
+        units: the unit per parameter, `None` for magnitudes without units.
+        name: the parameter.
+        digits: significant digits.
+
+    Returns:
+        `2.9 [2.7, 3.1] mg/l` or `2.9 mg/l`; empty for a missing parameter.
+    """
+    value = values.get(name, np.nan)
+    if not np.isfinite(value):
+        return ""
+    text = estimate_text(
+        value,
+        values.get(f"{name}_ci_low", np.nan),
+        values.get(f"{name}_ci_high", np.nan),
+        digits,
+    )
+    unit = unit_label(units.get(name, "")) if units else ""
+    return f"{text} {unit}".rstrip()
+
+
+def _terminal_band(
+    t: np.ndarray,
+    c: np.ndarray,
+    values: Mapping[str, float],
+    t_grid: np.ndarray,
+    ci_level: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    r"""The confidence band of the terminal regression line on `t_grid`.
+
+    The regression of \(\ln c\) on \(t\) over its \(n\) points has the
+    standard error of the slope \(\mathrm{se}(\lambda_z)\) (`lambda_z_stderr`),
+    from which the residual standard deviation follows as
+    \(s = \mathrm{se}(\lambda_z) \sqrt{S_{tt}}\) with
+    \(S_{tt} = \sum (t_i - \bar t)^2\). The band of the regression line at a
+    time \(t\) is the usual one of a simple linear regression,
+    \(\hat y(t) \pm t_{n-2, 1 - \alpha/2}\, s \sqrt{1/n + (t - \bar t)^2 / S_{tt}}\),
+    exponentiated back to the concentration scale, so it widens away from
+    the centre of the regression window and shows how uncertain the
+    extrapolated tail is [@Draper1998].
+
+    Args:
+        t: the times of the curve (relative to the analysed dose).
+        c: the values of the curve.
+        values: the parameter magnitudes (`lambda_z`, `lambda_z_intercept`,
+            `lambda_z_stderr`, `lambda_z_t_first`, `tlast`).
+        t_grid: the times to evaluate the band at.
+        ci_level: level of the band.
+
+    Returns:
+        The lower and the upper bound on `t_grid`, or `None` when the
+        regression has fewer than three points or no standard error.
+    """
+    lambda_z = values.get("lambda_z", np.nan)
+    intercept = values.get("lambda_z_intercept", np.nan)
+    stderr = values.get("lambda_z_stderr", np.nan)
+    t_first, tlast = values.get("lambda_z_t_first", np.nan), values.get("tlast", np.nan)
+    if not all(np.isfinite([lambda_z, intercept, stderr, t_first, tlast])):
+        return None
+    used = np.isfinite(c) & (t >= t_first) & (t <= tlast) & (c > 0)
+    n = int(used.sum())
+    if n < 3 or stderr <= 0:
+        return None
+    x = t[used]
+    x_mean = float(x.mean())
+    s_tt = float(np.sum((x - x_mean) ** 2))
+    if s_tt <= 0:
+        return None
+    residual_sd = stderr * np.sqrt(s_tt)
+    quantile = student_t.ppf(0.5 + ci_level / 2.0, n - 2)
+    half = quantile * residual_sd * np.sqrt(1.0 / n + (t_grid - x_mean) ** 2 / s_tt)
+    predicted = intercept - lambda_z * t_grid
+    return np.exp(predicted - half), np.exp(predicted + half)
+
+
+def _thalf_interval(
+    values: Mapping[str, float], ci_level: float
+) -> tuple[float, float]:
+    r"""The interval of the half-life, from the analysis or from the regression.
+
+    An uncertainty analysis reports `thalf_ci_low`/`thalf_ci_high`; without one,
+    the interval follows from the regression, \(\lambda_z \pm t_{n-2}\,
+    \mathrm{se}(\lambda_z)\) mapped through \(t_{1/2} = \ln 2 / \lambda_z\).
+
+    Args:
+        values: the parameter magnitudes.
+        ci_level: level of the interval.
+
+    Returns:
+        The bounds, `NaN` when neither source is available.
+    """
+    low, high = values.get("thalf_ci_low", np.nan), values.get("thalf_ci_high", np.nan)
+    if np.isfinite(low) and np.isfinite(high):
+        return low, high
+    lambda_z, stderr = (
+        values.get("lambda_z", np.nan),
+        values.get("lambda_z_stderr", np.nan),
+    )
+    n = values.get("lambda_z_n_points", np.nan)
+    if not (
+        np.isfinite(lambda_z) and np.isfinite(stderr) and np.isfinite(n) and n >= 3
+    ):
+        return np.nan, np.nan
+    quantile = student_t.ppf(0.5 + ci_level / 2.0, int(n) - 2)
+    upper_rate = lambda_z + quantile * stderr
+    lower_rate = lambda_z - quantile * stderr
+    high = np.log(2.0) / lower_rate if lower_rate > 0 else np.inf
+    return np.log(2.0) / upper_rate, high
+
+
+def parameter_rows(
+    values: Mapping[str, float],
+    units: Mapping[str, str] | None,
+    parameters: Sequence[str],
+    ci_level: float,
+) -> list[tuple[str, str, str, str]]:
+    """The rows of the parameter table of `plot_nca`.
+
+    Args:
+        values: the parameter magnitudes.
+        units: the unit per parameter, `None` for magnitudes without units.
+        parameters: the parameters to list, in this order; a missing one is
+            skipped.
+        ci_level: level of the interval of the half-life derived from the
+            regression when the analysis reports none.
+
+    Returns:
+        One `(name, value, interval, unit)` row per available parameter, the
+        interval `[low, high]` or empty; `auc_inf_obs` is followed by the row
+        `extrapolated`, its extrapolated share in percent.
+    """
+    rows: list[tuple[str, str, str, str]] = []
+    for name in parameters:
+        value = values.get(name, np.nan)
+        if not np.isfinite(value):
+            continue
+        if name == "thalf":
+            low, high = _thalf_interval(values, ci_level)
+        else:
+            low = values.get(f"{name}_ci_low", np.nan)
+            high = values.get(f"{name}_ci_high", np.nan)
+        interval = (
+            f"[{low:.3g}, {high:.3g}]" if np.isfinite(low) and np.isfinite(high) else ""
+        )
+        unit = unit_label(units.get(name, "")) if units else ""
+        rows.append((name, f"{value:.3g}", interval, unit))
+        if name == "auc_inf_obs":
+            fraction = values.get("auc_extrap_fraction", np.nan)
+            if np.isfinite(fraction):
+                rows.append(("extrapolated", f"{100.0 * fraction:.2g}", "", "%"))
+    return rows
+
+
+def _draw_parameter_table(
+    ax: Axes,
+    rows: Sequence[tuple[str, str, str, str]],
+    ci_level: float,
+    style: PlotStyle,
+) -> None:
+    """Write the parameter table into an axes of its own.
+
+    Args:
+        ax: the axes, turned off and used as a text panel.
+        rows: the rows of `parameter_rows`.
+        ci_level: level of the intervals, named in the heading when a row
+            carries one.
+        style: the font size of the annotations.
+    """
+    ax.set_axis_off()
+    if not rows:
+        return
+    widths = [max(len(row[k]) for row in rows) for k in range(3)]
+    lines = [
+        f"{name:<{widths[0]}}  {value:>{widths[1]}}  {interval:<{widths[2]}}  {unit}".rstrip()
+        for name, value, interval, unit in rows
+    ]
+    heading = "parameters"
+    if any(row[2] for row in rows):
+        heading = f"parameters, {100.0 * ci_level:g} % interval"
+    ax.set_title(heading, fontsize="small")
+    ax.text(
+        0.0,
+        1.0,
+        "\n".join(lines),
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=style.annotation_fontsize,
+        family="monospace",
+        linespacing=1.6,
+    )
+
+
 def draw_nca_panel(
     timecourse: Timecourse,
-    values: dict[str, float],
+    values: Mapping[str, float],
     flags: list[str],
     *,
     log_y: bool = False,
     title: str | None = None,
     legend: bool = True,
+    annotate: bool = True,
+    spread: Literal["sd", "se"] | None = "sd",
+    ci_level: float = 0.95,
+    units: Mapping[str, str] | None = None,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Axes:
-    """Draw the NCA diagnostics of one curve into one axes.
+    r"""Draw the NCA diagnostics of one curve into one axes.
 
-    A multiple dose result (carrying `auc_tau`) shades the analysed last
-    dosing interval `[0, tau]` (relative to the last dose) instead of
-    `[0, tlast]`, labelled `AUC(0-tau)`; a single dose result keeps shading
-    `[0, tlast]` as `AUC(0-tlast)`.
+    The panel shows the data with their spread, the area to \(t_\mathrm{last}\)
+    (`AUC(0-tlast)`) or over the last dosing interval (`AUC(0-tau)` of a
+    multiple dose result), the extrapolated tail, the terminal regression line
+    with the points it used and its confidence band (`_terminal_band`), the
+    peak \(C_\mathrm{max}\)/\(t_\mathrm{max}\) with its guide lines, \(C_0\)
+    of a bolus, and the dose it analyses (an infusion as its window). With
+    `annotate` the peak (on a linear panel), the last point and the regression
+    carry their values on the plot, the interval of the half-life from the uncertainty analysis
+    (`thalf_ci_low`/`thalf_ci_high`) or from the regression
+    (`_thalf_interval`); the table of every parameter is the third panel of
+    `plot_nca`.
 
-    An infusion is marked by the shaded window from the dose time to the end
-    of the infusion, so that the panel shows how long the dose went in. The
-    panel starts at the dose it analyses (the last one of a multiple dose
+    The panel starts at the dose it analyses (the last one of a multiple dose
     curve), so only that dose falls inside it and the earlier doses of a
     protocol are not marked.
 
     Args:
         timecourse: the curve (times relative to its dose)
-        values: parameter magnitudes of the curve
+        values: parameter magnitudes of the curve, the uncertainty variables
+            included when the result carries them
         flags: flag names of the curve
 
     Keyword Args:
@@ -91,6 +325,13 @@ def draw_nca_panel(
         title: title, the label of the curve by default
         legend: draw the legend of the panel; `False` for a figure whose
             panels share one legend (`plot_nca_grid`)
+        annotate: write the values of the peak, the last point and the
+            regression on the plot
+        spread: the error bars of the data, `sd` or `se` of the curve when it
+            carries them, `None` for none
+        ci_level: level of the confidence band of the regression and of the
+            interval of the half-life derived from it
+        units: the unit per parameter, for the annotations
         ax: axes to draw on, a new figure by default
         style: colors and markers
 
@@ -105,6 +346,12 @@ def draw_nca_panel(
     lambda_z = values.get("lambda_z", np.nan)
     intercept = values.get("lambda_z_intercept", np.nan)
     thalf = values.get("thalf", np.nan)
+    unit_of = (
+        (lambda name: unit_label(units.get(name, ""))) if units else (lambda name: "")
+    )
+    time_unit = unit_label(tc.time_unit) or tc.time_unit
+    value_unit = unit_label(tc.unit) or tc.unit
+    fontsize = style.annotation_fontsize
 
     steady_state = np.isfinite(values.get("auc_tau", np.nan))
     tau = values.get("tau", np.nan)
@@ -117,23 +364,37 @@ def draw_nca_panel(
             0.0,
             c[area],
             color=style.auc_color,
-            alpha=style.alpha,
+            alpha=style.alpha + 0.1,
+            linewidth=0,
             label=auc_label,
         )
-    if np.isfinite(lambda_z) and np.isfinite(tlast):
-        t_ext = np.linspace(tlast, tlast + 3.0 * thalf, 50)
+    t_end = tlast + 3.0 * thalf if np.isfinite(thalf) else np.nan
+    if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_end):
+        t_ext = np.linspace(tlast, t_end, 50)
         c_ext = clast * np.exp(-lambda_z * (t_ext - tlast))
         ax.fill_between(
             t_ext,
             0.0,
             c_ext,
             color=style.extrapolation_color,
-            alpha=style.alpha,
+            alpha=style.alpha + 0.1,
+            linewidth=0,
             label="extrapolated",
         )
     t_first = values.get("lambda_z_t_first", np.nan)
     if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_first):
-        t_fit = np.linspace(t_first, tlast + 3.0 * thalf, 50)
+        t_fit = np.linspace(t_first, t_end, 80)
+        band = _terminal_band(t, c, values, t_fit, ci_level)
+        if band is not None:
+            ax.fill_between(
+                t_fit,
+                band[0],
+                band[1],
+                color=style.fit_color,
+                alpha=style.band_alpha,
+                linewidth=0,
+                label=f"{100.0 * ci_level:g} % band of the regression",
+            )
         ax.plot(
             t_fit,
             np.exp(intercept - lambda_z * t_fit),
@@ -149,14 +410,79 @@ def draw_nca_panel(
             marker=style.terminal_marker,
             linestyle="none",
             color=style.fit_color,
-            markersize=style.markersize + 3,
+            markersize=style.markersize + 4,
             markerfacecolor="none",
+            markeredgewidth=1.5,
             label="regression points",
         )
+        if annotate:
+            low, high = _thalf_interval(values, ci_level)
+            half_life = estimate_text(thalf, low, high)
+            n_points = values.get("lambda_z_n_points", np.nan)
+            count = f", n = {int(n_points)}" if np.isfinite(n_points) else ""
+            t_mid = 0.5 * (t_first + tlast)
+            ax.annotate(
+                f"lambda_z = {lambda_z:.3g} {unit_of('lambda_z') or f'1/{time_unit}'}"
+                f"\nt1/2 = {half_life} {time_unit}{count}",
+                xy=(t_mid, float(np.exp(intercept - lambda_z * t_mid))),
+                xytext=(16, 14),
+                textcoords="offset points",
+                fontsize=fontsize,
+                color=style.fit_color,
+                ha="left",
+                va="bottom",
+            )
     cmax, tmax = values.get("cmax", np.nan), values.get("tmax", np.nan)
-    if np.isfinite(cmax):
-        ax.plot([0, tmax], [cmax, cmax], linestyle="--", color="gray", linewidth=1)
-        ax.plot([tmax, tmax], [0, cmax], linestyle="--", color="gray", linewidth=1)
+    if np.isfinite(cmax) and np.isfinite(tmax):
+        ax.plot(
+            [0, tmax],
+            [cmax, cmax],
+            linestyle="--",
+            color=style.peak_color,
+            linewidth=1,
+        )
+        ax.plot(
+            [tmax, tmax],
+            [0, cmax],
+            linestyle="--",
+            color=style.peak_color,
+            linewidth=1,
+        )
+        ax.plot(
+            [tmax],
+            [cmax],
+            marker="D",
+            linestyle="none",
+            color=style.peak_color,
+            markersize=style.markersize + 2,
+            label="Cmax at tmax",
+        )
+        # the peak sits at the top of a logarithmic panel among the first
+        # regression points, where its text would cover them: that panel is
+        # the one of the terminal phase and leaves the peak to the marker
+        if annotate and not log_y:
+            ax.annotate(
+                f"Cmax = {_quantity_text(values, units, 'cmax') or f'{cmax:.3g}'}"
+                f"\ntmax = {tmax:.3g} {time_unit}",
+                xy=(tmax, cmax),
+                xytext=(12, 4),
+                textcoords="offset points",
+                fontsize=fontsize,
+                color=style.peak_color,
+                ha="left",
+                va="bottom",
+            )
+    if annotate and np.isfinite(tlast) and np.isfinite(clast):
+        ax.annotate(
+            f"clast = {clast:.3g} {value_unit}\ntlast = {tlast:.3g} {time_unit}",
+            xy=(tlast, clast),
+            xytext=(0, 12),
+            textcoords="offset points",
+            fontsize=fontsize,
+            color=style.data_color,
+            ha="center",
+            va="bottom",
+        )
     c0 = values.get("c0", np.nan)
     if np.isfinite(c0) and tc.dose is not None and tc.dose.route is Route.IV_BOLUS:
         ax.plot(
@@ -167,6 +493,23 @@ def draw_nca_panel(
             color=style.fit_color,
             markersize=style.markersize + 1,
             label="C0",
+        )
+    error = None
+    if spread == "sd" and tc.sd is not None:
+        error = np.asarray(tc.sd, dtype=float)
+    elif spread == "se" and tc.se is not None:
+        error = np.asarray(tc.se, dtype=float)
+    if error is not None and np.isfinite(error).any():
+        ax.errorbar(
+            t,
+            c,
+            yerr=np.where(np.isfinite(error), error, 0.0),
+            fmt="none",
+            ecolor=style.data_color,
+            elinewidth=1,
+            capsize=2,
+            alpha=0.6,
+            label=f"data ± {spread}",
         )
     ax.plot(
         t,
@@ -185,8 +528,8 @@ def draw_nca_panel(
             style=style,
             time_unit=tc.time_unit,
         )
-    ax.set_xlabel(f"time [{tc.time_unit}]")
-    ax.set_ylabel(f"{tc.substance} [{tc.unit}]")
+    ax.set_xlabel(axis_label("time", tc.time_unit))
+    ax.set_ylabel(axis_label(tc.substance, tc.unit))
     if log_y:
         log_scale(ax, "y")
     else:
@@ -208,16 +551,25 @@ def plot_nca(
     result: NCAResult,
     *,
     title: str | None = None,
+    annotate: bool = True,
+    parameters: Sequence[str] = PANEL_PARAMETERS,
+    spread: Literal["sd", "se"] | None = "sd",
+    ci_level: float = 0.95,
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
 ) -> Figure:
-    """Linear and logarithmic panel of one curve with its NCA diagnostics.
+    """Linear and logarithmic panel of one curve with its NCA diagnostics and its parameters.
 
-    Both panels show the same curve: the title of the figure names the sample
-    and its flags once, the two panels name the scale they draw it on
-    (`linear`, `semi-logarithmic`), and the legend is drawn once, on the
-    linear panel.
+    Both panels show the same curve (`draw_nca_panel`): the title of the
+    figure names the sample and its flags once, the two panels name the scale
+    they draw it on (`linear`, `semi-logarithmic`), and the legend is drawn
+    once, on the linear panel. A third, narrow panel lists the `parameters`
+    with their values, units and, where the result carries one, the interval
+    of the uncertainty analysis (`x_ci_low`/`x_ci_high`; the half-life falls
+    back to the interval of the regression), so that the figure reads as the
+    report of the analysis. `axes` of the caller take two entries for the two
+    curve panels alone, or three with the table.
 
     Args:
         timecourse: the curve
@@ -226,9 +578,18 @@ def plot_nca(
     Keyword Args:
         title: title of the figure, `name = value` per indexer (the label of
             the curve without indexers) by default; the flags are appended
+        annotate: write the values of the peak, the last point and the
+            regression on the plot and add the parameter table
+        parameters: the parameters of the table, in this order (missing ones
+            are skipped)
+        spread: error bars of the data, `sd` or `se` of the curve when it
+            carries them, `None` for none
+        ci_level: level of the confidence band of the terminal regression and
+            of the interval of the half-life derived from it
         axes: the two axes to draw the linear and the logarithmic panel into,
-            a new figure by default; a figure of the caller keeps its own
-            title, so the heading goes on the first panel instead
+            or three with the parameter table, a new figure by default; a
+            figure of the caller keeps its own title, so the heading goes on
+            the first panel instead
         style: colors and markers
         **indexers: coordinate labels selecting the sample of a batch result
 
@@ -236,9 +597,20 @@ def plot_nca(
         The figure.
     """
     values, flags = _sample_values(result, indexers)
+    units = {name: result.units(name) for name in values}
     own_figure = axes is None
-    fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
-    ax1, ax2 = grid[0]
+    table_ax: Axes | None = None
+    if own_figure and annotate:
+        fig, grid = axes_of(
+            None, nrows=1, ncols=3, figsize=(14.5, 4.5), width_ratios=(1, 1, 0.55)
+        )
+        ax1, ax2, table_ax = grid[0]
+    elif own_figure or np.asarray(axes).size == 2:
+        fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
+        ax1, ax2 = grid[0]
+    else:
+        fig, grid = axes_of(axes, nrows=1, ncols=3, figsize=(14.5, 4.5))
+        ax1, ax2, table_ax = grid[0]
     if title is None:
         title = (
             ", ".join(
@@ -254,6 +626,13 @@ def plot_nca(
     # panel instead
     if own_figure:
         fig.suptitle(heading, fontsize="medium")
+    common: dict[str, Any] = {
+        "annotate": annotate,
+        "spread": spread,
+        "ci_level": ci_level,
+        "units": units,
+        "style": style,
+    }
     draw_nca_panel(
         timecourse,
         values,
@@ -261,7 +640,7 @@ def plot_nca(
         log_y=False,
         title="linear" if own_figure else heading,
         ax=ax1,
-        style=style,
+        **common,
     )
     draw_nca_panel(
         timecourse,
@@ -271,8 +650,15 @@ def plot_nca(
         title="semi-logarithmic",
         legend=False,
         ax=ax2,
-        style=style,
+        **common,
     )
+    if table_ax is not None:
+        _draw_parameter_table(
+            table_ax,
+            parameter_rows(values, units, parameters, ci_level),
+            ci_level,
+            style,
+        )
     return fig
 
 
@@ -282,6 +668,9 @@ def plot_nca_grid(
     *,
     ncols: int = 3,
     log_y: bool = True,
+    annotate: bool = False,
+    spread: Literal["sd", "se"] | None = "sd",
+    ci_level: float = 0.95,
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
@@ -301,6 +690,12 @@ def plot_nca_grid(
     Keyword Args:
         ncols: panels per row, at most one per sample
         log_y: logarithmic value axes
+        annotate: the values and the parameter box in every panel, off by
+            default since the panels of a grid are small; the confidence band
+            of the regression is drawn either way
+        spread: error bars of the data, `sd` or `se` when the batch carries
+            them, `None` for none
+        ci_level: level of the confidence band of the terminal regression
         axes: the `nrows * ncols` axes to draw the panels into, a new figure by
             default
         style: colors and markers
@@ -316,11 +711,12 @@ def plot_nca_grid(
     flat_axes = grid.ravel()
     indices = list(np.ndindex(*timecourses.sample_shape))
     units = {"dose": timecourses.dose_unit} if "dose" in timecourses.ds.coords else {}
+    parameter_units = {name: result.units(name) for name in result._variables}
     for k, (tc, index) in enumerate(zip(curves, indices, strict=True)):
         sample = result.ds.isel(
             dict(zip(timecourses.sample_dims, (int(i) for i in index), strict=True))
         )
-        values = {name: float(sample[name].values) for name in result.parameters}
+        values = {name: float(sample[name].values) for name in result._variables}
         flags = decode_flags(int(sample["flags"].values))
         title = sample_title(
             timecourses.ds, index, timecourses.sample_dims, units=units
@@ -332,6 +728,10 @@ def plot_nca_grid(
             log_y=log_y,
             title=title or None,
             legend=axes is not None and k == 0,
+            annotate=annotate,
+            spread=spread,
+            ci_level=ci_level,
+            units=parameter_units,
             ax=flat_axes[k],
             style=style,
         )

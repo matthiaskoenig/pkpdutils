@@ -34,7 +34,7 @@ tc = Timecourse(
 
 if __name__ == "__main__":
     console.rule("Default options: linear-up/log-down, best fit terminal phase")
-    result = nca_single(tc)
+    result = nca_single(tc, options=NCAOptions(seed=1))  # a fixed bootstrap seed
     for name, quantity in result.to_quantities().items():
         console.print(f"{name:<22} {quantity:~P}")
     console.print("flags:", result.flags())
