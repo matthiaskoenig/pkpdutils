@@ -80,6 +80,7 @@ from pkpdutils.nca import (
     sparse_mean,
     time_to_steady_state,
 )
+from pkpdutils.report import Report, study_report
 from pkpdutils.result import summary_table
 from pkpdutils.stats import (
     ParameterSample,
@@ -87,8 +88,11 @@ from pkpdutils.stats import (
     carryover_table,
     compare,
     ddi_classification,
+    hodges_lehmann,
     meta_analysis,
+    power_tost,
     ratio,
+    sample_size_tost,
 )
 from pkpdutils.timecourse import (
     Dose,
@@ -140,6 +144,7 @@ __all__ = [
     "Power",
     "ProportionalityResult",
     "Quantity",
+    "Report",
     "Route",
     "SigmoidEmax",
     "SigmoidImax",
@@ -162,6 +167,7 @@ __all__ = [
     "fit_table",
     "fit_timecourse",
     "fit_timecourses",
+    "hodges_lehmann",
     "io",
     "meta_analysis",
     "nca",
@@ -170,9 +176,12 @@ __all__ = [
     "nca_urine",
     "partial_auc",
     "plot",
+    "power_tost",
     "proportionality_test",
     "ratio",
+    "sample_size_tost",
     "sparse_mean",
+    "study_report",
     "summary_table",
     "time_to_steady_state",
     "ureg",
