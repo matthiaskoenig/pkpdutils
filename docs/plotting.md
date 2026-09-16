@@ -4,6 +4,56 @@ The figures of `pkpdutils.plot` are matplotlib figures. Every function returns t
 
 Every signature has the same shape, `f(data, *, <options>, ax=None, style=DEFAULT_STYLE)`: the data first and positionally, every option as a keyword, and `ax` and `style` last. A figure of several panels takes `axes` instead of `ax` (`plot_nca` and `plot_fit` two of them, `plot_nca_grid` one per sample), and a logarithmic axis is `log_x` or `log_y`, with plain tick labels (`10`, `100`) rather than powers of ten; an axis without a positive value stays linear and says so in a debug log. `draw_nca_panel` draws a single NCA panel into an axes and returns the `Axes`, for a figure the caller lays out itself.
 
+## The data of this page
+
+The snippet below builds the `batch`, the `result` and the single curve `tc` every snippet of this page draws, and writes the two figures of the next two sections; it is the dose escalation of `examples/nca_batch.py`. The fit, the bioequivalence and the meta-analysis figures further down use the results of [Curve fitting](fitting.md) and [Statistics](statistics.md), whose pages build them the same way.
+
+```python
+import numpy as np
+
+from pkpdutils import Route, Timecourses, nca
+from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid
+
+# a dose escalation of four individuals at three dose levels
+rng = np.random.default_rng(1)
+time = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
+doses = np.array([50.0, 100.0, 200.0])
+ke = rng.uniform(0.15, 0.3, size=4)
+ka = rng.uniform(1.0, 3.0, size=4)
+values = np.stack(
+    [
+        np.stack(
+            [
+                d
+                / 40
+                * ka[j]
+                / (ka[j] - ke[j])
+                * (np.exp(-ke[j] * time) - np.exp(-ka[j] * time))
+                * rng.lognormal(0, 0.05, size=time.size)
+                for j in range(4)
+            ]
+        )
+        for d in doses
+    ]
+)
+batch = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose", "individual"),
+    coords={"dose": doses, "individual": ["s1", "s2", "s3", "s4"]},
+    dose={"amount": np.broadcast_to(doses[:, None], (3, 4)), "unit": "mg"},
+    route=Route.ORAL,
+    substance="drug",
+)
+result = nca(batch)
+tc = batch.sel(dose=50.0, individual="s1")  # one curve of the batch
+
+plot_mean_timecourse(batch, by="dose").savefig("mean_curves.png", dpi=120)
+plot_nca_grid(batch, result, ncols=4).savefig("nca_grid.png", dpi=100)
+```
+
 ## Timecourses
 
 `plot_mean_timecourse` is the concentration-time figure of a study report: the mean of every group at every time point, the band of its spread around it, the individual curves faint behind both, on a linear and a semi-logarithmic panel. `by` names the coordinate the groups come from (a dose level, a treatment, an arm) and `spread` the statistic of the band, `"sd"`, `"se"` or `None`; the reduction is `Timecourses.groupby` and `Timecourses.mean`, so the band is the scatter of the curves. The legend is drawn once, on the first panel, and names every group with the number of subjects behind its mean.
@@ -13,7 +63,7 @@ from pkpdutils.plot import plot_mean_timecourse
 
 fig = plot_mean_timecourse(batch, by="dose", spread="sd")
 fig = plot_mean_timecourse(
-    batch, by="arm", spread="se", individuals=False, panels=("log",)
+    batch, by="dose", spread="se", individuals=False, panels=("log",)
 )
 fig.savefig("mean_curves.png")
 ```
@@ -28,9 +78,11 @@ fig.savefig("mean_curves.png")
 from pkpdutils.plot import plot_timecourse
 
 fig = plot_timecourse(batch, log_y=True, by="dose")  # one color per dose
-fig = plot_timecourse(batch, facet="dose", by="sex")  # one panel per dose
+fig = plot_timecourse(tc)  # the single curve of the batch
 fig.savefig("curves.png")
 ```
+
+`facet` needs a second coordinate, `plot_timecourse(batch, facet="dose", by="sex")` with a `sex` along the individual dimension.
 
 `plot_timecourse` of a single curve and of a batch (`examples/timecourses.py`), and of a dose scan with `by` (`examples/nca_from_sbmlsim.py`):
 
@@ -49,11 +101,14 @@ A curve carrying a dosing protocol of more than one dose gets a thin dotted vert
 ```python
 import matplotlib.pyplot as plt
 
+from pkpdutils import nca_single
 from pkpdutils.plot import draw_nca_panel, plot_nca, plot_nca_grid
 
 single = nca_single(tc)
 fig = plot_nca(tc, single)
-fig = plot_nca(batch.sel(individual="s2"), result, individual="s2")
+fig = plot_nca(
+    batch.sel(dose=50.0, individual="s2"), result, dose=50.0, individual="s2"
+)
 fig = plot_nca_grid(batch, result, ncols=4)
 
 # one panel into an axes of a figure the caller lays out
@@ -74,6 +129,8 @@ draw_nca_panel(tc, values, single.flags(), log_y=True, ax=axes[1])
 ```python
 from pkpdutils.plot import plot_intervals
 
+# `result`: the NCAResult of a multiple dose batch, see the steady state
+# walk-through of [Workflows](workflows.md)
 fig = plot_intervals(result, "interval_ctrough")  # one line per sample
 fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 ```
@@ -85,6 +142,7 @@ fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 ```python
 from pkpdutils.plot import plot_troughs
 
+# the same multiple dose result, with an "arm" coordinate along its samples
 fig = plot_troughs(result, by="arm")  # mean +- sd per arm
 fig = plot_troughs(result, x="interval", spread="se")
 ```
@@ -98,6 +156,7 @@ fig = plot_troughs(result, x="interval", spread="se")
 ```python
 from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of_fit
 
+# `result`, `fits` and `power`: the FitResult objects of the fitting page
 fig = plot_fit(result, log_y=True)  # 0-D result: no indexers
 fig = plot_fit(fits, individual="s2", log_x=True)  # one sample of a batch
 fig = plot_goodness_of_fit(fits, log_x=True, log_y=True)
@@ -128,7 +187,8 @@ fig = plot_dose_proportionality(
 from pkpdutils.plot import plot_bland_altman, plot_forest, plot_parameters, plot_ratio
 from pkpdutils.stats import DDIThresholds
 
-fig = plot_parameters(result, "auc_inf_obs", "individual", by="sex", log_y=True)
+# `be`, `auc_ratio`, `cmax_ratio` and `meta`: the results of the statistics page
+fig = plot_parameters(result, "auc_inf_obs", "individual", by="dose", log_y=True)
 fig = plot_ratio(be, labels={"auc_inf_obs": "AUC(0-inf)", "cmax": "Cmax"})
 fig = plot_ratio(
     {"auc": auc_ratio, "cmax": cmax_ratio}, limits=None, thresholds=DDIThresholds.fda()
@@ -154,7 +214,7 @@ fig = plot_bland_altman(fit_result, log_ratio=True)
 from pkpdutils.plot import PlotStyle
 
 style = PlotStyle(fit_color="tab:red", auc_color="lightgray", alpha=0.3)
-fig = plot_nca(tc, result, style=style)
+fig = plot_nca(tc, nca_single(tc), style=style)
 ```
 
 The reference of the module is in [API: plot](api/plot.md).

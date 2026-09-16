@@ -225,6 +225,28 @@ uv run python scripts/render_examples.py nca_single emax  # a selection
 
 Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.png)`.
 
+A page only embeds a figure an example writes, so the committed images and the pages cannot drift apart: a snippet of the documentation which draws the same figure as an example builds the same data, and a figure nothing produces is described in a sentence instead.
+
+### Snippets of the documentation
+
+Every ` ```python ` block of the user guide and of [Workflows](workflows.md) follows two rules:
+
+- **It runs.** The first block of the usage section of a page is self-contained (its imports, its data, the call and the output it prints) and runs from the root of the repository with warnings as errors:
+
+    ```bash
+    uv run python -W error snippet.py
+    ```
+
+    A later block of the same page may be a fragment, but then it names in a comment or in the sentence before it where every object it uses comes from ("the `batch` of the snippet above"). The output a snippet prints is shown below it, as a `text` block or as a markdown table, and is pasted from a run, never written by hand.
+
+- **It is formatted.** `ruff format` formats the code blocks of the markdown files as well, so `ruff format --check` covers the documentation and a snippet is written the way ruff would write it:
+
+    ```bash
+    uv run ruff format docs/
+    ```
+
+The walk-throughs of [Workflows](workflows.md) are the longest of these snippets: they simulate their study in the first lines so that a reader can paste them anywhere, and the figures they save are the figures of the examples of the same data.
+
 ### Files for agents { #files-for-agents }
 
 Agents and language models read markdown, not rendered html. `scripts/llms_txt.py` writes the files of the [llms.txt convention](https://llmstxt.org/) into the built site, i.e., [llms.txt](https://matthiaskoenig.github.io/pkpdutils/llms.txt) as an annotated index of all pages, [llms-full.txt](https://matthiaskoenig.github.io/pkpdutils/llms-full.txt) with the complete documentation in a single file, and the markdown of every page next to its html (`/nca.md` for `/nca/`). The markdown of the API reference is generated from the docstrings with `inspect`, since the pages themselves only contain the mkdocstrings directive.

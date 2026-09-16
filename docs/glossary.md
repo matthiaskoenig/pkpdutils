@@ -63,3 +63,22 @@ The names used for the variables of the result datasets, with their symbols and 
 | `kind`, `strength`, `uncertain` | | class of an interaction (inhibitor, inducer), its strength and whether the interval spans a boundary | – | [Statistics](statistics.md) |
 | `estimate`, `variance`, `weight_fixed`, `weight_random` | \(\theta_i\), \(v_i\), \(w_i\) | effect of a study, its variance and its normalized weights in the pooling | – | [Statistics](statistics.md) |
 | `q`, `i2`, `h2`, `tau2` | \(Q\), \(I^2\), \(H^2\), \(\tau^2\) | heterogeneity statistics of a meta-analysis | –, %, –, – | [Statistics](statistics.md) |
+
+## Statistics of the parameter tables
+
+The columns `summary_table` writes, every one of them read from the summary of `ParameterResult.summarize(dim)` and formatted with `digits` significant digits as a string. `stats=` selects them and their order; the default is `n`, `mean`, `sd`, `cv`, `geomean`, `geocv`, `median`, `min`, `max`. A statistic a parameter does not carry, such as the standard deviation of a parameter read from the sampling grid, is an empty cell.
+
+| statistic | variable | meaning |
+| --- | --- | --- |
+| `n` | `x_n` | number of samples at which the parameter is finite |
+| `mean` | `x` | arithmetic mean over the samples |
+| `sd` | `x_sd` | standard deviation over the samples |
+| `se` | `x_se` | standard error of the mean, \(\mathrm{sd}/\sqrt{n}\) |
+| `cv` | `x_cv` | coefficient of variation, a fraction in the result and a percentage in the table |
+| `geomean` | `x_geomean` | geometric mean (log-normal parameters only) |
+| `geocv` | `x_geocv` | geometric coefficient of variation, a percentage in the table |
+| `median`, `q25`, `q75` | `x_median`, `x_q25`, `x_q75` | median and quartiles |
+| `min`, `max` | `x_min`, `x_max` | smallest and largest value |
+| `range` | `x_min`, `x_max` | `min - max` in one cell |
+
+The columns of the other tables: `ratio_table` writes `parameter`, `unit`, `n_test`, `n_reference`, `gmr`, `ci_low`, `ci_high`, `ci_level` and, for a bioequivalence result, `cv_intra`, `limits` and `bioequivalent`; `ddi_table` writes `ratio`, `ci_low`, `ci_high`, `kind`, `strength`, `uncertain` and `source` per parameter; `proportionality_table` writes `slope`, `ci_low`, `ci_high`, `bound_low`, `bound_high`, `dose_low`, `dose_high` and `verdict`.

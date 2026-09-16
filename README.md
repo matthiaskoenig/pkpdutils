@@ -23,6 +23,41 @@ The documentation is available at [https://matthiaskoenig.github.io/pkpdutils](h
 
 If you have any questions or issues please [open an issue](https://github.com/matthiaskoenig/pkpdutils/issues).
 
+## Quickstart
+
+A study of twelve subjects in three dose groups, from the event table it arrives in to the parameter table and the figure of the report:
+
+```python
+import pandas as pd
+
+from pkpdutils import Route, Timecourses, nca, summary_table
+from pkpdutils.plot import plot_mean_timecourse
+
+events = pd.read_csv("study.csv")  # ID, TIME, DV, AMT, EVID and a dose group
+batch = Timecourses.from_events(
+    events,
+    time_unit="hr",
+    unit="mg/l",
+    dose_unit="mg",
+    route=Route.ORAL,
+    covariates=["dose"],
+)
+result = nca(batch)
+print(
+    summary_table(
+        result,
+        "individual",
+        by="dose",
+        parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
+    ).to_string(index=False)
+)
+plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
+```
+
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/images/nca_batch_curves.png)
+
+The same steps with the table built in place, the parameters printed and four more walk-throughs (bioequivalence, drug-drug interaction, steady state, dose proportionality) are in the [Workflows](https://matthiaskoenig.github.io/pkpdutils/workflows/) of the documentation; the [Gallery](https://matthiaskoenig.github.io/pkpdutils/gallery/) shows a figure and a snippet for every example of the repository.
+
 ## How to cite
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3997539.svg)](https://doi.org/10.5281/zenodo.3997539)
 

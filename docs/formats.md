@@ -4,6 +4,21 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 
 ## Concepts
 
+Three layouts, three readers, one batch:
+
+```mermaid
+flowchart LR
+  EV["NONMEM / Monolix<br/>event records<br/>ID, TIME, DV, AMT, EVID, MDV"] --> RE["read_events<br/>ADDL/II expansion<br/>SS history<br/>RATE/TINF duration"]
+  PK["PKNCA<br/>concentration table<br/>+ dose table"] --> RP["read_pknca<br/>joined on the subject"]
+  AD["CDISC ADaM ADNCA<br/>USUBJID, AVAL, AFRLT, ARRLT"] --> RA["read_adnca<br/>dose times = AFRLT - ARRLT<br/>DTYPE == COPY dropped"]
+  RE --> BB["one sample dimension, one route,<br/>a Dosing per subject,<br/>constant columns -> coordinates"]
+  RP --> BB
+  RA --> BB
+  BB --> T["Timecourses"]
+  T -->|"write_events / to_events"| EV
+  T --> N["nca"]
+```
+
 **Event records.** NONMEM and Monolix exchange data as one row per event of one subject: a row is a dose or an observation, and the columns describe what happened at that time - `AMT`/`DV` the amount or the value, `EVID`/`MDV` which kind of row it is. Repeated dosing does not need one row per dose: `ADDL`/`II` expand one dose record into several at a fixed interval, and `SS` marks a dose as already at steady state, standing for a dosing history rather than a single administration. With an `EVID` column the two rules are read independently, so a row may be a dose (`EVID 1`) and carry an observed value; without one a row with `AMT > 0` is a dose and nothing else, as NM-TRAN reads such a table, and a `DV` on it is ignored with a warning. A table which records a dose and a sample in one row therefore needs an `EVID` column.
 
 **The two table layout.** PKNCA keeps the concentrations and the doses in separate tables, joined by the subject (and, for a multi-analyte or multi-period study, further grouping columns). This is closer to how data usually arrives from a bioanalytical lab and a dosing log than the single event table, and `pkpdutils.io.read_pknca` reads both without merging them first.
@@ -35,16 +50,54 @@ Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and th
 | `CMT`/`ADM` | compartment | not interpreted, not a route |
 
 ```python
+import io
+
 import pandas as pd
 
 from pkpdutils import Route, Timecourses
 
-df = pd.read_csv("study_events.csv")
+# a small event table: two subjects, one dose record each which stands for two
+# doses twelve hours apart (ADDL/II), and the body weight as a covariate
+table = """ID,TIME,DV,AMT,EVID,MDV,ADDL,II,WT
+1,0,.,100,1,1,1,12,70
+1,1,5.1,.,0,0,.,.,70
+1,4,3.9,.,0,0,.,.,70
+1,12,1.2,.,0,0,.,.,70
+1,13,5.4,.,0,0,.,.,70
+1,24,1.4,.,0,0,.,.,70
+2,0,.,100,1,1,1,12,85
+2,1,4.4,.,0,0,.,.,85
+2,4,3.4,.,0,0,.,.,85
+2,12,1.0,.,0,0,.,.,85
+2,13,4.7,.,0,0,.,.,85
+2,24,1.1,.,0,0,.,.,85
+"""
+events = pd.read_csv(io.StringIO(table))  # a file: pd.read_csv("study_events.csv")
 batch = Timecourses.from_events(
-    df, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+    events,
+    time_unit="hr",
+    unit="ng/ml",
+    dose_unit="mg",
+    route=Route.ORAL,
+    substance="drug",
+    covariates=["WT"],
 )
-events = batch.to_events()  # the inverse, one row per dose and observation
+print(batch.sample_dims, batch.sample_shape, batch.ds["WT"].values)
+print(batch.dosing_of(individual=1))
+print(batch.to_events().head(4).to_string(index=False))  # the inverse
 ```
+
+```text
+('individual',) (2,) [70 85]
+amounts=array([100., 100.]) times=array([ 0., 12.]) durations=None unit='mg' route=<Route.ORAL: 'oral'>
+ ID  TIME  DV   AMT  EVID  MDV  RATE  WT
+  1   0.0 NaN 100.0     1    1   0.0  70
+  1   1.0 5.1   0.0     0    0   0.0  70
+  1   4.0 3.9   0.0     0    0   0.0  70
+  1  12.0 NaN 100.0     1    1   0.0  70
+```
+
+The one dose record of the table became a protocol of two doses, the weight became a coordinate of the batch, and `to_events` writes the expanded protocol back as one row per dose. The batch is the input of `nca`, which analyses both dosing intervals, see [Non-compartmental analysis](nca.md).
 
 `examples/formats.py` writes a twice daily batch as event records, reads it back and analyses every dosing interval of the round trip:
 
@@ -65,12 +118,48 @@ events = batch.to_events()  # the inverse, one row per dose and observation
 | `covariates` | none | either | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
+import io
+
+import pandas as pd
+
 from pkpdutils import Route, Timecourses
 
-batch = Timecourses.from_pknca(
-    conc_df, dose_df, time_unit="hr", unit="ng/ml", dose_unit="mg", route=Route.ORAL
+conc = pd.read_csv(
+    io.StringIO(
+        """subject,treatment,time,conc
+1,A,0,0
+1,A,1,4.2
+1,A,4,3.0
+1,A,12,1.0
+2,B,0,0
+2,B,1,4.0
+2,B,4,2.9
+2,B,12,1.1
+"""
+    )
 )
+doses = pd.read_csv(
+    io.StringIO(
+        """subject,treatment,time,dose
+1,A,0,100
+2,B,0,100
+2,B,12,100
+"""
+    )
+)
+batch = Timecourses.from_pknca(
+    conc,
+    doses,
+    time_unit="hr",
+    unit="ng/ml",
+    dose_unit="mg",
+    route=Route.ORAL,
+    covariates=["treatment"],
+)
+print(batch.ds["treatment"].values, batch.n_doses)  # ['A' 'B'] [1 2]
 ```
+
+The two tables are the fixtures `tests/data/formats/pknca_conc.csv` and `pknca_dose.csv` of the repository; the second subject has two dose records and therefore a protocol of two doses, the first one a single dose.
 
 ## CDISC ADaM ADNCA
 
@@ -91,12 +180,39 @@ batch = Timecourses.from_pknca(
 | `covariates` | none | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
+import io
+
 import pandas as pd
 
 from pkpdutils import Timecourses
 
-batch = Timecourses.from_adnca(pd.read_csv("adnca.csv"), analyte="XAN")
+# one row per concentration record; the pre-dose sample of the second interval
+# is duplicated into the first one (DTYPE == COPY) and is dropped
+adnca = pd.read_csv(
+    io.StringIO(
+        """USUBJID,PARAMCD,AVAL,AVALU,AFRLT,ARRLT,DOSEA,DOSEU,ROUTE,DTYPE,ALLOQ
+S1,XAN,0.05,ng/mL,0.5,0.5,100,mg,ORAL,,0.1
+S1,XAN,4.2,ng/mL,1,1,100,mg,ORAL,,0.1
+S1,XAN,1.0,ng/mL,12,12,100,mg,ORAL,,0.1
+S2,XAN,4.0,ng/mL,1,1,100,mg,ORAL,,0.1
+S2,XAN,1.1,ng/mL,12,12,100,mg,ORAL,,0.1
+S2,XAN,1.1,ng/mL,12,0,100,mg,ORAL,COPY,0.1
+S2,XAN,5.5,ng/mL,13,1,100,mg,ORAL,,0.1
+S2,XAN,2.0,ng/mL,24,12,100,mg,ORAL,,0.1
+"""
+    )
+)
+batch = Timecourses.from_adnca(adnca, analyte="XAN")
+for label in batch.ds["individual"].to_numpy():
+    print(label, batch.dosing_of(individual=str(label)).times)
 ```
+
+```text
+S1 [0.]
+S2 [ 0. 12.]
+```
+
+The dose times were recovered from `AFRLT - ARRLT`: the first subject was dosed once, the second one twice. The same extract is the fixture `tests/data/formats/adnca.csv` of the repository and `examples/formats.py` reads it.
 
 ## What is not read
 

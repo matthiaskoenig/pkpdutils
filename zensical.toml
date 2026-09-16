@@ -24,6 +24,7 @@ extra_javascript = [
 nav = [
   { "Home" = "index.md" },
   { "Installation" = "installation.md" },
+  { "Workflows" = "workflows.md" },
   { "User guide" = [
     { "Units" = "units.md" },
     { "Timecourses" = "timecourses.md" },
@@ -171,7 +172,10 @@ pymdownx.keys = {}
 pymdownx.magiclink = {}
 pymdownx.mark = {}
 pymdownx.smartsymbols = {}
-pymdownx.superfences = {}
+# the ```mermaid fences of the diagrams of the user guide, rendered in the browser
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tabbed.alternate_style = true
 pymdownx.tasklist.custom_checkbox = true
 pymdownx.tilde = {}

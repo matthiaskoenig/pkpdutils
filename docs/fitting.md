@@ -24,6 +24,32 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 
 **Units.** The parameters are reported in the raw units of the data: `k` in `1/[x]`, `a` in `[y]`, `auc` in `[y]·[x]`, `slope` in `[y]/[x]`. Nothing is normalized to liter or liter per hour as in the NCA, so the parameters, the data and the predicted curve always live on the same scale.
 
+What one row of a fit does, from the data and the model to the result:
+
+```mermaid
+flowchart TD
+  D["x, y (+ sd)"] --> W["Weighting<br/>NONE | INV_Y | INV_Y2 | INV_SD"]
+  M["Model<br/>predict, derived, initial_guess"] --> G["the initial guess<br/>(log-linear regression,<br/>curve stripping, half-way crossing)"]
+  W --> R["weighted residuals r_i"]
+  G --> SC["search space q<br/>log10 for the positive parameters"]
+  SC --> MS["n_starts Latin hypercube starts<br/>around the guess"]
+  MS --> LS["scipy.optimize.least_squares<br/>keep the best converged solution"]
+  R --> LS
+  LS --> COV["covariance from the Jacobian<br/>cov(q) = s^2 (J'J)^-1"]
+  COV --> SE["p_se, t intervals,<br/>transformed back to the linear scale"]
+  COV --> DEL["derived parameters<br/>delta method, numerical gradient"]
+  LS --> BS{"FitOptions.bootstrap?"}
+  BS -->|"B > 0"| RB["residual bootstrap<br/>percentile intervals<br/>flag BOOTSTRAP_FALLBACK below 2"]
+  BS -->|"0"| SE
+  LS --> GOF["r2, rmse, aic, aicc, bic<br/>K = k + 1"]
+  SE --> OUT["FitResult"]
+  DEL --> OUT
+  RB --> OUT
+  GOF --> OUT
+  OUT --> CM["compare_models<br/>AICc, Akaike weights"]
+  OUT --> PT["proportionality_test<br/>the criterion of Smith et al."]
+```
+
 ## Math
 
 Weighted residuals and the objective, with the scipy cost \(\mathrm{cost} = \tfrac12 \sum_i \rho(r_i^2)\) (\(\rho(z) = z\) for `loss="linear"`):
@@ -125,9 +151,15 @@ One curve:
 
 ```python
 import numpy as np
-from pkpdutils import FitOptions, fit
-from pkpdutils.fit import Weighting
-from pkpdutils.fit.models import Bateman
+
+from pkpdutils import Bateman, FitOptions, Weighting, fit
+
+# an oral curve with 5 % noise and the standard deviations of the group
+rng = np.random.default_rng(0)
+t = np.array([0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 24])
+c = 5.0 * 1.2 / (1.2 - 0.15) * (np.exp(-0.15 * t) - np.exp(-1.2 * t))
+sd = 0.05 * c
+c = c * rng.lognormal(0, 0.05, t.size)
 
 result = fit(
     Bateman(),
@@ -139,20 +171,36 @@ result = fit(
     options=FitOptions(weighting=Weighting.INV_SD, n_starts=5, seed=0),
 )
 q = result.to_quantities()
-q["ka"], q["ka_ci_low"], q["tmax"]  # parameters and derived, as pint quantities
-result.predict(np.linspace(0, 24, 100))  # the fitted curve
-result.correlation()  # correlation matrix of the parameters
-result.flags()  # e.g. ['AT_BOUND']
+for name in ("a", "ka", "ke", "tmax", "cmax", "thalf", "auc"):
+    print(f"{name:<6} {q[name]:~P}")
+print(f"ka 95 % interval {q['ka_ci_low']:~P} - {q['ka_ci_high']:~P}")
+print("r2", round(float(result["r2"]), 4), "| flags", result.flags())
+print(result.predict(np.array([0.0, 1.0, 4.0])).round(3))  # the fitted curve
 ```
+
+```text
+a      5.1233145604293835 mg/l
+ka     1.1679414997936728 1/h
+ke     0.15360699594336222 1/h
+tmax   1.9999326676335676 h
+cmax   3.7682019656913637 mg/l
+thalf  4.512471429462247 h
+auc    33.3533933722553 h⋅mg/l
+ka 95 % interval 1.0663803842676483 1/h - 1.2791752052688965 1/h
+r2 0.9953 | flags []
+[0.    3.225 3.136]
+```
+
+The rate constants come back where the curve was built (1.2 and 0.15 per hour), the parameters carry the raw units of the data, and the derived `tmax`, `cmax`, `thalf` and `auc` come with their own standard errors and intervals. `result.correlation()` is the correlation matrix of the parameters, which says how much the fit could trade one against another.
 
 `FitOptions` also carries `fixed`, `bounds` and `initial` per parameter name, `loss`, `ci_level`, `bootstrap`, `n_workers` and the scipy tolerances.
 
 A single `Timecourse` is fitted by `fit_timecourse`, which takes the times relative to the dose and the units from the curve and returns a result without a sample dimension, so nothing has to be indexed:
 
 ```python
-from pkpdutils import fit_timecourse
-from pkpdutils.fit.models import Bateman
+from pkpdutils import Bateman, FitOptions, fit_timecourse
 
+# `timecourse`: one oral curve, e.g. the `tc` of the Timecourses page
 result = fit_timecourse(Bateman(), timecourse, options=FitOptions(n_starts=5, seed=1))
 result.to_quantities()["ka"]  # no indexer, the result is one sample
 ```
@@ -164,9 +212,9 @@ result.to_quantities()["ka"]  # no indexer, the result is one sample
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
 ```python
-from pkpdutils import fit_timecourses
-from pkpdutils.fit.models import BiExp
+from pkpdutils import BiExp, FitOptions, fit_timecourses
 
+# `batch`: a Timecourses over "individual", e.g. the one of the NCA page
 fits = fit_timecourses(BiExp(), batch, options=FitOptions(n_starts=10, seed=1))
 fits["k1"]  # DataArray over the sample dims of the batch
 fits.to_dataframe()  # one row per sample, flags decoded
@@ -180,15 +228,70 @@ fits.summarize("individual")  # mean, sd, se, interval over the individuals
 A parameter against a dose or a covariate is fitted along one dimension of any dataset, the result of another analysis included:
 
 ```python
-from pkpdutils import compare_models, fit_table, proportionality_test
-from pkpdutils.fit import proportionality_table
-from pkpdutils.fit.models import Allometric, BiExp, MonoExp, Power
+import numpy as np
 
-power = fit_table(Power(), nca_result.ds, "dose", "auc_inf_obs", dim="dose")
-test = proportionality_test(power, dose_range=(25, 400))
-test.slope, test.bounds, bool(test.proportional), bool(test.inconclusive)
-test.to_dict()  # the verdict as plain python values
-proportionality_table(test)  # the formatted table of the verdict
+from pkpdutils import Power, Route, Timecourses, fit_table, nca, proportionality_test
+from pkpdutils.fit import proportionality_table
+
+# the exposure of a dose escalation, five dose groups
+time = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
+doses = np.array([25.0, 50.0, 100.0, 200.0, 400.0])
+rng = np.random.default_rng(4)
+values = np.stack(
+    [
+        d**1.15 / 10 * np.exp(-0.25 * time) * rng.lognormal(0, 0.04, time.size)
+        for d in doses
+    ]
+)
+batch = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose",),
+    coords={"dose": doses},
+    dose={"amount": doses, "unit": "mg"},
+    route=Route.IV_BOLUS,
+    substance="drug",
+)
+result = nca(batch)
+
+# the dose coordinate of an NCAResult carries no unit, the fit needs one
+ds = result.ds.assign_coords(dose=("dose", doses, {"units": "mg"}))
+power = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
+print(
+    power.to_dataframe()
+    .T.loc[["a", "b", "b_se", "b_ci_low", "b_ci_high", "r2"]]
+    .to_string(header=False)
+)
+
+test = proportionality_test(power, dose_range=(25.0, 400.0))
+print(test.to_dict())  # the verdict as plain python values
+print(proportionality_table(test).to_string(index=False))
+```
+
+```text
+a          0.384314
+b           1.15642
+b_se       0.005503
+b_ci_low   1.138906
+b_ci_high  1.173933
+r2         0.999973
+{'slope': 1.15641953119868, 'ci_low': 1.138906039242174, 'ci_high': 1.173933023155186, 'bounds': [0.9195179762781595, 1.0804820237218407], 'proportional': False, 'inconclusive': False, 'dose_range': [25.0, 400.0], 'criterion': [0.8, 1.25]}
+slope ci_low ci_high bound_low bound_high dose_low dose_high          verdict
+ 1.16   1.14    1.17     0.920       1.08     25.0       400 not proportional
+```
+
+`proportionality_table` is the table a dose escalation reports: the exponent with its interval, the acceptance bounds the criterion derives from the dose range and the verdict, one row per sample and every number formatted with `digits` significant digits.
+
+| slope | ci_low | ci_high | bound_low | bound_high | dose_low | dose_high | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.16 | 1.14 | 1.17 | 0.920 | 1.08 | 25.0 | 400 | not proportional |
+
+The other two front ends of `fit_table` and the model comparison, with the `t` and `c` of the first snippet of this section and a dataset `ds` of a clearance per individual with a `weight` coordinate:
+
+```python
+from pkpdutils import Allometric, BiExp, MonoExp, compare_models, fit_table
 
 allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="individual")
 
@@ -197,17 +300,11 @@ comparison.table  # one row per sample and model, with delta_aicc and akaike_wei
 comparison.best  # name of the best model per sample
 ```
 
-The power model of a dose escalation (`examples/dose_proportionality.py`) and the allometric model of a clearance against the body weight (`examples/covariate.py`):
+The power model of the dose escalation above (`examples/dose_proportionality.py`) and the allometric model of a clearance against the body weight (`examples/covariate.py`):
 
 ![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
 
 ![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
-
-`proportionality_table` is the table a dose escalation reports: the exponent with its interval, the acceptance bounds the criterion derives from the dose range and the verdict, one row per sample and every number formatted with `digits` significant digits.
-
-| slope | ci_low | ci_high | bound_low | bound_high | dose_low | dose_high | verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1.06 | 1.04 | 1.08 | 0.893 | 1.11 | 25.0 | 200 | proportional |
 
 The units of `fit_table` come from `attrs["units"]` of the `x` and `y` variables and fall back to `dimensionless`, so a coordinate without units (the `dose` of an `NCAResult`) is best given one before the fit. A sample dimension must not share its name with a variable of the result (a dimension `k` with a model that has a rate constant `k` raises a `ValueError`), and the candidate models of `compare_models` need distinct names, which `Allometric(exponent=0.75)` gets as `allometric_0.75`.
 
