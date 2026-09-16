@@ -262,6 +262,10 @@ def comparison() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+#: deviations below this are the floating point noise of the platform
+MACHINE_LEVEL = 1e-12
+
+
 def format_deviation(row: pd.Series) -> str:
     if row["n"] == 0:
         return "not compared"
@@ -270,6 +274,12 @@ def format_deviation(row: pd.Series) -> str:
         return "0"
     if math.isinf(value):
         return "infinite"
+    if value < MACHINE_LEVEL:
+        # the last bits of the floating point arithmetic differ between the
+        # platforms (a 3.7e-15 on linux is a 4.1e-15 on windows), so a
+        # deviation at that level is reported as a bound, not as a number,
+        # and the committed table reproduces everywhere
+        return f"< {MACHINE_LEVEL:.0e}"
     return f"{value:.1e}"
 
 
