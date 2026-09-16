@@ -1278,6 +1278,19 @@ def test_select_errors() -> None:
         tcs.select(individual="zzz")
     with pytest.raises(ValueError, match="no sample of the batch"):
         tcs.select(individual=["zzz", "yyy"])
+    # every label of a list has to be in the batch, a missing one is not
+    # silently dropped from the selection
+    with pytest.raises(
+        ValueError, match="no sample of the batch has individual = 'zzz'"
+    ):
+        tcs.select(individual=["s1", "zzz"])
+    with pytest.raises(ValueError, match="no sample of the batch has arm = 'typo'"):
+        tcs.select(arm=["a", "typo"])
+    with pytest.raises(ValueError, match="'yyy', 'zzz'"):
+        tcs.select(individual=["s1", "yyy", "zzz"])
+    # a slice is a range and is not checked label by label
+    assert tcs.select(individual=slice("s0", "s2")).n_samples == 2
+    assert tcs.select(weight=slice(0.0, 75.0)).n_samples == 1
 
 
 def test_groupby_partitions_in_order_of_appearance() -> None:

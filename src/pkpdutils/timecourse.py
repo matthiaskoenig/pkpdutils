@@ -1482,6 +1482,31 @@ def _label_mask(labels: np.ndarray, value: Any) -> np.ndarray:
     return labels == value
 
 
+def _missing_labels(labels: np.ndarray, value: Any) -> list[Any]:
+    """The labels of a list selection which no entry of a coordinate carries.
+
+    A list names the samples the caller expects, so a label which is not there
+    is a mistake (a typo, a subject of another batch) and not an empty
+    selection: `select(individual=["a", "zzz"])` must say so instead of
+    silently returning the batch of `a`. A `slice` is a range and a single
+    label is reported by the caller when nothing matches it, so neither is
+    checked here.
+
+    Args:
+        labels: the values of the coordinate.
+        value: the selection, as given to `select`.
+
+    Returns:
+        The requested labels which no entry carries, in the order they were
+        given; empty for a slice, a single label or a list which matches.
+    """
+    if not isinstance(value, list | tuple | np.ndarray):
+        return []
+    return [
+        label for label in np.asarray(value).tolist() if not (labels == label).any()
+    ]
+
+
 def _dose_variables(
     amounts: np.ndarray,
     times: np.ndarray,
@@ -2880,6 +2905,11 @@ class Timecourses:
         position instead, where a `slice` is the usual python slice with an
         exclusive stop.
 
+        A list names the samples the caller expects, so every label of it has
+        to be in the batch: a list holding a label which no sample carries
+        raises and names it, rather than quietly returning the samples of the
+        other labels. A `slice` is a range and is not checked that way.
+
         Args:
             **indexers: label, list of labels or slice per sample dimension or
                 coordinate along one.
@@ -2889,7 +2919,8 @@ class Timecourses:
 
         Raises:
             ValueError: if a name is neither a sample dimension nor a
-                coordinate along one, or if no sample of the batch matches.
+                coordinate along one, if a label of a list is not in the
+                batch, or if no sample of the batch matches.
         """
         ds = self.ds
         for name, value in indexers.items():
@@ -2906,6 +2937,12 @@ class Timecourses:
                 # label which no sample carries is a `ValueError` naming it
                 # and not a `KeyError` of the index
                 labels = ds[name].to_numpy()
+                missing = _missing_labels(labels, value)
+                if missing:
+                    raise ValueError(
+                        f"no sample of the batch has {name} = "
+                        + ", ".join(repr(label) for label in missing)
+                    )
                 mask = _label_mask(labels, value)
                 ds = ds.isel({dim: np.flatnonzero(mask)})
             if ds.sizes[dim] == 0:
