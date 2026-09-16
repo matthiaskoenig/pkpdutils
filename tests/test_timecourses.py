@@ -1267,6 +1267,12 @@ def test_select_by_label_list_slice_and_coordinate() -> None:
     ].to_numpy().tolist() == ["s3"]
 
 
+def test_select_slice_bounds_must_match_the_labels() -> None:
+    tcs = make_study()
+    with pytest.raises(ValueError, match="by label"):
+        tcs.select(individual=slice(0, 2))
+
+
 def test_select_errors() -> None:
     tcs = make_study()
     with pytest.raises(ValueError, match="neither a sample dimension"):

@@ -1469,13 +1469,23 @@ def _label_mask(labels: np.ndarray, value: Any) -> np.ndarray:
 
     Returns:
         The boolean mask of the selected entries.
+
+    Raises:
+        ValueError: if the bounds of a slice cannot be compared with the labels,
+            e.g. integer bounds on string labels.
     """
     if isinstance(value, slice):
         mask = np.ones(labels.shape, dtype=bool)
-        if value.start is not None:
-            mask &= labels >= value.start
-        if value.stop is not None:
-            mask &= labels <= value.stop
+        try:
+            if value.start is not None:
+                mask &= labels >= value.start
+            if value.stop is not None:
+                mask &= labels <= value.stop
+        except TypeError as error:
+            raise ValueError(
+                f"the slice {value!r} cannot be compared with labels of type "
+                f"{labels.dtype}; a slice of a labelled dimension is by label"
+            ) from error
         return mask
     if isinstance(value, list | tuple | np.ndarray):
         return np.isin(labels, np.asarray(value))
