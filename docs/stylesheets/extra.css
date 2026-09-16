@@ -10,11 +10,3 @@
 .md-typeset .grid.cards > ul > li > p > img {
   width: 100%;
 }
-
-/* a mermaid diagram laid out from left to right is wider than the 688 px
-   content column, which the renderer answers by scaling the whole diagram
-   down to about half its size; a horizontal scroll bar keeps the boxes and
-   their labels readable instead. */
-.md-typeset .mermaid {
-  overflow-x: auto;
-}

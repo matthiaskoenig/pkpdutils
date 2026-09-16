@@ -1176,6 +1176,30 @@ def _counts_vary_over_time(subjects: np.ndarray) -> bool:
     return bool(np.any(finite.any(axis=1) & (low != _counts_per_sample(subjects))))
 
 
+def _count_layout(
+    rest: tuple[str, ...], count: np.ndarray
+) -> tuple[tuple[str, ...], np.ndarray, dict[str, str]]:
+    """The `n` variable of a group curve in the layout of the batch constructors.
+
+    A count which is the same at every time point of a group is stored per
+    sample, as `from_timecourses` stores it, so a group curve of a batch on a
+    shared grid round trips through the constructors unchanged; a count which
+    varies along the grid (a ragged batch) is stored over `time`.
+
+    Args:
+        rest: the remaining sample dimensions of the group curve.
+        count: the counts, shape `(*rest, n_time)`.
+
+    Returns:
+        The `(dims, data, attrs)` triple of the variable.
+    """
+    attrs = {"units": "dimensionless"}
+    first = count[..., :1]
+    if count.shape[-1] and np.all(count == first):
+        return (rest, first[..., 0], attrs)
+    return ((*rest, TIME_DIM), count, attrs)
+
+
 def _batch_counts(subjects: np.ndarray) -> np.ndarray:
     """The `n` of a batch: one count per sample, or the counts per time point.
 
@@ -3156,7 +3180,7 @@ class Timecourses:
             "value": ((*rest, TIME_DIM), mean, {"units": unit}),
             "sd": ((*rest, TIME_DIM), sd, {"units": unit}),
             "se": ((*rest, TIME_DIM), se, {"units": unit}),
-            "n": ((*rest, TIME_DIM), count, {"units": "dimensionless"}),
+            "n": _count_layout(rest, count),
         }
         ds = xr.Dataset(
             data_vars=data_vars,
