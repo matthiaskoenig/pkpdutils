@@ -303,7 +303,7 @@ def draw_nca_panel(
     with the points it used and its confidence band (`_terminal_band`), the
     peak \(C_\mathrm{max}\)/\(t_\mathrm{max}\) with its guide lines, \(C_0\)
     of a bolus, and the dose it analyses (an infusion as its window). With
-    `annotate` the peak (on a linear panel), the last point and the regression
+    `annotate` the areas, the peak, the last point, \\(C_0\\) and the regression
     carry their values on the plot, the interval of the half-life from the uncertainty analysis
     (`thalf_ci_low`/`thalf_ci_high`) or from the regression
     (`_thalf_interval`); the table of every parameter is the third panel of
@@ -368,6 +368,35 @@ def draw_nca_panel(
             linewidth=0,
             label=auc_label,
         )
+        if annotate:
+            auc_name = "auc_tau" if steady_state else "auc_last"
+            auc_text = _quantity_text(values, units, auc_name)
+            if auc_text:
+                # inside the area, at a third of its width and height
+                x_area, c_area = t[area], c[area]
+                x_text = 0.55 * auc_bound
+                top = float(np.interp(x_text, x_area, c_area))
+                bottom = ax.get_ylim()[0]
+                y_text = (
+                    float(np.sqrt(max(top, 1e-300) * max(bottom, top * 1e-3)))
+                    if log_y
+                    else 0.35 * top
+                )
+                ax.text(
+                    x_text,
+                    y_text,
+                    f"{auc_label} = {auc_text}",
+                    fontsize=fontsize,
+                    color=style.data_color,
+                    ha="center",
+                    va="center",
+                    bbox={
+                        "boxstyle": "round,pad=0.2",
+                        "fc": "white",
+                        "ec": "none",
+                        "alpha": 0.7,
+                    },
+                )
     t_end = tlast + 3.0 * thalf if np.isfinite(thalf) else np.nan
     if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_end):
         t_ext = np.linspace(tlast, t_end, 50)
@@ -381,6 +410,24 @@ def draw_nca_panel(
             linewidth=0,
             label="extrapolated",
         )
+        auc_inf = values.get("auc_inf_obs", np.nan)
+        auc_last = values.get("auc_last", np.nan)
+        if annotate and np.isfinite(auc_inf) and np.isfinite(auc_last):
+            tail = auc_inf - auc_last
+            fraction = values.get("auc_extrap_fraction", np.nan)
+            share = f" ({100.0 * fraction:.2g} %)" if np.isfinite(fraction) else ""
+            unit = unit_of("auc_inf_obs")
+            x_tail = tlast + thalf
+            ax.annotate(
+                f"AUC(tlast-inf) = {tail:.3g} {unit}{share}".rstrip(),
+                xy=(x_tail, float(clast * np.exp(-lambda_z * thalf))),
+                xytext=(14, 8),
+                textcoords="offset points",
+                fontsize=fontsize,
+                color=style.extrapolation_color,
+                ha="left",
+                va="bottom",
+            )
     t_first = values.get("lambda_z_t_first", np.nan)
     if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_first):
         t_fit = np.linspace(t_first, t_end, 80)
@@ -457,21 +504,45 @@ def draw_nca_panel(
             markersize=style.markersize + 2,
             label="Cmax at tmax",
         )
-        # the peak sits at the top of a logarithmic panel among the first
-        # regression points, where its text would cover them: that panel is
-        # the one of the terminal phase and leaves the peak to the marker
-        if annotate and not log_y:
-            ax.annotate(
+        if annotate:
+            peak_text = (
                 f"Cmax = {_quantity_text(values, units, 'cmax') or f'{cmax:.3g}'}"
-                f"\ntmax = {tmax:.3g} {time_unit}",
-                xy=(tmax, cmax),
-                xytext=(12, 4),
-                textcoords="offset points",
-                fontsize=fontsize,
-                color=style.peak_color,
-                ha="left",
-                va="bottom",
+                f"\ntmax = {tmax:.3g} {time_unit}"
             )
+            if log_y:
+                # the peak sits at the top of a logarithmic panel among the
+                # first regression points: the text goes to the empty upper
+                # right corner with a leader line to the marker
+                ax.annotate(
+                    peak_text,
+                    xy=(tmax, cmax),
+                    xytext=(0.3, 0.93),
+                    textcoords="axes fraction",
+                    fontsize=fontsize,
+                    color=style.peak_color,
+                    ha="left",
+                    va="top",
+                    arrowprops={
+                        "arrowstyle": "-",
+                        "color": style.peak_color,
+                        "linewidth": 0.8,
+                        "alpha": 0.6,
+                    },
+                )
+            else:
+                # a bolus writes its C0 above the first point, so the peak
+                # of a bolus (the same point, or the next) goes below it
+                has_c0 = np.isfinite(values.get("c0", np.nan))
+                ax.annotate(
+                    peak_text,
+                    xy=(tmax, cmax),
+                    xytext=(12, -12) if has_c0 else (12, 4),
+                    textcoords="offset points",
+                    fontsize=fontsize,
+                    color=style.peak_color,
+                    ha="left",
+                    va="top" if has_c0 else "bottom",
+                )
     if annotate and np.isfinite(tlast) and np.isfinite(clast):
         ax.annotate(
             f"clast = {clast:.3g} {value_unit}\ntlast = {tlast:.3g} {time_unit}",
@@ -494,6 +565,19 @@ def draw_nca_panel(
             markersize=style.markersize + 1,
             label="C0",
         )
+        if annotate:
+            # C0 is the top of the panel: its text goes to the right of the
+            # marker, the peak text (the next point) below it
+            ax.annotate(
+                f"C0 = {_quantity_text(values, units, 'c0') or f'{c0:.3g}'}",
+                xy=(0.0, c0),
+                xytext=(12, 0),
+                textcoords="offset points",
+                fontsize=fontsize,
+                color=style.fit_color,
+                ha="left",
+                va="center",
+            )
     error = None
     if spread == "sd" and tc.sd is not None:
         error = np.asarray(tc.sd, dtype=float)

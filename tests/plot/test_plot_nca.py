@@ -132,6 +132,10 @@ def test_plot_nca_iv_bolus_marks_c0() -> None:
     fig = plot_nca(tc, nca_single(tc), style=PlotStyle(fit_color="red"))
     labels = {line.get_label() for line in fig.axes[0].get_lines()}
     assert "C0" in labels
+    assert any(
+        text.get_text().startswith("C0 = ") and "ng/ml" in text.get_text()
+        for text in fig.axes[0].texts
+    ) or any(text.get_text().startswith("C0 = ") for text in fig.axes[0].texts)
     matplotlib.pyplot.close(fig)
 
 
@@ -498,8 +502,14 @@ def test_plot_nca_annotates_the_parameters_on_the_plot() -> None:
         t.startswith("lambda_z = ") and "t1/2 = " in t and "n = " in t for t in texts
     )
     assert any(t.startswith("clast = ") and "tlast = 24 hr" in t for t in texts)
+    # the areas carry their values, the tail its share
+    assert any(t.startswith("AUC(0-tlast) = 22.6") and "h⋅mg/l" in t for t in texts)
+    assert any(t.startswith("AUC(tlast-inf) = ") and "%)" in t for t in texts)
     # the intervals of the uncertainty analysis are in the annotation
     assert any("Cmax = 2.9 [" in t for t in texts)
+    # the logarithmic panel names the peak as well, with a leader line
+    log_texts = [text.get_text() for text in fig.axes[1].texts]
+    assert any(t.startswith("Cmax = 2.9") for t in log_texts)
     # the parameter table of the third panel
     table = fig.axes[2].texts[0].get_text()
     assert "cmax" in table and "mg/l" in table and "[" in table
