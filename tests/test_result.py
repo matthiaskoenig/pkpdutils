@@ -460,3 +460,95 @@ def test_summary_table_short_units() -> None:
     assert header["parameter"].iloc[0] == "a [mg/l]"
     with pytest.raises(ValueError, match="unit_style"):
         summary_table(result, "s", unit_style="tiny")  # ty: ignore[invalid-argument-type]
+
+
+def test_to_units_converts_a_parameter_and_its_companions() -> None:
+    """The named variables and their `_se`/`_ci_*` companions follow the unit."""
+    from pkpdutils import Dose, Route, Timecourse, Timecourses, nca
+
+    time = np.array([0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0])
+    value = 10.0 * (np.exp(-0.2 * time) - np.exp(-1.5 * time))
+    curves = [
+        Timecourse(
+            time=time,
+            value=(1.0 + 0.1 * i) * value,
+            sd=0.1 * value,
+            n=6,
+            time_unit="hr",
+            unit="ng/ml",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+            label=f"s{i}",
+        )
+        for i in range(3)
+    ]
+    result = nca(Timecourses.from_timecourses(curves)).dose_normalized()
+    converted = result.to_units({"auc_inf_obs": "min*ug/L", "cl_f": "mL/min"})
+
+    # 1 h * ng/ml is 60 min * ug/l, 1 l/h is 1000/60 ml/min
+    assert converted.units("auc_inf_obs") == "microgram * minute / liter"
+    assert converted.units("cl_f") == "milliliter / minute"
+    np.testing.assert_allclose(
+        converted.ds["auc_inf_obs"], result.ds["auc_inf_obs"] * 60.0
+    )
+    np.testing.assert_allclose(converted.ds["cl_f"], result.ds["cl_f"] * 1000.0 / 60.0)
+    for suffix in ("_se", "_sd", "_ci_low", "_ci_high"):
+        name = f"auc_inf_obs{suffix}"
+        assert converted.units(name) == "microgram * minute / liter"
+        np.testing.assert_allclose(converted.ds[name], result.ds[name] * 60.0)
+    # the dose normalized companion keeps its dose and follows the numerator
+    assert converted.units("auc_inf_dn") == "microgram * minute / liter / milligram"
+    np.testing.assert_allclose(
+        converted.ds["auc_inf_dn"], result.ds["auc_inf_dn"] * 60.0
+    )
+    # the dimensionless companions and the other parameters are untouched
+    assert converted.units("auc_inf_obs_geocv") == "dimensionless"
+    np.testing.assert_allclose(
+        converted.ds["auc_inf_obs_geocv"], result.ds["auc_inf_obs_geocv"]
+    )
+    assert converted.units("cmax") == result.units("cmax")
+    np.testing.assert_allclose(converted.ds["cmax"], result.ds["cmax"])
+    # the result it was called on is unchanged
+    assert result.units("auc_inf_obs") == "hour * nanogram / milliliter"
+
+
+def test_to_units_rejects_an_unknown_variable_and_an_incompatible_unit() -> None:
+    """A name which is not a variable and a unit of another dimensionality raise."""
+    result = make()
+    result.ds["a"].attrs["units"] = "milligram / liter"
+    with pytest.raises(KeyError, match="not a variable"):
+        result.to_units({"nope": "mg/l"})
+    with pytest.raises(ValueError, match="cannot be converted"):
+        result.to_units({"a": "hour"})
+    with pytest.raises(ValueError, match="not a unit"):
+        result.to_units({"a": "bananas"})
+
+
+def test_to_units_converts_the_companions_of_the_dose_normalized_variable() -> None:
+    """`auc_inf_dn_se` follows `auc_inf_dn`, the dimensionless ones do not."""
+    from pkpdutils import Dose, Route, Timecourse, Timecourses, nca
+
+    time = np.array([0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0])
+    value = 10.0 * (np.exp(-0.2 * time) - np.exp(-1.5 * time))
+    curves = [
+        Timecourse(
+            time=time,
+            value=(1.0 + 0.1 * i) * value,
+            sd=0.1 * value,
+            n=6,
+            time_unit="hr",
+            unit="ng/ml",
+            dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+            label=f"s{i}",
+        )
+        for i in range(3)
+    ]
+    result = nca(Timecourses.from_timecourses(curves)).dose_normalized()
+    converted = result.to_units({"auc_inf_obs": "min*ug/L"})
+    per_dose = "microgram * minute / liter / milligram"
+    for name in ("auc_inf_dn", "auc_inf_dn_se", "auc_inf_dn_ci_low"):
+        assert converted.units(name) == per_dose
+        np.testing.assert_allclose(converted.ds[name], result.ds[name] * 60.0)
+    assert converted.units("auc_inf_dn_geocv") == "dimensionless"
+    np.testing.assert_allclose(
+        converted.ds["auc_inf_dn_geocv"], result.ds["auc_inf_dn_geocv"]
+    )

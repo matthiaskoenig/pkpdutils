@@ -1265,6 +1265,7 @@ def run_rows(
     options: NCAOptions,
     lloq: np.ndarray | None = None,
     windows: np.ndarray | None = None,
+    routes: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Run the core on `(N, n)` arrays in chunks, serially or in the worker pool.
 
@@ -1307,11 +1308,47 @@ def run_rows(
             `NCAOptions.lloq` wins over it (`resolve_lloq`)
         windows: the terminal window of single rows `(N, 2)`, `NaN` for a row
             without one (`TerminalPhase.windows`, `sample_windows`)
+        routes: the route of every row `(N,)`, for a batch whose samples were
+            given different ones (`Timecourses.routes`); `None` for the one
+            route of `route`. The rows are grouped by route and every group is
+            run on its own, so that the parameters which depend on the route
+            (`c0`, `cl` against `cl_f`, `tlag`, the value at the dose time)
+            follow the row; the result is the union of the variables of the
+            groups (`merge_rows`), every row `NaN` in the variables of the
+            other routes.
 
     Returns:
         One `(N,)` array per parameter and `flags`, and one `(N, K)` array per
         per-interval parameter of a multiple dose batch (`K` dosing intervals).
     """
+    if routes is not None and len(routes) > 0:
+        # one group per route, in the order of their first appearance, and the
+        # rows back in their own order afterwards
+        given = [Route(value) for value in routes]
+        order_of_route = list(dict.fromkeys(given))
+        masks = [
+            np.array([value is one for value in given], dtype=bool)
+            for one in order_of_route
+        ]
+        order = np.concatenate([np.flatnonzero(mask) for mask in masks])
+        parts = [
+            run_rows(
+                t[mask],
+                c[mask],
+                dose_amount=None if dose_amount is None else dose_amount[mask],
+                dose_time=None if dose_time is None else dose_time[mask],
+                dose_duration=None if dose_duration is None else dose_duration[mask],
+                route=one,
+                options=options,
+                lloq=None if lloq is None else lloq[mask],
+                windows=None if windows is None else windows[mask],
+            )
+            for one, mask in zip(order_of_route, masks, strict=True)
+        ]
+        merged = merge_rows(parts, [int(mask.sum()) for mask in masks])
+        back = np.empty_like(order)
+        back[order] = np.arange(order.size)
+        return {name: array[back] for name, array in merged.items()}
     n_rows = t.shape[0]
     n_workers = resolve_workers(
         options.n_workers, n_rows, threshold=NCA_WORKER_THRESHOLD
@@ -1380,6 +1417,17 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     `x_geocv`. The delta method can add `NCAFlag.DELTA_WINDOW_CHANGE` to the
     flags of a sample.
 
+    A batch whose samples were given by different routes (the coordinate
+    `route`, `Timecourses.routes`) is analysed per route: the rows are grouped
+    and every group runs on its own, so that `c0`, `cl` against `cl_f`, `tlag`
+    and the value at the dose time follow the row rather than the batch. The
+    result carries the union of the variables, every sample `NaN` in the
+    variables of the other routes.
+
+    `NCAOptions.units` converts the named variables of the result to the
+    reporting units at the end (`pkpdutils.result.ParameterResult.to_units`);
+    the analysis itself runs in the units of the batch.
+
     Args:
         timecourses: the batch
 
@@ -1416,7 +1464,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     dose_amount = flat(timecourses.dose_amount)
     dose_time = flat(timecourses.dose_time)
     dose_duration = flat(timecourses.dose_duration)
-    route = timecourses.route
+    route, routes = row_routes(timecourses, n_rows)
     batch_lloq = timecourses.lloq
     lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
     windows = sample_windows(timecourses, options.terminal)
@@ -1431,6 +1479,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         options=options,
         lloq=lloq,
         windows=windows,
+        routes=routes,
     )
 
     # `flags` is the last variable of the result, the uncertainty variables and
@@ -1455,6 +1504,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             route=route,
             options=options,
             shift=reference_time - first_time,
+            routes=routes,
         )
         values.update(areas)
         units.update(
@@ -1521,7 +1571,38 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             name: (float(start), float(end))
             for name, (start, end) in options.partial_aucs.items()
         }
-    return result
+    for name, (t_start, t_end) in options.partial_aucs.items():
+        # the interval of a named partial area travels with its variable, so
+        # that a writer of the result (`pkpdutils.cdisc`) can name it
+        result.ds[name].attrs["window"] = [float(t_start), float(t_end)]
+    # the analysis runs in the units of the batch; the reporting units of
+    # `NCAOptions.units` are applied to the finished result
+    return result.to_units(options.units) if options.units else result
+
+
+def row_routes(
+    timecourses: Timecourses, n_rows: int
+) -> tuple[Route | None, np.ndarray | None]:
+    """The route of a batch, or the route of every one of its rows.
+
+    A batch which carries the coordinate `route` along a sample dimension was
+    given by several routes (`Timecourses.routes`), and the analysis follows
+    the route of every row rather than one route of the batch. A batch with one
+    route keeps the fast path: the route is one value and the rows run in one
+    group.
+
+    Args:
+        timecourses: the batch.
+        n_rows: number of rows of the flattened batch.
+
+    Returns:
+        The one route of the batch and `None`, or `None` and the route of every
+        row `(N,)`.
+    """
+    routes = timecourses.routes
+    if routes is None:
+        return timecourses.route, None
+    return None, np.asarray(routes, dtype=object).reshape(n_rows)
 
 
 def dose_times(
@@ -1700,9 +1781,18 @@ def _to_result(
             np.arange(1, n_candidates + 1), dims=CANDIDATE_DIM
         )
     check_coordinate_collision(coords, data_vars)
-    ds = xr.Dataset(
-        data_vars=data_vars, coords=coords, attrs={"substance": timecourses.substance}
-    )
+    # a batch of several analytes or of several routes names them in the
+    # coordinates `substance` and `route`, which travel into the result with
+    # the other coordinates; a batch with one of each names it in `attrs`, so
+    # that a writer of the result (`pkpdutils.cdisc`) finds what it describes
+    attrs: dict[str, Any] = {}
+    if timecourses.substances is None:
+        attrs["substance"] = timecourses.substance
+    if timecourses.routes is None and timecourses.route is not None:
+        attrs["route"] = timecourses.route.value
+    if timecourses.tissue is not None:
+        attrs["tissue"] = timecourses.tissue
+    ds = xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)
     return NCAResult(ds)
 
 
@@ -1732,6 +1822,7 @@ def _insert_dose_value(
     *,
     route: Route | None,
     options: NCAOptions,
+    routes: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Add the value at the dose to every curve whose first sample is after it.
 
@@ -1752,20 +1843,28 @@ def _insert_dose_value(
     Keyword Args:
         route: route of the batch
         options: the options, `c0_method` is used
+        routes: the route of every row `(N,)` for a batch of several routes
+            (`Timecourses.routes`), which wins over `route`
 
     Returns:
         The packed times, values and counts, one column wider when a value was
         added.
     """
-    if route is None:
+    if route is None and routes is None:
         return tp, cp, n_valid
     with np.errstate(invalid="ignore"):
         insert = (n_valid >= 1) & (tp[:, 0] > 0)
-    value = (
-        bolus_c0(tp, cp, n_valid, options)[0]
-        if route is Route.IV_BOLUS
-        else np.zeros(tp.shape[0])
-    )
+    if routes is not None:
+        bolus = np.array(
+            [Route(value) is Route.IV_BOLUS for value in routes], dtype=bool
+        )
+        value = np.where(bolus, bolus_c0(tp, cp, n_valid, options)[0], 0.0)
+    else:
+        value = (
+            bolus_c0(tp, cp, n_valid, options)[0]
+            if route is Route.IV_BOLUS
+            else np.zeros(tp.shape[0])
+        )
     return insert_point(
         tp,
         cp,
@@ -1783,6 +1882,7 @@ def area_between(
     *,
     route: Route | None,
     options: NCAOptions,
+    routes: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Area of every row between two times, with the bounds interpolated.
 
@@ -1802,13 +1902,17 @@ def area_between(
     Keyword Args:
         route: route of the batch, which decides the value at the dose
         options: the options, `auc_method` and `c0_method` are used
+        routes: the route of every row `(N,)` for a batch of several routes
+            (`Timecourses.routes`), which wins over `route`
 
     Returns:
         The area per row and the rows whose observed range covers both bounds;
         the area of a row which is not covered is meaningless.
     """
     tp, cp, n_valid = pack_valid(t, c)
-    tp, cp, n_valid = _insert_dose_value(tp, cp, n_valid, route=route, options=options)
+    tp, cp, n_valid = _insert_dose_value(
+        tp, cp, n_valid, route=route, options=options, routes=routes
+    )
     c_start = interpolate_at(tp, cp, n_valid, start, options.auc_method)
     c_end = interpolate_at(tp, cp, n_valid, end, options.auc_method)
     tp, cp, n_valid = insert_point(tp, cp, n_valid, start, c_start)
@@ -1825,6 +1929,7 @@ def named_partial_aucs(
     route: Route | None,
     options: NCAOptions,
     shift: np.ndarray | None = None,
+    routes: np.ndarray | None = None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     r"""The named partial areas of `NCAOptions.partial_aucs` of every row.
 
@@ -1857,6 +1962,8 @@ def named_partial_aucs(
         shift: the time of the reference dose of every row relative to the
             first dose `(N,)`, which puts `tlast` into the times of `t`;
             `None` for a single dose analysis, where they are the same
+        routes: the route of every row `(N,)` for a batch of several routes
+            (`Timecourses.routes`), which wins over `route`
 
     Returns:
         One `(N,)` array per named area and the rows whose area was completed
@@ -1888,6 +1995,7 @@ def named_partial_aucs(
             np.where(has_observed, observed_end, end),
             route=route,
             options=options,
+            routes=routes,
         )
         observed = np.where(has_observed, np.where(covered, area, np.nan), 0.0)
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -2036,13 +2144,15 @@ def partial_auc(
     if first_dose_time is not None:
         # the area is relative to the first dose of the protocol
         t = t - np.asarray(first_dose_time, dtype=np.float64).reshape(n_rows)[:, None]
+    route, routes = row_routes(timecourses, n_rows)
     area, covered = area_between(
         t,
         c,
         np.full(n_rows, float(t_start)),
         np.full(n_rows, float(t_end)),
-        route=timecourses.route,
+        route=route,
         options=options,
+        routes=routes,
     )
     area = np.where(covered, area, np.nan)
     unit, factor = parameter_unit(

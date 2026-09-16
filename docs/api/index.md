@@ -9,7 +9,8 @@ The API reference is generated from the docstrings of the package.
 | [units](units.md) | the unit registry of the package and unit helpers |
 | [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Dosing`, `Route` and `DosingRegimen`, the data model |
 | [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample`, `summary_table` the parameter table of a publication |
-| [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
+| [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`/`write_pknca`, `read_adnca`/`write_adnca` |
+| [cdisc](cdisc.md) | the CDISC map, see [Data formats](../formats.md): `PKPARMCD`, `pkunit`, `to_pp`, `write_pp` |
 | [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
 | [report](report.md) | `Report` and `study_report`, see [Reporting](../reporting.md): the tables and the figures of a study in one HTML or markdown document |
 | [console](console.md) | shared rich console, `rich_table` and `print_table` for the tables of the package |
@@ -34,6 +35,7 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md), [Urinar
 | [nca.sparse](nca.sparse.md) | `nca_sparse`, `sparse_mean`, `bailer_variance`: the area of a sparse or destructive design with its standard error |
 | [nca.tss](nca.tss.md) | `time_to_steady_state`, `TSSResult`: the time to steady state from the troughs of the dosing intervals |
 | [nca.bioavailability](nca.bioavailability.md) | `bioavailability`: the absolute and the relative bioavailability of two analyses |
+| [nca.analytes](nca.analytes.md) | `metabolite_ratio`: the metabolite to parent ratio of a batch of several analytes |
 
 ## pkpdutils.fit
 

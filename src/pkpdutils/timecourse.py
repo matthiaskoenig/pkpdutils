@@ -913,6 +913,16 @@ TIMES_VAR = "times"
 #: a coordinate along the sample dimensions
 LLOQ_VAR = "lloq"
 
+#: name of the per sample substance of a `Timecourses` dataset, a coordinate
+#: along a sample dimension; a batch whose samples share one substance carries
+#: it in `attrs["substance"]` instead (`Timecourses.substance`)
+SUBSTANCE_VAR = "substance"
+
+#: name of the per sample route of a `Timecourses` dataset, a coordinate along
+#: a sample dimension; a batch whose samples share one route carries it in
+#: `attrs["route"]` instead (`Timecourses.route`)
+ROUTE_VAR = "route"
+
 #: name of the dose dimension of the dose variables of a `Timecourses` dataset;
 #: not `"dose"`, which stays free as a sample dimension (a dose group of a dose
 #: proportionality study, the dose axis of a simulation scan)
@@ -1352,30 +1362,42 @@ def pad_protocols(
 
 def dose_mapping(
     protocols: Sequence[Dosing | None],
+    *,
+    allow_mixed_routes: bool = False,
 ) -> tuple[dict[str, Any] | None, Route | None]:
     """The `dose` mapping and the route of a batch built from per sample protocols.
 
-    The protocols of a batch share one route and one dose unit; they are padded
-    to the longest one (`pad_protocols`), a sample without a protocol gets a row
-    of `NaN`. The mapping always carries a `duration` entry, `NaN` where the
+    The protocols of a batch share one dose unit; they are padded to the
+    longest one (`pad_protocols`), a sample without a protocol gets a row of
+    `NaN`. The mapping always carries a `duration` entry, `NaN` where the
     route is not an infusion: `dose_duration` is a variable of every batch with
     doses, so that the readers of the dose variables need no case distinction.
 
+    The protocols share one route unless `allow_mixed_routes` says otherwise;
+    the route of the first protocol is returned then and the caller carries the
+    route of every sample as the coordinate `route` along a sample dimension
+    (`Timecourses.routes`).
+
     Args:
         protocols: one protocol per sample, `None` for a sample without doses.
+
+    Keyword Args:
+        allow_mixed_routes: whether the protocols may have been given by
+            different routes.
 
     Returns:
         The mapping for `Timecourses.from_arrays` and the route, both `None`
         when no sample carries a protocol.
 
     Raises:
-        ValueError: if the protocols do not share one route and one dose unit.
+        ValueError: if the protocols do not share one dose unit, or one route
+            without `allow_mixed_routes`.
     """
     given = [protocol for protocol in protocols if protocol is not None]
     if not given:
         return None, None
     routes = {protocol.route for protocol in given}
-    if len(routes) != 1:
+    if len(routes) != 1 and not allow_mixed_routes:
         raise ValueError(
             "A batch has one route, found "
             f"{sorted(r.value for r in routes)}; build separate batches, one "
@@ -1393,7 +1415,7 @@ def dose_mapping(
         "time": times,
         "duration": durations,
     }
-    return mapping, routes.pop()
+    return mapping, given[0].route
 
 
 def _batch_dose_arrays(
@@ -1679,9 +1701,14 @@ class _SampleArrays:
         sample_dims: the dimensions other than `time`
         time_unit: unit of the times
         unit: unit of the values
-        substance: name of the substance or effect
+        substance: name of the substance or effect of the batch
+        substances: the substance of every sample, `None` when the batch names
+            one substance for all of them
         tissue: tissue the values were measured in, `None` when not known
-        route: route of the doses, `None` without doses
+        route: route of the doses, `None` without doses or when the samples
+            carry their own route in `routes`
+        routes: the route of every sample, `None` when the batch names one
+            route for all of them
         dose_unit: unit of the doses, `None` without doses
         times: the sampling times, the shared grid itself when `shared_grid`
         shared_grid: whether every sample has the same sampling times
@@ -1703,8 +1730,10 @@ class _SampleArrays:
     time_unit: str
     unit: str
     substance: str
+    substances: np.ndarray | None
     tissue: str | None
     route: Route | None
+    routes: np.ndarray | None
     dose_unit: str | None
     times: np.ndarray
     shared_grid: bool
@@ -1750,8 +1779,11 @@ class Timecourses:
     analysis of the package works on; iteration and `sel`/`isel` give single
     `Timecourse` objects.
 
-    A batch has one route: curves with different routes go into separate
-    batches (a deliberate restriction of the 1.0.0 data model). `n` is one
+    A batch whose samples share one substance and one route carries both in
+    `attrs`; a batch of several analytes or of several routes carries them as
+    the coordinates `substance` and `route` along a sample dimension, which
+    `substances` and `routes` read back and the analyses follow per sample
+    (`substance` and `route` raise for such a batch). `n` is one
     number per sample, or one per sample and time point when a count varies
     over the curve, as it does for the group curve of a ragged batch
     (`Timecourses.mean`); `n_subjects` is the number of subjects of a sample
@@ -1839,9 +1871,80 @@ class Timecourses:
         """Unit of the values."""
         return str(self.ds["value"].attrs["units"])
 
+    def _per_sample(self, name: str) -> np.ndarray | None:
+        """The values of a metadata coordinate along the sample dimensions, `None` without.
+
+        A coordinate which is given along some of the sample dimensions only
+        (the `substance` of an `(analyte, individual)` batch lives on
+        `analyte`) is broadcast to the full sample shape, so that the caller
+        indexes it with the position of a sample.
+
+        Args:
+            name: name of the coordinate, `substance` or `route`.
+
+        Returns:
+            The values of shape `sample_shape` as an object array, or `None`
+            when the dataset carries no such coordinate.
+
+        Raises:
+            ValueError: if the coordinate carries a dimension which is not a
+                sample dimension, e.g. one value per time point.
+        """
+        if name not in self.ds.variables:
+            return None
+        da = self.ds[name]
+        sample_dims = self.sample_dims
+        extra = [str(d) for d in da.dims if str(d) not in sample_dims]
+        if extra:
+            raise ValueError(
+                f"'{name}' must carry one value per sample; it has the "
+                f"dimensions {extra}"
+            )
+        if any(d not in da.dims for d in sample_dims):
+            da = da.broadcast_like(self.ds["value"].isel({TIME_DIM: 0}, drop=True))
+        return np.asarray(da.transpose(*sample_dims).to_numpy(), dtype=object).reshape(
+            self.sample_shape
+        )
+
+    @property
+    def substances(self) -> np.ndarray | None:
+        """The substance of every sample of shape `sample_shape`, `None` when they agree.
+
+        The coordinate `substance` along a sample dimension, which a batch of
+        several analytes carries (a parent and its metabolite over
+        `(analyte, individual)`), as an array of strings. `None` for a batch
+        whose samples name one substance, which `substance` returns.
+        """
+        per_sample = self._per_sample(SUBSTANCE_VAR)
+        if per_sample is None:
+            return None
+        names = np.asarray([str(value) for value in per_sample.ravel()], dtype=object)
+        if len(set(names.tolist())) <= 1:
+            return None
+        return names.reshape(self.sample_shape)
+
     @property
     def substance(self) -> str:
-        """Name of the substance or effect."""
+        """Name of the substance or effect, the one of the whole batch.
+
+        Returns:
+            The substance of the batch: the coordinate `substance` when the
+            batch carries one, `attrs["substance"]` otherwise.
+
+        Raises:
+            ValueError: if the samples name different substances
+                (`substances` reads them then).
+        """
+        per_sample = self._per_sample(SUBSTANCE_VAR)
+        if per_sample is not None:
+            names = sorted({str(value) for value in per_sample.ravel()})
+            if len(names) != 1:
+                raise ValueError(
+                    f"The batch carries the substances {names}: read them with "
+                    "'Timecourses.substances' or select one analyte with "
+                    "'select'"
+                )
+            return names[0]
         return str(self.ds.attrs.get("substance", "substance"))
 
     @property
@@ -1851,8 +1954,45 @@ class Timecourses:
         return None if tissue is None else str(tissue)
 
     @property
+    def routes(self) -> np.ndarray | None:
+        """The route of every sample of shape `sample_shape`, `None` when they agree.
+
+        The coordinate `route` along a sample dimension, which a batch of
+        several routes carries (the intravenous reference and the oral test of
+        an absolute bioavailability study), as an array of `Route` members.
+        `None` for a batch whose samples were given one route, which `route`
+        returns. The analysis reads the route of every row from here
+        (`pkpdutils.nca.nca`).
+        """
+        per_sample = self._per_sample(ROUTE_VAR)
+        if per_sample is None:
+            return None
+        given = np.asarray([Route(value) for value in per_sample.ravel()], dtype=object)
+        if len({str(route) for route in given.tolist()}) <= 1:
+            return None
+        return given.reshape(self.sample_shape)
+
+    @property
     def route(self) -> Route | None:
-        """Route of the doses, `None` without dose information."""
+        """Route of the doses, the one of the whole batch, `None` without dose information.
+
+        Returns:
+            The route of the batch: the coordinate `route` when the batch
+            carries one, `attrs["route"]` otherwise, `None` without doses.
+
+        Raises:
+            ValueError: if the samples were given different routes (`routes`
+                reads them then).
+        """
+        per_sample = self._per_sample(ROUTE_VAR)
+        if per_sample is not None:
+            given = sorted({Route(value).value for value in per_sample.ravel()})
+            if len(given) != 1:
+                raise ValueError(
+                    f"The batch carries the routes {given}: read them with "
+                    "'Timecourses.routes' or select one arm with 'select'"
+                )
+            return Route(given[0])
         route = self.ds.attrs.get("route")
         return None if route is None else Route(route)
 
@@ -2263,14 +2403,21 @@ class Timecourses:
     ) -> "Timecourses":
         """Create a batch from single timecourses along one sample dimension.
 
-        The timecourses must share `time_unit`, `unit`, `substance`, `tissue`
-        and the route of their doses. If all sampling grids are equal the grid becomes the
-        `time` coordinate, otherwise the times are stored per sample and shorter
-        curves are padded with `NaN`.
+        The timecourses must share `time_unit`, `unit` and `tissue`. If all
+        sampling grids are equal the grid becomes the `time` coordinate,
+        otherwise the times are stored per sample and shorter curves are padded
+        with `NaN`.
+
+        Curves of different substances (a parent and its metabolite) and curves
+        given by different routes (the intravenous reference and the oral test
+        of a bioavailability study) go into one batch: the differing values
+        become the coordinates `substance` and `route` along `dim`, which
+        `Timecourses.substances` and `Timecourses.routes` read back and the
+        analysis follows per sample. A batch whose curves agree carries the one
+        value in `attrs` as before and grows no coordinate.
 
         Either all or no curves carry a dosing protocol, and all protocols need
-        the same route and unit; curves with different routes go into separate
-        batches. The protocols are padded to the longest one. The batch keeps
+        the same dose unit. The protocols are padded to the longest one. The batch keeps
         one `n` per sample, and the counts per time point when the `n` of a
         curve varies over its time points (`n_subjects` reads the number of
         subjects back either way). `sd`, `se` and `n` are kept only when every
@@ -2287,9 +2434,9 @@ class Timecourses:
             The batch.
 
         Raises:
-            ValueError: for an empty sequence, differing units, substances or
-                tissues, doses on some but not all curves, or doses with
-                different routes or units.
+            ValueError: for an empty sequence, differing units or tissues,
+                doses on some but not all curves, or doses with different
+                units.
         """
         if not timecourses:
             raise ValueError("At least one timecourse is required")
@@ -2300,8 +2447,6 @@ class Timecourses:
                     f"All timecourses need the same units: '{first.time_unit}'/'{first.unit}' "
                     f"and '{tc.time_unit}'/'{tc.unit}'"
                 )
-            if tc.substance != first.substance:
-                raise ValueError("All timecourses need the same substance")
             if tc.tissue != first.tissue:
                 raise ValueError(
                     f"All timecourses need the same tissue: '{first.tissue}' "
@@ -2387,7 +2532,7 @@ class Timecourses:
                 "Either all or no timecourses need a dose, there is no dose for "
                 f"{[str(label) for label in without_dose]}"
             )
-        dose, route = dose_mapping(protocols)
+        dose, route = dose_mapping(protocols, allow_mixed_routes=True)
 
         # the limit of quantification is metadata of a curve and travels as a
         # coordinate along the sample dimension, as the readers write it
@@ -2397,6 +2542,22 @@ class Timecourses:
         coords: dict[str, Any] = {dim: list(labels)}
         if np.isfinite(limits).any():
             coords[LLOQ_VAR] = (dim, limits)
+
+        # the substance and the route become coordinates when the curves differ
+        # in them, so that a batch of several analytes or of several routes is
+        # one batch and every sample keeps its own value
+        substances = [tc.substance for tc in timecourses]
+        if len(set(substances)) > 1:
+            coords[SUBSTANCE_VAR] = (dim, np.array(substances, dtype=object))
+        # either all or no curve carries a protocol, checked above
+        sample_routes = [
+            protocol.route for protocol in protocols if protocol is not None
+        ]
+        if len(set(sample_routes)) > 1:
+            coords[ROUTE_VAR] = (
+                dim,
+                np.array([str(r) for r in sample_routes], dtype=object),
+            )
 
         return cls.from_arrays(
             time,
@@ -2800,13 +2961,22 @@ class Timecourses:
         # `Timecourse` derives the missing one of `sd` and `se` from `n`: a
         # batch which carries only one of them needs that validation
         derives = n is not None and (sd is None) != (se is None)
+        # the substance and the route are either one value for the batch or a
+        # coordinate along the sample dimensions; the single value is read only
+        # when there is no coordinate, since the property raises for a mixed one
+        substances = self.substances
+        routes = self.routes
+        substance = "" if substances is not None else self.substance
+        route = None if routes is not None else self.route
         return _SampleArrays(
             sample_dims=sample_dims,
             time_unit=self.time_unit,
             unit=self.unit,
-            substance=self.substance,
+            substance=substance,
+            substances=substances,
             tissue=self.tissue,
-            route=self.route,
+            route=route,
+            routes=routes,
             dose_unit=self.dose_unit,
             times=times,
             shared_grid=shared,
@@ -2875,7 +3045,11 @@ class Timecourses:
             "value": np.asarray(arrays.values[index][mask], dtype=np.float64),
             "time_unit": arrays.time_unit,
             "unit": arrays.unit,
-            "substance": arrays.substance,
+            "substance": (
+                arrays.substance
+                if arrays.substances is None
+                else str(arrays.substances[index])
+            ),
             "tissue": arrays.tissue,
             "label": None if label is None else str(label),
         }
@@ -2941,8 +3115,9 @@ class Timecourses:
         if not mask.any():
             return None
         amounts, times, durations = amounts[mask], times[mask], durations[mask]
-        # both are set with the dose variables, which were checked above
-        route = arrays.route
+        # both are set with the dose variables, which were checked above; a
+        # batch of several routes carries the route of the sample in `routes`
+        route = arrays.route if arrays.routes is None else Route(arrays.routes[index])
         dose_unit = arrays.dose_unit
         assert route is not None and dose_unit is not None
         given = None if bool(np.isnan(durations).all()) else durations
@@ -3605,6 +3780,20 @@ class Timecourses:
 
         return read_pknca(conc, dose, **kwargs)
 
+    def to_pknca(self, *args: Any, **kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Write the batch as the two tables of `PKNCA`, `pkpdutils.io.write_pknca`.
+
+        Args:
+            *args: the paths of `pkpdutils.io.write_pknca`
+            **kwargs: its keyword arguments
+
+        Returns:
+            The concentration table and the dose table.
+        """
+        from pkpdutils.io import write_pknca
+
+        return write_pknca(self, *args, **kwargs)
+
     @classmethod
     def from_adnca(cls, df: pd.DataFrame, **kwargs: Any) -> "Timecourses":
         """Read a batch from a CDISC ADaM ADNCA dataset, `pkpdutils.io.read_adnca`.
@@ -3619,3 +3808,17 @@ class Timecourses:
         from pkpdutils.io import read_adnca
 
         return read_adnca(df, **kwargs)
+
+    def to_adnca(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        """Write the batch as a CDISC ADaM ADNCA dataset, `pkpdutils.io.write_adnca`.
+
+        Args:
+            *args: the path of `pkpdutils.io.write_adnca`
+            **kwargs: its keyword arguments
+
+        Returns:
+            The dataset.
+        """
+        from pkpdutils.io import write_adnca
+
+        return write_adnca(self, *args, **kwargs)

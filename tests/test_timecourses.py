@@ -368,26 +368,36 @@ def test_from_timecourses_mixed_doses_raise() -> None:
     assert "b" in str(excinfo.value)
 
 
-def test_from_timecourses_mixed_routes_raise() -> None:
-    with pytest.raises(ValueError, match="separate batches"):
-        Timecourses.from_timecourses(
-            [
-                Timecourse(
-                    time=T,
-                    value=V[0],
-                    time_unit="hr",
-                    unit="mg/l",
-                    dose=Dose(amount=50, unit="mg", route=Route.ORAL),
-                ),
-                Timecourse(
-                    time=T,
-                    value=V[1],
-                    time_unit="hr",
-                    unit="mg/l",
-                    dose=Dose(amount=50, unit="mg", route=Route.IV_BOLUS),
-                ),
-            ]
-        )
+def test_from_timecourses_mixed_routes_build_the_coordinate() -> None:
+    batch = Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=T,
+                value=V[0],
+                time_unit="hr",
+                unit="mg/l",
+                label="a",
+                dose=Dose(amount=50, unit="mg", route=Route.ORAL),
+            ),
+            Timecourse(
+                time=T,
+                value=V[1],
+                time_unit="hr",
+                unit="mg/l",
+                label="b",
+                dose=Dose(amount=50, unit="mg", route=Route.IV_BOLUS),
+            ),
+        ]
+    )
+    assert list(batch.ds["route"].to_numpy()) == ["oral", "iv_bolus"]
+    routes = batch.routes
+    assert routes is not None
+    assert list(routes) == [Route.ORAL, Route.IV_BOLUS]
+    with pytest.raises(ValueError, match="carries the routes"):
+        _ = batch.route
+    dose = batch.sel(individual="b").dose
+    assert dose is not None
+    assert dose.route is Route.IV_BOLUS
 
 
 def test_from_timecourses_keeps_a_varying_n_per_time_point() -> None:
@@ -1638,3 +1648,50 @@ def test_lloq_per_time_point_is_rejected() -> None:
     ds["lloq"] = (("individual", "time"), np.full((3, T.size), 0.1))
     with pytest.raises(ValueError, match="one value per sample"):
         _ = Timecourses(ds).lloq
+
+
+def test_from_timecourses_mixed_substances_build_the_coordinate() -> None:
+    batch = Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=T,
+                value=V[0],
+                time_unit="hr",
+                unit="mg/l",
+                label="a",
+                substance="parent",
+            ),
+            Timecourse(
+                time=T,
+                value=V[1],
+                time_unit="hr",
+                unit="mg/l",
+                label="b",
+                substance="metabolite",
+            ),
+        ]
+    )
+    assert list(batch.ds["substance"].to_numpy()) == ["parent", "metabolite"]
+    substances = batch.substances
+    assert substances is not None
+    assert list(substances) == ["parent", "metabolite"]
+    with pytest.raises(ValueError, match="carries the substances"):
+        _ = batch.substance
+    assert batch.sel(individual="b").substance == "metabolite"
+
+
+def test_from_timecourses_one_substance_keeps_the_attribute() -> None:
+    batch = Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=T, value=V[0], time_unit="hr", unit="mg/l", substance="drug"
+            ),
+            Timecourse(
+                time=T, value=V[1], time_unit="hr", unit="mg/l", substance="drug"
+            ),
+        ]
+    )
+    assert "substance" not in batch.ds.coords
+    assert batch.ds.attrs["substance"] == "drug"
+    assert batch.substance == "drug"
+    assert batch.substances is None

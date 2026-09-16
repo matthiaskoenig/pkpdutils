@@ -691,3 +691,267 @@ def test_read_events_drops_the_rows_without_a_subject(
         "s7",
         "s8",
     ]
+
+
+def two_dose_batch(route: Route = Route.ORAL) -> Timecourses:
+    """Two subjects of two doses, with a covariate and a limit of quantification."""
+    from pkpdutils import Timecourse
+
+    time = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.5, 13.0, 14.0, 16.0, 20.0, 24.0])
+    value = np.array([2.0, 5.0, 4.0, 3.0, 1.5, 0.6, 3.0, 5.5, 4.2, 2.0, 1.0])
+    durations = [0.5, 0.5] if route is Route.IV_INFUSION else None
+    curves = [
+        Timecourse(
+            time=time,
+            value=(1.0 + 0.1 * index) * value,
+            time_unit="hr",
+            unit="ng/ml",
+            substance="drug",
+            lloq=0.1,
+            dosing=Dosing(
+                amounts=[100.0, 100.0],
+                times=[0.0, 12.0],
+                durations=durations,
+                unit="mg",
+                route=route,
+            ),
+            label=f"S{index + 1}",
+        )
+        for index in range(2)
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    return Timecourses(batch.ds.assign_coords(WT=("individual", [70.0, 82.0])))
+
+
+def assert_same_batch(back: Timecourses, batch: Timecourses) -> None:
+    """The values, the times, the protocol and the labels of two batches agree."""
+    np.testing.assert_allclose(back.times, batch.times)
+    np.testing.assert_allclose(back.values, batch.values)
+    np.testing.assert_allclose(back.dose_amount, batch.dose_amount)  # ty: ignore[no-matching-overload]
+    np.testing.assert_allclose(back.dose_time, batch.dose_time)  # ty: ignore[no-matching-overload]
+    assert list(back.ds["individual"].to_numpy()) == list(
+        batch.ds["individual"].to_numpy()
+    )
+    assert back.unit == batch.unit
+    assert back.time_unit == batch.time_unit
+    assert back.dose_unit == batch.dose_unit
+
+
+@pytest.mark.parametrize("route", [Route.ORAL, Route.IV_INFUSION])
+def test_write_pknca_round_trips_through_read_pknca(
+    route: Route, tmp_path: Path
+) -> None:
+    """The two tables of a batch read back as the same batch."""
+    from pkpdutils.io import write_pknca
+
+    batch = two_dose_batch(route)
+    conc, dose = write_pknca(batch, tmp_path / "conc.csv", tmp_path / "dose.csv")
+    assert list(conc.columns) == ["subject", "lloq", "WT", "time", "conc"]
+    assert (pd.read_csv(tmp_path / "dose.csv")["dose"] == 100.0).all()
+    back = read_pknca(
+        conc,
+        dose,
+        time_unit="hr",
+        unit="ng/ml",
+        dose_unit="mg",
+        route=route,
+        duration_col="duration",
+        covariates=["WT", "lloq"],
+        substance="drug",
+    )
+    assert_same_batch(back, batch)
+    assert back.route is route
+    np.testing.assert_allclose(back.dose_duration, batch.dose_duration)  # ty: ignore[no-matching-overload]
+    assert back.lloq is not None
+    np.testing.assert_allclose(back.lloq, [0.1, 0.1])
+    assert back.ds["WT"].to_numpy().tolist() == [70.0, 82.0]
+
+
+@pytest.mark.parametrize("route", [Route.ORAL, Route.IV_INFUSION])
+def test_write_adnca_round_trips_through_read_adnca(
+    route: Route, tmp_path: Path
+) -> None:
+    """The dataset of a batch reads back as the same batch, duration and all."""
+    from pkpdutils.io import write_adnca
+
+    batch = two_dose_batch(route)
+    frame = write_adnca(batch, tmp_path / "adnca.csv")
+    assert set(frame["ROUTE"]) == {"ORAL" if route is Route.ORAL else "IV INFUSION"}
+    back = read_adnca(pd.read_csv(tmp_path / "adnca.csv"), covariates=["WT"])
+    assert_same_batch(back, batch)
+    assert back.route is route
+    assert back.substance == "drug"
+    np.testing.assert_allclose(back.dose_duration, batch.dose_duration)  # ty: ignore[no-matching-overload]
+    assert back.lloq is not None
+    np.testing.assert_allclose(back.lloq, [0.1, 0.1])
+    assert back.ds["WT"].to_numpy().tolist() == [70.0, 82.0]
+
+
+def test_read_adnca_without_a_duration_column_keeps_raising_for_an_infusion() -> None:
+    """`ADUR` is optional; without it an infusion protocol cannot be read."""
+    df = pd.read_csv(DATA / "adnca.csv")
+    with pytest.raises(ValueError, match="infusion"):
+        read_adnca(df, analyte="XAN", route=Route.IV_INFUSION)
+
+
+def analyte_events() -> pd.DataFrame:
+    """An event table of two analytes, the dose rows naming none."""
+    rows = []
+    for subject in (1, 2):
+        rows.append({"ID": subject, "TIME": 0.0, "DV": np.nan, "AMT": 100.0, "EVID": 1})
+        for time, value in zip([1.0, 2.0, 4.0, 8.0], [5.0, 4.0, 3.0, 1.0], strict=True):
+            for analyte, factor in (("PARENT", 1.0), ("META", 0.5)):
+                rows.append(
+                    {
+                        "ID": subject,
+                        "TIME": time,
+                        "DV": factor * value * subject,
+                        "AMT": 0.0,
+                        "EVID": 0,
+                        "ANALYTE": analyte,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def test_read_events_reads_several_analytes_into_one_batch() -> None:
+    """`analytes` gives the analyte dimension and the substance coordinate."""
+    batch = read_events(
+        analyte_events(),
+        time_unit="hr",
+        unit="ng/ml",
+        dose_unit="mg",
+        route=Route.ORAL,
+        analyte_col="ANALYTE",
+        analytes=["PARENT", "META"],
+    )
+    assert batch.sample_dims == ("analyte", "individual")
+    assert list(batch.ds["analyte"].to_numpy()) == ["PARENT", "META"]
+    substances = batch.substances
+    assert substances is not None
+    assert list(substances[:, 0]) == ["PARENT", "META"]
+    # the dose rows name no analyte and belong to both of them
+    np.testing.assert_allclose(batch.dose_amount, 100.0)  # ty: ignore[no-matching-overload]
+    np.testing.assert_allclose(batch.values[1], 0.5 * batch.values[0])
+    assert "ANALYTE" not in batch.ds.coords
+
+
+def test_read_pknca_reads_several_analytes_into_one_batch() -> None:
+    """The analyte column of the concentration table gives the dimension."""
+    conc = pd.DataFrame(
+        [
+            {"subject": subject, "analyte": analyte, "time": time, "conc": value}
+            for subject in ("S1", "S2")
+            for analyte, factor in (("parent", 1.0), ("metabolite", 0.5))
+            for time, value in zip(
+                [1.0, 2.0, 4.0, 8.0], [5.0, 4.0, 3.0, 1.0], strict=True
+            )
+            for value in [factor * value]
+        ]
+    )
+    dose = pd.DataFrame(
+        [{"subject": subject, "time": 0.0, "dose": 100.0} for subject in ("S1", "S2")]
+    )
+    batch = read_pknca(
+        conc,
+        dose,
+        time_unit="hr",
+        unit="ng/ml",
+        dose_unit="mg",
+        route=Route.ORAL,
+        analyte_col="analyte",
+        analytes=["parent", "metabolite"],
+    )
+    assert batch.sample_dims == ("analyte", "individual")
+    np.testing.assert_allclose(batch.values[1], 0.5 * batch.values[0])
+    np.testing.assert_allclose(batch.dose_amount, 100.0)  # ty: ignore[no-matching-overload]
+
+
+def test_read_adnca_reads_several_analytes_and_an_analyte_which_is_not_there() -> None:
+    """`analytes` of the ADNCA reader, and the error of an unknown analyte."""
+    df = pd.read_csv(DATA / "adnca.csv")
+    other = df.copy()
+    other["PARAMCD"] = "MET"
+    other["AVAL"] = other["AVAL"] * 0.5
+    both = pd.concat([df, other], ignore_index=True)
+    batch = read_adnca(both, analytes=["XAN", "MET"])
+    assert batch.sample_dims == ("analyte", "individual")
+    substances = batch.substances
+    assert substances is not None
+    assert list(substances[:, 0]) == ["XAN", "MET"]
+    with pytest.raises(ValueError, match="either 'analyte' or 'analytes'"):
+        read_adnca(both, analyte="XAN", analytes=["XAN"])
+    with pytest.raises(ValueError, match="No record of the analyte"):
+        read_adnca(both, analytes=["XAN", "NOPE"])
+
+
+def test_write_pknca_needs_the_sample_dimensions_of_a_table() -> None:
+    """A batch of two unrelated sample dimensions cannot be written as a table."""
+    from pkpdutils.io import write_adnca, write_pknca
+
+    batch = Timecourses.from_arrays(
+        np.array([0.0, 1.0, 2.0]),
+        np.ones((2, 2, 3)),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("group", "individual"),
+        dose=Dose(amount=1.0, unit="mg"),
+    )
+    with pytest.raises(ValueError, match="one sample dimension"):
+        write_pknca(batch)
+    with pytest.raises(ValueError, match="one sample dimension"):
+        write_adnca(batch)
+
+
+def test_read_adnca_reads_the_nominal_time_and_writes_it_back(tmp_path: Path) -> None:
+    """`NRRLT` becomes the variable `nominal_time` and round trips."""
+    from pkpdutils.io import write_adnca
+
+    frame = pd.DataFrame(
+        [
+            {
+                "USUBJID": subject,
+                "PARAMCD": "DRUG",
+                "AVAL": value,
+                "AVALU": "ng/mL",
+                "AFRLT": actual,
+                "ARRLT": actual,
+                "NRRLT": nominal,
+                "DOSEA": 100.0,
+                "DOSEU": "mg",
+                "ROUTE": "ORAL",
+            }
+            for subject in ("S1", "S2")
+            for actual, nominal, value in (
+                (0.55, 0.5, 2.0),
+                (1.05, 1.0, 5.0),
+                (2.1, 2.0, 4.0),
+                (4.0, 4.0, 2.0),
+            )
+        ]
+    )
+    batch = read_adnca(frame)
+    assert "nominal_time" in batch.ds.data_vars
+    assert batch.ds["nominal_time"].dims == ("individual", "time")
+    assert batch.ds["nominal_time"].attrs["units"] == "hr"
+    np.testing.assert_allclose(
+        batch.ds["nominal_time"].to_numpy(), [[0.5, 1.0, 2.0, 4.0]] * 2
+    )
+    np.testing.assert_allclose(batch.times, [[0.55, 1.05, 2.1, 4.0]] * 2)
+    written = write_adnca(batch, tmp_path / "adnca.csv")
+    np.testing.assert_allclose(written["NRRLT"], frame["NRRLT"])
+    back = read_adnca(pd.read_csv(tmp_path / "adnca.csv"))
+    np.testing.assert_allclose(
+        back.ds["nominal_time"].to_numpy(), batch.ds["nominal_time"].to_numpy()
+    )
+
+
+def test_read_adnca_without_a_nominal_time_column_carries_none() -> None:
+    """The column is optional; the fixture carries it and is read with it."""
+    df = pd.read_csv(DATA / "adnca.csv")
+    with_nominal = read_adnca(df, analyte="XAN")
+    np.testing.assert_allclose(
+        with_nominal.ds["nominal_time"].to_numpy()[0], [0.5, 1.0, 12.0, np.nan]
+    )
+    batch = read_adnca(df.drop(columns=["NFRLT", "NRRLT"]), analyte="XAN")
+    assert "nominal_time" not in batch.ds.data_vars
