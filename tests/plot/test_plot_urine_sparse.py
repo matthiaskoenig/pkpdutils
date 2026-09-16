@@ -88,7 +88,7 @@ def test_plot_sparse_shades_the_area_and_writes_the_estimate() -> None:
     text = ax.texts[0].get_text()
     assert "auc_last =" in text
     assert "df =" in text
-    assert "n per time point: 3, 3, 3" in text
+    assert "n animals per time point: 3, 3, 3" in text
     matplotlib.pyplot.close("all")
 
 
@@ -104,4 +104,19 @@ def test_plot_sparse_takes_a_single_curve_and_rejects_a_batch_of_several() -> No
     two = Timecourses.from_timecourses([single, single], labels=["a", "b"])
     with pytest.raises(ValueError, match="holds 2 samples"):
         plot_sparse(two, result)
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_sparse_needs_a_sparse_result() -> None:
+    values = sparse_values()
+    curve = sparse_mean(TIMES, values, time_unit="hr", unit="mg/l")
+    plain = Timecourse(
+        time=[0.0, 1.0, 2.0],
+        value=[2.0, 1.0, 0.5],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=10.0, unit="mg", route=Route.IV_BOLUS),
+    )
+    with pytest.raises(ValueError, match="auc_last_se"):
+        plot_sparse(curve, nca_single(plain, options=NCAOptions()))
     matplotlib.pyplot.close("all")

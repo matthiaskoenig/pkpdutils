@@ -12,6 +12,7 @@ from scipy.stats import t as student_t
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import decode_flags
 from pkpdutils.nca.result import NCAResult
+from pkpdutils.nca.sparse import area_window
 from pkpdutils.nca.urine import Excretion
 from pkpdutils.plot._common import (
     axes_of,
@@ -42,6 +43,10 @@ TERMINAL_LABEL = "terminal regression"
 #: share the top of an axis is extended by so that the legend of
 #: `plot_excretion` does not sit on the plateau of the recovered amount
 LEGEND_HEADROOM = 1.6
+
+#: the variables `plot_sparse` writes into its panel, which say whether a
+#: result comes from `pkpdutils.nca.sparse.nca_sparse`
+SPARSE_PANEL_VARIABLES: tuple[str, ...] = ("auc_last", "auc_last_se", "auc_last_df")
 
 
 def _sample_values(
@@ -1199,8 +1204,8 @@ def plot_sparse(
     error \(s_j/\sqrt{n_j}\) of that mean as an error bar, `auc_last` shaded
     under the polygon the linear trapezoid rule integrates (from the first
     nominal time to the last measurable one, which is the window the estimator
-    covers), and the estimate with its standard error and the number of animals
-    per time point written into the panel.
+    covers, `pkpdutils.nca.sparse.area_window`), and the estimate with its
+    standard error and `n_animals` per time point written into the panel.
 
     Args:
         mean_curve: the mean curve, a `Timecourse` or a batch of one sample
@@ -1217,8 +1222,17 @@ def plot_sparse(
         The figure.
 
     Raises:
-        ValueError: if the batch holds more than one sample.
+        ValueError: if the batch holds more than one sample, or if the result
+            is not the one of a sparse analysis.
     """
+    missing = [
+        name for name in SPARSE_PANEL_VARIABLES if name not in result.ds.data_vars
+    ]
+    if missing:
+        raise ValueError(
+            f"the result carries no {missing}; plot_sparse draws the result of "
+            "nca_sparse"
+        )
     if isinstance(mean_curve, Timecourses):
         if mean_curve.n_samples != 1:
             raise ValueError(
@@ -1232,11 +1246,9 @@ def plot_sparse(
     time = np.asarray(curve.time, dtype=float)
     value = np.asarray(curve.value, dtype=float)
     se = None if curve.se is None else np.asarray(curve.se, dtype=float)
-    with np.errstate(invalid="ignore"):
-        measurable = np.isfinite(value) & (value > 0.0)
-    if measurable.any():
-        through_last = np.isfinite(value)
-        through_last[int(np.flatnonzero(measurable)[-1]) + 1 :] = False
+    # the same window the estimator weights (`pkpdutils.nca.sparse`)
+    through_last = area_window(np.isfinite(value), value)
+    if through_last.any():
         ax.fill_between(
             time[through_last],
             np.zeros(int(through_last.sum())),
@@ -1259,8 +1271,8 @@ def plot_sparse(
         label="mean of the animals",
     )
     counts = (
-        np.asarray(result["n_points"].to_numpy(), dtype=int)
-        if "n_points" in result.ds.data_vars
+        np.asarray(result["n_animals"].to_numpy(), dtype=int)
+        if "n_animals" in result.ds.data_vars
         else np.array([], dtype=int)
     )
     lines = [
@@ -1269,7 +1281,9 @@ def plot_sparse(
         f"df = {float(result['auc_last_df']):.3g}",
     ]
     if counts.size:
-        lines.append(f"n per time point: {', '.join(str(int(c)) for c in counts)}")
+        lines.append(
+            f"n animals per time point: {', '.join(str(int(c)) for c in counts)}"
+        )
     ax.text(
         0.98,
         0.98,

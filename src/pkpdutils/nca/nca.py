@@ -192,7 +192,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "clr": "({amount}) / (({unit}) * ({time}))",
     # the sparse sampling analysis (`pkpdutils.nca.sparse`)
     "auc_last_df": "dimensionless",
-    "n_points": "dimensionless",
+    "n_animals": "dimensionless",
 }
 
 

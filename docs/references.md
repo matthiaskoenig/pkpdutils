@@ -67,7 +67,7 @@
 > *Journal of Pharmacokinetics and Biopharmaceutics.* 1992;20(3):211-226.
 > [doi:10.1007/BF01062525](https://doi.org/10.1007/BF01062525)
 
-**Sparse and destructive sampling.** The variance of an AUC estimated from group data with one time point per subject, and its extension to sparse serial sampling.
+**Sparse and destructive sampling.** The variance of an AUC estimated from group data with one time point per subject, its degrees of freedom, and the extension of both to a batch design in which a subject contributes to several time points.
 
 > Bailer AJ.
 > **Testing for the equality of area under the curves when using destructive measurement techniques.**
@@ -79,10 +79,15 @@
 > *Pharmaceutical Research.* 1995;12(1):124-128.
 > [doi:10.1023/A:1016255124336](https://doi.org/10.1023/A:1016255124336)
 
+> Nedelman JR, Jia X.
+> **An extension of Satterthwaite's approximation applied to pharmacokinetics.**
+> *Journal of Biopharmaceutical Statistics.* 1998;8(2):317-328.
+> [doi:10.1080/10543409808835241](https://doi.org/10.1080/10543409808835241)
+
 > Holder DJ.
 > **Comments on Nedelman and Jia's extension of Satterthwaite's approximation applied to pharmacokinetics.**
 > *Journal of Biopharmaceutical Statistics.* 2001;11(1-2):75-79.
-> [doi:10.1081/BIP-100104198](https://doi.org/10.1081/BIP-100104198)
+> [doi:10.1081/BIP-100104199](https://doi.org/10.1081/BIP-100104199)
 
 **Delta method vs. bootstrap for AUC ratios.** A pharmacokinetics-specific comparison of confidence interval methods for an exposure metric.
 

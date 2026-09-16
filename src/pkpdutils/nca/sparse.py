@@ -16,10 +16,11 @@ of the means. With one sample per animal the means are independent and
 $$\widehat{\mathrm{Var}}\left[\widehat{\mathrm{AUC}}\right] = \sum_j w_j^2
 \frac{s_j^2}{n_j};$$
 
-Nedelman and Jia (1995) give the Satterthwaite degrees of freedom of that sum
-so the area gets a \(t\) interval, and Holder (2001) extends the variance to a
-batch design, where an animal contributes to several means and the means are no
-longer independent.
+Nedelman, Gibiansky and Lau (1995) give the Satterthwaite degrees of freedom of
+that sum so the area gets a \(t\) interval. Nedelman and Jia (1998) extend the
+estimator to a batch design, where an animal contributes to several means, and
+Holder (2001), commenting on that extension, gives the variance which carries
+the covariance between the time points an animal is shared by.
 
 `pkpdutils` computes all three from one identity. Writing the estimator per
 animal rather than per time point,
@@ -37,8 +38,8 @@ s^2_{A,b}, \qquad \nu = \frac{\left(\sum_b c_b\right)^2}{\sum_b
 \frac{c_b^2}{m_b - 1}}, \quad c_b = m_b\, s^2_{A,b}.$$
 
 With one sample per animal a batch is one time point, \(A_i = (w_j/n_j)
-y_{ij}\) and \(c_b = w_j^2 s_j^2 / n_j\): the formula of Bailer and the
-degrees of freedom of Nedelman and Jia, exactly. With several samples per
+y_{ij}\) and \(c_b = w_j^2 s_j^2 / n_j\): the formula of Bailer and the degrees
+of freedom of Nedelman, Gibiansky and Lau, exactly. With several samples per
 animal the sample variance of the \(A_i\) carries the covariances of Holder
 without ever forming them.
 
@@ -48,6 +49,7 @@ models).
 """
 
 import logging
+import warnings
 from typing import Any, Literal
 
 import numpy as np
@@ -122,16 +124,42 @@ def point_statistics(
     values = np.asarray(values, dtype=np.float64)
     finite = np.isfinite(values)
     n = finite.sum(axis=0)
-    mean = np.full(values.shape[1], np.nan)
-    sd = np.full(values.shape[1], np.nan)
+    clean = np.where(finite, values, np.nan)
+    with (
+        np.errstate(invalid="ignore"),
+        warnings.catch_warnings(),
+    ):
+        # a nominal time without a sample (or with one) has no mean (no
+        # standard deviation), which numpy reports as an empty-slice warning
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mean = np.nanmean(clean, axis=0)
+        sd = np.nanstd(clean, axis=0, ddof=1)
+    return n, np.where(n > 0, mean, np.nan), np.where(n > 1, sd, np.nan)
+
+
+def area_window(observed: np.ndarray, mean: np.ndarray) -> np.ndarray:
+    r"""The nominal times `auc_last` of a sparse design covers.
+
+    The observed time points up to the last one whose mean is positive, the
+    \(t_\mathrm{last}\) rule of a concentration curve read on the mean curve.
+    `nca_sparse` weights these points and `pkpdutils.plot.plot_sparse` shades
+    them, so both read the window from here.
+
+    Args:
+        observed: whether a nominal time carries a sample at all.
+        mean: the mean of every nominal time, `NaN` where there is none.
+
+    Returns:
+        The boolean mask of the covered time points; all `False` when no mean
+        is positive.
+    """
+    window = np.asarray(observed, dtype=bool).copy()
     with np.errstate(invalid="ignore"):
-        for j in range(values.shape[1]):
-            column = values[finite[:, j], j]
-            if column.size:
-                mean[j] = column.mean()
-            if column.size > 1:
-                sd[j] = column.std(ddof=1)
-    return n, mean, sd
+        measurable = window & (np.asarray(mean, dtype=np.float64) > 0.0)
+    if not measurable.any():
+        return np.zeros(window.shape, dtype=bool)
+    window[int(np.flatnonzero(measurable)[-1]) + 1 :] = False
+    return window
 
 
 def bailer_variance(
@@ -151,8 +179,9 @@ def bailer_variance(
     sampling times and \(s^2_{A,b}\) the sample variance of their \(A_i\). With
     one sample per animal a batch is one time point and the two formulas are
     \(\sum_j w_j^2 s_j^2/n_j\) of Bailer (1988) and the degrees of freedom of
-    Nedelman and Jia (1995); with several samples per animal the sample
-    variance carries the covariance terms of Holder (2001).
+    Nedelman, Gibiansky and Lau (1995); with several samples per animal the
+    sample variance carries the covariance terms of the batch design of
+    Nedelman and Jia (1998) as Holder (2001) writes them.
 
     Args:
         weights: the weight of every time point, 0 for a time point which is
@@ -323,9 +352,9 @@ def nca_sparse(
     r"""Non-compartmental analysis of a sparse or destructive sampling design.
 
     The area under the mean curve with the standard error of Bailer (1988), the
-    degrees of freedom of Nedelman and Jia (1995) and, for a batch design, the
-    covariance of Holder (2001), all three from the per-animal identity of
-    `bailer_variance`:
+    degrees of freedom of Nedelman, Gibiansky and Lau (1995) and, for the batch
+    design of Nedelman and Jia (1998), the covariance of Holder (2001), all
+    three from the per-animal identity of `bailer_variance`:
 
     $$\widehat{\mathrm{AUC}}_{0\text{-}t_\mathrm{last}} = \sum_j w_j \bar y_j,
     \qquad \mathrm{se} =
@@ -342,7 +371,7 @@ def nca_sparse(
     dose). The peak of the mean curve is `cmax` at `tmax` with the
     standard error \(s_j/\sqrt{n_j}\) of the mean at that time, the
     `SE_Cmax` of Phoenix WinNonlin. The number of animals behind every time
-    point is the point variable `n_points`.
+    point is the point variable `n_animals`.
 
     The estimator is a fixed linear combination of the means, so the weights
     are always those of the linear trapezoid rule (`trapezoid_weights`): a
@@ -371,7 +400,7 @@ def nca_sparse(
     Returns:
         The parameters of the mean curve without sample dimensions:
         `auc_last`, `auc_last_se`, `auc_last_df`, `auc_all`, `cmax`,
-        `cmax_se`, `tmax` and the point variable `n_points` over `time`.
+        `cmax_se`, `tmax` and the point variable `n_animals` over `time`.
 
     Raises:
         ValueError: if the shapes do not fit, if the times are not increasing,
@@ -380,11 +409,16 @@ def nca_sparse(
     """
     options = options or NCAOptions()
     if options.auc_method is not AUCMethod.LINEAR:
-        logger.debug(
-            "the sparse area is a linear combination of the means, so the "
-            "linear trapezoid rule is used rather than %s",
-            options.auc_method,
+        message = (
+            f"the sparse area is a linear combination of the means, so the "
+            f"linear trapezoid rule is used rather than {options.auc_method}"
         )
+        if "auc_method" in options.model_fields_set:
+            # the caller asked for a rule which has no variance formula of this
+            # kind; the default LINEAR_LOG is only noted in the log
+            warnings.warn(message, UserWarning, stacklevel=2)
+        else:
+            logger.debug("%s", message)
     t, y = _as_values(times, values)
     _check_design(y, design)
     n, mean, sd = point_statistics(y)
@@ -393,17 +427,13 @@ def nca_sparse(
     if int(observed.sum()) < 2:
         flags |= int(NCAFlag.NO_DATA)
 
-    with np.errstate(invalid="ignore"):
-        measurable = observed & (mean > 0.0)
     all_weights = np.zeros(t.shape)
     if int(observed.sum()) > 1:
         all_weights[observed] = trapezoid_weights(t[observed])
     last_weights = np.zeros(t.shape)
-    if measurable.any():
-        through_last = observed.copy()
-        through_last[int(np.flatnonzero(measurable)[-1]) + 1 :] = False
-        if int(through_last.sum()) > 1:
-            last_weights[through_last] = trapezoid_weights(t[through_last])
+    through_last = area_window(observed, mean)
+    if int(through_last.sum()) > 1:
+        last_weights[through_last] = trapezoid_weights(t[through_last])
 
     auc_last = float(np.nansum(last_weights * np.nan_to_num(mean)))
     auc_all = float(np.nansum(all_weights * np.nan_to_num(mean)))
@@ -444,8 +474,8 @@ def nca_sparse(
         data_vars[name] = xr.DataArray(
             magnitudes[name] * factor, attrs={"units": parameter_unit_string}
         )
-    data_vars["n_points"] = xr.DataArray(
-        n.astype(np.int64), dims=TIME_DIM, attrs={"units": PARAMETER_UNITS["n_points"]}
+    data_vars["n_animals"] = xr.DataArray(
+        n.astype(np.int64), dims=TIME_DIM, attrs={"units": PARAMETER_UNITS["n_animals"]}
     )
     data_vars["flags"] = xr.DataArray(np.int64(flags), attrs={"units": "dimensionless"})
 

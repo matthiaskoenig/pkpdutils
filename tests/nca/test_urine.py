@@ -274,3 +274,54 @@ def test_a_dose_in_an_incompatible_unit_is_rejected() -> None:
     )
     with pytest.raises(ValueError, match="cannot be compared"):
         nca_urine(exc)
+
+
+def test_a_contradicting_amount_concentration_and_volume_is_rejected() -> None:
+    """All three given: the amount has to be the concentration times the volume."""
+    exc = collected()
+    assert exc.concentration is not None
+    Excretion(
+        start=EDGES[:-1],
+        end=EDGES[1:],
+        amount=exc.amount,
+        concentration=exc.concentration,
+        volume=VOLUME,
+        unit="mg",
+        time_unit="hr",
+        volume_unit="ml",
+    )
+    with pytest.raises(ValueError, match="not 'concentration' times 'volume'"):
+        Excretion(
+            start=EDGES[:-1],
+            end=EDGES[1:],
+            amount=exc.amount,
+            # the classic mistake: mg/l instead of mg/ml
+            concentration=1000.0 * exc.concentration,
+            volume=VOLUME,
+            unit="mg",
+            time_unit="hr",
+            volume_unit="ml",
+        )
+
+
+def test_a_plasma_result_reaching_past_the_collections_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`clr` from a result divides by the whole curve, which is logged when the windows differ."""
+    curve = Timecourse(
+        time=np.array([0.0, 4.0, 8.0, 12.0, 24.0, 48.0]),
+        value=5.0 * np.exp(-K * np.array([0.0, 4.0, 8.0, 12.0, 24.0, 48.0])),
+        time_unit="hr",
+        unit="mg/l",
+        dose=DOSE,
+        substance="drug",
+    )
+    plasma = nca_single(curve, options=NCAOptions(auc_method=AUCMethod.LOG))
+    with caplog.at_level("INFO", logger="pkpdutils.nca.urine"):
+        nca_urine(collected(), plasma=plasma)
+    assert "collections end at 24.0 hr" in caplog.text
+    # the curve itself is integrated over the span, so nothing is logged
+    caplog.clear()
+    with caplog.at_level("INFO", logger="pkpdutils.nca.urine"):
+        nca_urine(collected(), plasma=curve)
+    assert "collections end at" not in caplog.text

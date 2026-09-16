@@ -1,6 +1,6 @@
 # Sparse sampling
 
-A preclinical study rarely samples one animal repeatedly: the animal is sacrificed for its sample (a destructive design, one sample per animal) or contributes a few samples out of the schedule (a batch design). There is no curve per animal then, only a mean curve over the animals of every nominal time, and the exposure of the study is the area under that mean curve. `pkpdutils.nca.sparse` estimates it with the standard error of Bailer[^bailer], the degrees of freedom of Nedelman and Jia[^nedelman] and the batch covariance of Holder[^holder], so the area of a toxicokinetic study comes with an interval rather than as a bare number. It is the design ICH S3A[^ich_s3a] describes and the one every comparable tool supports (Phoenix WinNonlin models 200 to 202 and 210 to 212 with `SE_AUClast`, PKanalix since 2024R1, PKNCA `sparse_auclast`, the R package `PK`).
+A preclinical study rarely samples one animal repeatedly: the animal is sacrificed for its sample (a destructive design, one sample per animal) or contributes a few samples out of the schedule (a batch design). There is no curve per animal then, only a mean curve over the animals of every nominal time, and the exposure of the study is the area under that mean curve. `pkpdutils.nca.sparse` estimates it with the standard error of Bailer[^bailer], the degrees of freedom of Nedelman, Gibiansky and Lau[^nedelman] and, for a batch design, the extension of Nedelman and Jia[^nedelman_jia] in the form Holder[^holder] gives it, so the area of a toxicokinetic study comes with an interval rather than as a bare number. It is the design ICH S3A[^ich_s3a] describes and the one every comparable tool supports (Phoenix WinNonlin models 200 to 202 and 210 to 212 with `SE_AUClast`, PKanalix since 2024R1, PKNCA `sparse_auclast`, the R package `PK`).
 
 ## Concepts
 
@@ -12,7 +12,7 @@ A preclinical study rarely samples one animal repeatedly: the animal is sacrific
 
 **What the area covers.** The weights run over the nominal times as they are given, from the first of them, and nothing is inserted at time 0: an inserted point has no variance and would break the estimator. A design whose area is to start at the dose carries a nominal time 0 of its own, with the value 0 after an extravascular dose. `auc_last` ends at the last nominal time whose mean is positive, `auc_all` at the last nominal time with a sample.
 
-**One identity for all three variances.** Written per animal instead of per time point the estimator is \(\widehat{\mathrm{AUC}} = \sum_i A_i\) with \(A_i = \sum_{j \in T_i} (w_j / n_j)\, y_{ij}\) over the times \(T_i\) the animal was sampled at. The animals are independent whatever the design, so the variance is a sum over the animals and is estimated batch by batch, a batch being the animals with the same sampling times. With one sample per animal a batch is one time point and the sum is Bailer's formula; with several it carries the covariances of Holder without ever forming them. A batch of a single animal has no variance of its own: the standard error is then `NaN` and the analysis logs why.
+**One identity for every design.** Written per animal instead of per time point the estimator is \(\widehat{\mathrm{AUC}} = \sum_i A_i\) with \(A_i = \sum_{j \in T_i} (w_j / n_j)\, y_{ij}\) over the times \(T_i\) the animal was sampled at. The animals are independent whatever the design, so the variance is a sum over the animals and is estimated batch by batch, a batch being the animals with the same sampling times. With one sample per animal a batch is one time point and the sum is Bailer's formula; with several it carries the covariances of Holder without ever forming them. A batch of a single animal has no variance of its own: the standard error is then `NaN` and the analysis logs why.
 
 ## Math
 
@@ -22,7 +22,7 @@ The weights of the linear trapezoid rule over the \(J\) nominal times of the are
 w_1 = \frac{t_2 - t_1}{2}, \qquad w_j = \frac{t_{j+1} - t_{j-1}}{2}, \qquad w_J = \frac{t_J - t_{J-1}}{2}
 \]
 
-The estimator and, for a serial design, the variance of Bailer[^bailer] with the degrees of freedom of Nedelman and Jia[^nedelman]:
+The estimator and, for a serial design, the variance of Bailer[^bailer] with the degrees of freedom of Nedelman, Gibiansky and Lau[^nedelman]:
 
 \[
 \widehat{\mathrm{AUC}} = \sum_j w_j \bar y_j, \qquad
@@ -30,7 +30,7 @@ The estimator and, for a serial design, the variance of Bailer[^bailer] with the
 \nu = \frac{\left(\sum_j c_j\right)^2}{\sum_j \frac{c_j^2}{n_j - 1}}, \quad c_j = w_j^2 \frac{s_j^2}{n_j}
 \]
 
-The same numbers from the per-animal form, which is what is implemented and which covers the batch design of Holder[^holder] as well:
+The same numbers from the per-animal form, which is what is implemented and which covers the batch design of Nedelman and Jia[^nedelman_jia] and Holder[^holder] as well:
 
 \[
 A_i = \sum_{j \in T_i} \frac{w_j}{n_j}\, y_{ij}, \qquad
@@ -54,11 +54,11 @@ with \(n_{jk}\) the animals sampled at both times and \(s_{jk}\) their sample co
 | --- | --- | --- | --- |
 | `auc_last` | \(\widehat{\mathrm{AUC}}\) | area under the mean curve to the last positive mean | value·time |
 | `auc_last_se` | | standard error of the area (Bailer, Holder) | value·time |
-| `auc_last_df` | \(\nu\) | Satterthwaite degrees of freedom of that standard error (Nedelman and Jia) | - |
+| `auc_last_df` | \(\nu\) | Satterthwaite degrees of freedom of that standard error (Nedelman, Gibiansky and Lau; Nedelman and Jia for a batch design) | - |
 | `auc_all` | | area over every nominal time with a sample | value·time |
 | `cmax`, `tmax` | | the largest mean and its nominal time | value, time |
 | `cmax_se` | | standard error of the mean at `tmax` | value |
-| `n_points` | \(n_j\) | number of animals per nominal time, over the dimension `time` | - |
+| `n_animals` | \(n_j\) | number of animals per nominal time, over the dimension `time` | - |
 
 The mean curve of `sparse_mean` carries `value`, `sd`, `se` and `n` per time point, so it plots, prints and travels like any other group curve of the package, see [Timecourses](timecourses.md).
 
@@ -89,7 +89,7 @@ result = nca_sparse(times, values, design="serial", time_unit="hr", unit="ng/ml"
 q = result.to_quantities()
 for name in ("auc_last", "auc_last_se", "auc_last_df", "cmax", "cmax_se", "tmax"):
     print(f"{name:<12} {q[name]:.4g~P}")
-print(result["n_points"].to_numpy())
+print(result["n_animals"].to_numpy())
 ```
 
 ```text
@@ -162,6 +162,7 @@ The example is `examples/sparse.py`, the reference of the module is in [API: nca
 
 [^bailer]: Bailer AJ. Testing for the equality of area under the curves when using destructive measurement techniques. *J Pharmacokinet Biopharm.* 1988;16(3):303-309. See [References](references.md#non-compartmental-analysis).
 [^nedelman]: Nedelman JR, Gibiansky E, Lau DTW. Applying Bailer's method for AUC confidence intervals to sparse sampling. *Pharm Res.* 1995;12(1):124-128. See [References](references.md#non-compartmental-analysis).
+[^nedelman_jia]: Nedelman JR, Jia X. An extension of Satterthwaite's approximation applied to pharmacokinetics. *J Biopharm Stat.* 1998;8(2):317-328. See [References](references.md#non-compartmental-analysis).
 [^holder]: Holder DJ. Comments on Nedelman and Jia's extension of Satterthwaite's approximation applied to pharmacokinetics. *J Biopharm Stat.* 2001;11(1-2):75-79. See [References](references.md#non-compartmental-analysis).
 [^phoenix]: Certara. *Phoenix WinNonlin User's Guide: Noncompartmental Analysis*, the sparse sampling models. See [References](references.md#non-compartmental-analysis).
 [^ich_s3a]: International Council for Harmonisation. *S3A Note for Guidance on Toxicokinetics: Questions and Answers - Focus on Microsampling.* 2017. See [References](references.md#regulatory-guidance).

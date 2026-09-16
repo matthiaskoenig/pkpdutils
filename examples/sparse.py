@@ -72,7 +72,7 @@ if __name__ == "__main__":
         pd.DataFrame(
             {
                 "time [hr]": TIMES,
-                "n": result["n_points"].to_numpy(),
+                "n": result["n_animals"].to_numpy(),
                 "mean [ng/ml]": curve.values.reshape(-1),
                 "sd [ng/ml]": curve.ds["sd"].to_numpy().reshape(-1),
                 "se [ng/ml]": curve.ds["se"].to_numpy().reshape(-1),

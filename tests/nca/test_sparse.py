@@ -1,22 +1,28 @@
 """Sparse and destructive sampling designs against the formulas by hand.
 
 The serial case is checked against Bailer's `sum w_j^2 s_j^2 / n_j` and the
-Satterthwaite degrees of freedom of Nedelman and Jia written out for three
-time points; the batch case against the covariance form of Holder, which the
-per-animal estimator of `bailer_variance` has to reproduce.
+Satterthwaite degrees of freedom of Nedelman, Gibiansky and Lau written out for
+three time points; the batch case against the covariance form of Nedelman and
+Jia as Holder writes it, which the per-animal estimator of `bailer_variance`
+has to reproduce.
 """
+
+import warnings
 
 import numpy as np
 import pytest
+import xarray as xr
 
-from pkpdutils import Dose, NCAFlag, Route
+from pkpdutils import AUCMethod, Dose, NCAFlag, NCAOptions, NCAResult, Route
 from pkpdutils.nca.sparse import (
+    area_window,
     bailer_variance,
     nca_sparse,
     point_statistics,
     sparse_mean,
     trapezoid_weights,
 )
+from pkpdutils.nca.uncertainty import DISCRETE_PARAMETERS
 
 #: the nominal sampling times of the three point design, in hr
 TIMES = np.array([1.0, 2.0, 4.0])
@@ -68,7 +74,7 @@ def test_bailer_estimator_of_a_serial_design() -> None:
     assert float(result["auc_last"]) == pytest.approx(float(weights @ mean))
     variance = float(np.sum(weights**2 * sd**2 / n))
     assert float(result["auc_last_se"]) == pytest.approx(np.sqrt(variance))
-    # Nedelman and Jia: Satterthwaite over the per time point terms
+    # Nedelman, Gibiansky and Lau: Satterthwaite over the per time point terms
     terms = weights**2 * sd**2 / n
     df = terms.sum() ** 2 / np.sum(terms**2 / (n - 1))
     assert float(result["auc_last_df"]) == pytest.approx(df)
@@ -85,8 +91,8 @@ def test_the_peak_and_its_standard_error() -> None:
     assert float(result["cmax_se"]) == pytest.approx(
         np.std(SERIAL[1], ddof=1) / np.sqrt(3)
     )
-    np.testing.assert_array_equal(result["n_points"].to_numpy(), [3, 3, 3])
-    assert result.point_variables == ["n_points"]
+    np.testing.assert_array_equal(result["n_animals"].to_numpy(), [3, 3, 3])
+    assert result.point_variables == ["n_animals"]
 
 
 def test_auc_all_covers_the_trailing_zeros() -> None:
@@ -235,3 +241,47 @@ def test_the_dose_travels_into_the_result() -> None:
     assert float(normalized["auc_last_dn"]) == pytest.approx(
         float(result["auc_last"]) / 10.0
     )
+
+
+def test_area_window_is_the_window_the_estimator_weights() -> None:
+    """The observed points up to the last positive mean, empty without one."""
+    observed = np.array([True, True, True, True, False])
+    mean = np.array([1.0, 2.0, 0.5, 0.0, np.nan])
+    np.testing.assert_array_equal(
+        area_window(observed, mean), [True, True, True, False, False]
+    )
+    np.testing.assert_array_equal(area_window(observed, np.zeros(5)), [False] * 5)
+
+
+def test_a_non_linear_trapezoid_rule_warns_only_when_it_was_asked_for() -> None:
+    """The estimator is linear in the means; an explicit `auc_method` is refused loudly."""
+    values = serial_values()
+    with pytest.warns(UserWarning, match="linear trapezoid rule is used"):
+        explicit = nca_sparse(
+            TIMES,
+            values,
+            time_unit="hr",
+            unit="mg/l",
+            options=NCAOptions(auc_method=AUCMethod.LOG),
+        )
+    # the default LINEAR_LOG is not an explicit request and only logs
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        default = nca_sparse(TIMES, values, time_unit="hr", unit="mg/l")
+    assert float(explicit["auc_last"]) == pytest.approx(float(default["auc_last"]))
+
+
+def test_the_degrees_of_freedom_are_a_discrete_parameter() -> None:
+    """`summarize` gives `auc_last_df` no standard error, interval or CV."""
+    assert "auc_last_df" in DISCRETE_PARAMETERS
+    values = serial_values()
+    first = nca_sparse(TIMES, values, time_unit="hr", unit="mg/l")
+    second = nca_sparse(TIMES, 1.1 * values, time_unit="hr", unit="mg/l")
+    batch = NCAResult(
+        xr.concat([first.ds, second.ds], dim="dose").assign_coords(dose=[10.0, 20.0])
+    )
+    summary = batch.summarize("dose")
+    for suffix in ("_sd", "_se", "_cv", "_ci_low", "_ci_high"):
+        assert f"auc_last_df{suffix}" not in summary.ds.data_vars
+    assert "auc_last_sd" in summary.ds.data_vars
+    assert "auc_last_df_median" in summary.ds.data_vars

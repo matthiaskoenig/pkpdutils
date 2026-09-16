@@ -79,8 +79,8 @@ The names used for the variables of the result datasets, with their symbols and 
 | `aurc_last`, `aurc_all`, `aurc_inf_obs`, `aurc_inf_pred` | \(\mathrm{AURC}\) | areas under the excretion rate curve, which are amounts | amount | [Urinary excretion](urine.md) |
 | `amount_recovered`, `percent_recovered`, `vol_ur` | \(A_e\), \(V_\mathrm{ur}\) | the amount collected over every interval, that amount as a percentage of the dose, and the volume collected | amount, %, l | [Urinary excretion](urine.md) |
 | `clr` | \(\mathrm{CL}_R\) | renal clearance, the recovered amount over the plasma area of the collection span | l/h | [Urinary excretion](urine.md) |
-| `auc_last_se`, `auc_last_df` | \(\nu\) | standard error of the area of a sparse design (Bailer, Holder) and its Satterthwaite degrees of freedom (Nedelman and Jia) | value·time, - | [Sparse sampling](sparse.md) |
-| `n_points` | \(n_j\) | number of animals behind every nominal time of a sparse design, over the dimension `time` | - | [Sparse sampling](sparse.md) |
+| `auc_last_se`, `auc_last_df` | \(\nu\) | standard error of the area of a sparse design (Bailer; Nedelman and Jia, Holder for a batch design) and its Satterthwaite degrees of freedom (Nedelman, Gibiansky and Lau) | value·time, – | [Sparse sampling](sparse.md) |
+| `n_animals` | \(n_j\) | number of animals behind every nominal time of a sparse design, over the dimension `time` | – | [Sparse sampling](sparse.md) |
 
 ## Statistics of the parameter tables
 

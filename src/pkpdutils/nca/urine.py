@@ -163,7 +163,9 @@ class Excretion(BaseModel):
         Raises:
             ValueError: if the units are unknown, if the arrays do not have the
                 same length, if an interval is empty or two intervals overlap,
-                if no amount could be derived or if a volume carries no unit.
+                if no amount could be derived, if a volume carries no unit, or
+                if a given amount, concentration and volume contradict each
+                other.
         """
         parse_unit(self.unit)
         parse_unit(self.time_unit)
@@ -195,6 +197,17 @@ class Excretion(BaseModel):
             if self.volume_unit is None:
                 raise ValueError("'volume' needs a 'volume_unit'")
             parse_unit(self.volume_unit)
+            if self.concentration is not None and not np.allclose(
+                self.amount, self.concentration * self.volume, equal_nan=True
+            ):
+                # all three were given and the product does not hold: the
+                # concentration is not in `unit / volume_unit`, or one of the
+                # three columns belongs to another collection
+                raise ValueError(
+                    "'amount' is not 'concentration' times 'volume'; the "
+                    f"concentration has to be in '{self.unit} / "
+                    f"{self.volume_unit}'"
+                )
         return self
 
     @property
@@ -295,6 +308,23 @@ def _plasma_area(
             raise ValueError(
                 f"the plasma result holds {values.size} samples, the excretion "
                 "of one subject needs the plasma curve of that subject"
+            )
+        last = (
+            float(np.asarray(plasma["tlast"].to_numpy()).reshape(-1)[0])
+            if "tlast" in plasma.ds.data_vars
+            else np.nan
+        )
+        end = float(excretion.end[-1])
+        if np.isfinite(last) and last > end:
+            logger.info(
+                "the plasma result covers 0 to %s %s, the collections end at "
+                "%s %s: 'clr' divides by the area of the whole curve, not by "
+                "the area of the collection span; pass the curve itself to "
+                "integrate it over the span",
+                last,
+                excretion.time_unit,
+                end,
+                excretion.time_unit,
             )
         return float(values[0]), plasma.units("auc_last")
     batch = plasma.to_batch() if isinstance(plasma, Timecourse) else plasma
