@@ -6,9 +6,17 @@ Writes `nca_single.png` into the working directory.
 
 import numpy as np
 
-from pkpdutils import Dose, NCAOptions, Route, Timecourse, nca_single
+from pkpdutils import (
+    AUCMethod,
+    Dose,
+    NCAOptions,
+    Route,
+    TerminalMethod,
+    TerminalPhase,
+    Timecourse,
+    nca_single,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, TerminalMethod, TerminalPhase
 from pkpdutils.plot import plot_nca
 
 # caffeine after an oral dose, mean concentrations of a group

@@ -66,6 +66,7 @@ time_above     3.9323708621578644 h
 An effect timecourse carrying a dosing protocol of more than one dose gets the same multiple dosing analysis as a concentration timecourse ([Non-compartmental analysis](nca.md), "Multiple dosing"): every dosing interval reports `interval_auec`, `interval_emax`, `interval_temax`, `interval_emin`, `interval_eavg` and, with `effect_threshold`, `interval_time_above` (`NCAResult.intervals()`), and the last complete interval reports the steady state parameters `auec_tau`, `emin_ss`, `emax_ss`, `eavg`, `time_above_tau`, `accumulation_ratio_obs`, `n_doses` and `tau`. The baseline `e0`, the observed maximum `emax_obs`/`temax` and the baseline corrected variables are computed from the last dose on, the same reference dose rule as a concentration timecourse.
 
 ```python
+# not executed
 # `tc_protocol`: an effect timecourse carrying a `Dosing` of several doses,
 # built like the curve above but with `dosing=Dosing.regimen(...)`
 result = nca_single(

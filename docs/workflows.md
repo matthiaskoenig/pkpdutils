@@ -54,6 +54,7 @@ for amount in (50.0, 100.0, 200.0):
             for t, c in zip(time, curve, strict=True)
         ]
 events = pd.DataFrame(records)
+events.to_csv("study.csv", index=False)  # the table of the Quickstart
 print(events.head())
 
 # the table becomes a batch of twelve curves, each with its dosing protocol;
@@ -86,7 +87,7 @@ result.to_dataframe().to_csv("study_parameters.csv", index=False)
 plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
 ```
 
-The first rows of the event table:
+The table this snippet builds is shipped with the documentation as [study.csv](data/study.csv), the file the Quickstart of the [home page](index.md) reads. Its first rows:
 
 ```text
       ID  TIME        DV   AMT  EVID dose

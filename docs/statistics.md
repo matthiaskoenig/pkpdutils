@@ -148,6 +148,7 @@ The effect of a comparison on the log scale is the ratio of the geometric means,
 The other tests, the pairing and the correction for multiple comparisons, with the samples of the snippet above and `before`/`after` two samples of the same subjects:
 
 ```python
+# not executed
 from pkpdutils.stats import Alternative, TestMethod, multiple_comparison
 
 compare(smokers, non_smokers, test=TestMethod.MANN_WHITNEY)
@@ -159,6 +160,7 @@ multiple_comparison([t.p_value for t in tests])  # Holm
 Ratios and bioequivalence, with `test_result` and `reference_result` two `NCAResult` objects of the same subjects (the walk-through of a 2x2 crossover is in [Workflows](workflows.md)):
 
 ```python
+# not executed
 from pkpdutils import bioequivalence, ratio
 
 r = ratio(
@@ -172,6 +174,7 @@ be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
 `ratio_table` formats the ratios of a study the way a paper prints them: one row per parameter with the point estimate and its interval in percent of the reference, the numbers rounded to `digits` significant digits as strings. It takes a mapping of `RatioResult` objects or the result of `bioequivalence`, which adds the within-subject coefficient of variation, the acceptance limits and the verdict.
 
 ```python
+# not executed
 from pkpdutils.stats import ratio_table
 
 # parameter, unit, n_test, n_reference, gmr, ci_low, ci_high, ci_level and,
@@ -199,6 +202,7 @@ A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequen
 Drug-drug interactions:
 
 ```python
+# not executed
 from pkpdutils import ddi_classification
 from pkpdutils.stats import DDIThresholds, substrate_sensitivity
 
@@ -220,6 +224,7 @@ substrate_sensitivity(6.1)
 `ddi_table` does the same over several parameters of two results: it takes every parameter from both, forms the ratio with and without the perpetrator and classifies it, so that the exposure and the maximum are read next to each other. The classes are defined for the \(\mathrm{AUC}\) and are applied to every parameter of the table.
 
 ```python
+# not executed
 from pkpdutils.stats import ddi_table
 
 # the `inhibited` and `control` results of the snippet above

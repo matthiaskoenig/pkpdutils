@@ -127,12 +127,13 @@ draw_nca_panel(tc, values, single.flags(), log_y=True, ax=axes[1])
 `plot_intervals` plots a per-interval parameter (`interval_*`) against the interval number, one line per sample of a batch result or a single line with `**indexers` selecting one sample; a missing (incomplete) interval breaks the line rather than raising.
 
 ```python
+# not executed
 from pkpdutils.plot import plot_intervals
 
-# `result`: the NCAResult of a multiple dose batch, see the steady state
+# `ss_result`: the NCAResult of a multiple dose batch, see the steady state
 # walk-through of [Workflows](workflows.md)
-fig = plot_intervals(result, "interval_ctrough")  # one line per sample
-fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
+fig = plot_intervals(ss_result, "interval_ctrough")  # one line per sample
+fig = plot_intervals(ss_result, "interval_auc", individual="s2")  # one sample
 ```
 
 ![The trough concentration of every dosing interval of four subjects](images/formats.png)
@@ -140,11 +141,12 @@ fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 `plot_troughs` is the steady state figure of a multiple dose study: the trough of every dosing interval (`interval_ctrough`, and `interval_cmin` when the analysis reports it), averaged over the subjects of a group with its spread as error bars. `x="time"` puts them at the end of their interval, the time the trough was taken, and `x="interval"` at the interval number; steady state is where the troughs stop rising.
 
 ```python
+# not executed
 from pkpdutils.plot import plot_troughs
 
-# the same multiple dose result, with an "arm" coordinate along its samples
-fig = plot_troughs(result, by="arm")  # mean +- sd per arm
-fig = plot_troughs(result, x="interval", spread="se")
+# the same `ss_result`, with an "arm" coordinate along its samples
+fig = plot_troughs(ss_result, by="arm")  # mean +- sd per arm
+fig = plot_troughs(ss_result, x="interval", spread="se")
 ```
 
 ## Fits
@@ -154,10 +156,12 @@ fig = plot_troughs(result, x="interval", spread="se")
 `plot_fit` and `plot_dose_proportionality` label their axes with the names the front end of the fit stored in the result, `attrs["x_name"]` and `attrs["y_name"]`: `time` and the substance of the batch for `fit_timecourse` and `fit_timecourses`, the two column names for `fit_table`. A result built by `fit` itself carries no names and falls back to `x` and `y`.
 
 ```python
+# not executed
+from pkpdutils import proportionality_test
 from pkpdutils.plot import plot_dose_proportionality, plot_fit, plot_goodness_of_fit
 
-# `result`, `fits` and `power`: the FitResult objects of the fitting page
-fig = plot_fit(result, log_y=True)  # 0-D result: no indexers
+# `fit_result`, `fits` and `power`: the FitResult objects of the fitting page
+fig = plot_fit(fit_result, log_y=True)  # 0-D result: no indexers
 fig = plot_fit(fits, individual="s2", log_x=True)  # one sample of a batch
 fig = plot_goodness_of_fit(fits, log_x=True, log_y=True)
 fig = plot_dose_proportionality(
@@ -184,10 +188,13 @@ fig = plot_dose_proportionality(
 `plot_parameters` draws the individual values of a parameter of a result as jittered points with a box plot per group (`by` names a coordinate along the sample dimension) and the geometric mean with its interval. `plot_ratio` draws geometric mean ratios with their intervals on a logarithmic axis against the acceptance limits of bioequivalence or the thresholds of the interaction classes, from a dictionary of `ratio` results or a `bioequivalence` result. `plot_forest` is the forest plot of a `meta_analysis`: the effect of every study with its interval and a marker sized by its random effects weight, the pooled fixed and random effects as diamonds, the heterogeneity in the title. Both write their numbers in a column to the right of the intervals (`annotate=True`, the default): `estimate [low, high]` and, in the forest plot, the weight of the study in percent. `plot_ratio` takes `labels` to give the rows the names of a publication instead of the variable names. `plot_bland_altman` shows the agreement of the predictions of a fit with the data.
 
 ```python
+# not executed
 from pkpdutils.plot import plot_bland_altman, plot_forest, plot_parameters, plot_ratio
 from pkpdutils.stats import DDIThresholds
 
-# `be`, `auc_ratio`, `cmax_ratio` and `meta`: the results of the statistics page
+# `result`: the NCAResult of the snippet at the top of this page; `be`,
+# `auc_ratio`, `cmax_ratio` and `meta`: the results of the statistics page;
+# `fit_result`: the FitResult of the fitting page
 fig = plot_parameters(result, "auc_inf_obs", "individual", by="dose", log_y=True)
 fig = plot_ratio(be, labels={"auc_inf_obs": "AUC(0-inf)", "cmax": "Cmax"})
 fig = plot_ratio(

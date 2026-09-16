@@ -239,6 +239,8 @@ Every ` ```python ` block of the user guide and of [Workflows](workflows.md) fol
 
     A later block of the same page may be a fragment, but then it names in a comment or in the sentence before it where every object it uses comes from ("the `batch` of the snippet above"). The output a snippet prints is shown below it, as a `text` block or as a markdown table, and is pasted from a run, never written by hand.
 
+    `tests/docs/test_snippets.py` keeps this honest: it runs the blocks of every page in the order they appear and in one namespace per page, in a temporary working directory with the files of `docs/data/` next to them, in a subprocess with `-W error`. A fragment which names objects the page cannot build (the result of another page, a simulation, a study a reader brings) carries the comment `# not executed` as its first line and is skipped; every other block has to run.
+
 - **It is formatted.** `ruff format` formats the code blocks of the markdown files as well, so `ruff format --check` covers the documentation and a snippet is written the way ruff would write it:
 
     ```bash

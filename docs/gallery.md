@@ -100,8 +100,8 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ```python
     from examples.steady_state import single
-    from pkpdutils import Dose, Dosing, NCAOptions, Route, nca_single
-    from pkpdutils.nca import AUCMethod, superposition
+    from pkpdutils import AUCMethod, Dose, Dosing, NCAOptions, Route, nca_single
+    from pkpdutils.nca import superposition
 
     dose = Dose(amount=100, unit="mg", route=Route.IV_BOLUS)
     protocol = Dosing.regimen(dose, interval=12, n_doses=10)
@@ -124,8 +124,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     ```python
     import pandas as pd
     from examples.formats import batch
-    from pkpdutils import NCAOptions, Route, Timecourses, nca
-    from pkpdutils.nca import AUCMethod
+    from pkpdutils import AUCMethod, NCAOptions, Route, Timecourses, nca
     from pkpdutils.plot import plot_intervals
 
     batch.to_events().to_csv("events.csv", index=False)

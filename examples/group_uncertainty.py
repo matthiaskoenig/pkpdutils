@@ -12,10 +12,20 @@ Writes `group_uncertainty.png` into the working directory.
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pkpdutils import Dose, NCAOptions, Route, Timecourse, Timecourses, nca, nca_single
+from pkpdutils import (
+    AUCMethod,
+    BootstrapSpread,
+    Dose,
+    NCAOptions,
+    Route,
+    Timecourse,
+    Timecourses,
+    UncertaintyMethod,
+    nca,
+    nca_single,
+    partial_auc,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, UncertaintyMethod, partial_auc
-from pkpdutils.nca.options import BootstrapSpread
 from pkpdutils.plot import plot_mean_timecourse, plot_timecourse
 
 t = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])

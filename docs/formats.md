@@ -133,8 +133,8 @@ conc = pd.read_csv(
 1,A,12,1.0
 2,B,0,0
 2,B,1,4.0
-2,B,4,2.9
-2,B,12,1.1
+2,B,13,5.5
+2,B,24,2.0
 """
     )
 )
@@ -159,7 +159,7 @@ batch = Timecourses.from_pknca(
 print(batch.ds["treatment"].values, batch.n_doses)  # ['A' 'B'] [1 2]
 ```
 
-The two tables are the fixtures `tests/data/formats/pknca_conc.csv` and `pknca_dose.csv` of the repository; the second subject has two dose records and therefore a protocol of two doses, the first one a single dose.
+The two tables are the fixtures `tests/data/formats/pknca_conc.csv` and `pknca_dose.csv` of the repository, row for row; the second subject has two dose records and therefore a protocol of two doses, the first one a single dose.
 
 ## CDISC ADaM ADNCA
 

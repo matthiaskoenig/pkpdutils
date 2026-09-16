@@ -198,6 +198,7 @@ The rate constants come back where the curve was built (1.2 and 0.15 per hour), 
 A single `Timecourse` is fitted by `fit_timecourse`, which takes the times relative to the dose and the units from the curve and returns a result without a sample dimension, so nothing has to be indexed:
 
 ```python
+# not executed
 from pkpdutils import Bateman, FitOptions, fit_timecourse
 
 # `timecourse`: one oral curve, e.g. the `tc` of the Timecourses page
@@ -212,6 +213,7 @@ result.to_quantities()["ka"]  # no indexer, the result is one sample
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
 ```python
+# not executed
 from pkpdutils import BiExp, FitOptions, fit_timecourses
 
 # `batch`: a Timecourses over "individual", e.g. the one of the NCA page
@@ -288,12 +290,17 @@ slope ci_low ci_high bound_low bound_high dose_low dose_high          verdict
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1.16 | 1.14 | 1.17 | 0.920 | 1.08 | 25.0 | 400 | not proportional |
 
-The other two front ends of `fit_table` and the model comparison, with the `t` and `c` of the first snippet of this section and a dataset `ds` of a clearance per individual with a `weight` coordinate:
+The other two front ends of `fit_table` and the model comparison, with the `t` and `c` of the first snippet of this section and a dataset `weights_ds` of a clearance per individual with a `weight` coordinate:
 
 ```python
+# not executed
 from pkpdutils import Allometric, BiExp, MonoExp, compare_models, fit_table
 
-allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="individual")
+# `weights_ds`: a dataset of a clearance per individual with a `weight`
+# coordinate; `t` and `c` are the arrays of the first snippet of this section
+allometric = fit_table(
+    Allometric(exponent=0.75), weights_ds, "weight", "cl", dim="individual"
+)
 
 comparison = compare_models([MonoExp(), BiExp()], t, c, x_unit="hr", y_unit="mg/l")
 comparison.table  # one row per sample and model, with delta_aicc and akaike_weight

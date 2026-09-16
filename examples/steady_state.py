@@ -6,9 +6,17 @@ Writes `steady_state.png` into the working directory.
 
 import numpy as np
 
-from pkpdutils import Dose, Dosing, NCAOptions, Route, Timecourse, nca_single
+from pkpdutils import (
+    AUCMethod,
+    Dose,
+    Dosing,
+    NCAOptions,
+    Route,
+    Timecourse,
+    nca_single,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, superposition
+from pkpdutils.nca import superposition
 from pkpdutils.plot import plot_timecourse
 
 k, c0, tau, n_doses = 0.15, 8.0, 12.0, 10

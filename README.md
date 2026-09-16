@@ -25,7 +25,7 @@ If you have any questions or issues please [open an issue](https://github.com/ma
 
 ## Quickstart
 
-A study of twelve subjects in three dose groups, from the event table it arrives in to the parameter table and the figure of the report:
+A study of twelve subjects in three dose groups, from the event table it arrives in to the parameter table and the figure of the report. The table is [study.csv](docs/data/study.csv), which the first walk-through of the [Workflows](https://matthiaskoenig.github.io/pkpdutils/workflows/) builds:
 
 ```python
 import pandas as pd
@@ -33,7 +33,9 @@ import pandas as pd
 from pkpdutils import Route, Timecourses, nca, summary_table
 from pkpdutils.plot import plot_mean_timecourse
 
-events = pd.read_csv("study.csv")  # ID, TIME, DV, AMT, EVID and a dose group
+# [study.csv](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/data/study.csv):
+# ID, TIME, DV, AMT, EVID and the dose group
+events = pd.read_csv("study.csv")
 batch = Timecourses.from_events(
     events,
     time_unit="hr",

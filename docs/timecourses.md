@@ -312,6 +312,7 @@ reference 2
 From a simulation: a dataset with a `_time` dimension and scan dimensions, with `xres` the `XResult` of a [sbmlsim](https://matthiaskoenig.github.io/sbmlsim) simulation and `ds` an `xarray.Dataset` shaped like one (`examples/timecourses.py` builds such a dataset in `batch_from_simulation`):
 
 ```python
+# not executed
 tcs = Timecourses.from_xresult(
     xres, "[Cve_mid]", dose=Dose(amount=7.5, unit="mg", route=Route.IV_BOLUS)
 )

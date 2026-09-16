@@ -15,9 +15,8 @@ Writes `nca_from_sbmlsim.png` into the working directory.
 import numpy as np
 import xarray as xr
 
-from pkpdutils import NCAOptions, Route, Timecourses, nca
+from pkpdutils import AUCMethod, NCAOptions, Route, Timecourses, nca
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod
 from pkpdutils.plot import plot_timecourse
 
 #: the doses of the scan, the scan dimension of the simulated dataset
