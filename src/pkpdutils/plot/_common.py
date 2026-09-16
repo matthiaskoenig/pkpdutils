@@ -48,7 +48,12 @@ def figure_of(
 
 
 def axes_of(
-    axes: Any | None, nrows: int, ncols: int, figsize: tuple[float, float]
+    axes: Any | None,
+    nrows: int,
+    ncols: int,
+    figsize: tuple[float, float],
+    *,
+    width_ratios: Sequence[float] | None = None,
 ) -> tuple[Figure, np.ndarray]:
     """The grid of axes to draw on and its figure, a new figure without `axes`.
 
@@ -61,6 +66,8 @@ def axes_of(
         nrows: number of rows of the grid.
         ncols: number of columns of the grid.
         figsize: size of a new figure; ignored when `axes` is given.
+        width_ratios: relative widths of the columns of a new figure, equal
+            by default; ignored when `axes` is given.
 
     Returns:
         The figure and the axes, always as an `(nrows, ncols)` array.
@@ -70,7 +77,11 @@ def axes_of(
     """
     if axes is None:
         fig, new_axes = plt.subplots(
-            nrows=nrows, ncols=ncols, figsize=figsize, squeeze=False
+            nrows=nrows,
+            ncols=ncols,
+            figsize=figsize,
+            squeeze=False,
+            width_ratios=list(width_ratios) if width_ratios is not None else None,
         )
         fig.set_layout_engine("constrained")
         return fig, new_axes
