@@ -10,6 +10,11 @@ repo_url = "https://github.com/matthiaskoenig/pkpdutils"
 repo_name = "matthiaskoenig/pkpdutils"
 edit_uri = "edit/develop/docs/"
 
+# the card grid of the gallery, see `docs/stylesheets/extra.css`
+extra_css = [
+  "stylesheets/extra.css",
+]
+
 # MathJax for the formulas of the user guide (pymdownx.arithmatex)
 extra_javascript = [
   "javascripts/mathjax.js",
@@ -29,6 +34,7 @@ nav = [
     { "Pharmacodynamics" = "pd.md" },
     { "Statistics" = "statistics.md" },
     { "Plotting" = "plotting.md" },
+    { "Gallery" = "gallery.md" },
     { "Glossary" = "glossary.md" },
   ] },
   { "References" = "references.md" },

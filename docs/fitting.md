@@ -157,6 +157,10 @@ result = fit_timecourse(Bateman(), timecourse, options=FitOptions(n_starts=5, se
 result.to_quantities()["ka"]  # no indexer, the result is one sample
 ```
 
+![A Bateman curve fitted to an oral timecourse with its weighted residuals below](images/fitting_exponential.png)
+
+![Predicted against observed concentrations with the identity line](images/fitting_gof.png)
+
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
 ```python
@@ -192,6 +196,12 @@ comparison = compare_models([MonoExp(), BiExp()], t, c, x_unit="hr", y_unit="mg/
 comparison.table  # one row per sample and model, with delta_aicc and akaike_weight
 comparison.best  # name of the best model per sample
 ```
+
+The power model of a dose escalation (`examples/dose_proportionality.py`) and the allometric model of a clearance against the body weight (`examples/covariate.py`):
+
+![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
+
+![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
 
 `proportionality_table` is the table a dose escalation reports: the exponent with its interval, the acceptance bounds the criterion derives from the dose range and the verdict, one row per sample and every number formatted with `digits` significant digits.
 

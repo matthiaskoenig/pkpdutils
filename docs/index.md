@@ -40,7 +40,7 @@ result = nca_single(tc)
 print(result.to_dataframe().T)
 ```
 
-Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md).
+Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md), or browse the [Gallery](gallery.md), a figure and a snippet for every example of the repository.
 
 ## How to cite
 

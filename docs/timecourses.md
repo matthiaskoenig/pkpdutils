@@ -103,6 +103,10 @@ for tc in tcs:  # iteration over the samples
     print(tc.label)
 ```
 
+The curve with the uncertainty of its group and the batch of three individuals, as `examples/timecourses.py` builds them:
+
+![One group curve with error bars next to a batch of three individual curves](images/timecourses.png)
+
 From a long table (one row per sample and time point) with a dose column, and from a list of `Timecourse` objects:
 
 ```python

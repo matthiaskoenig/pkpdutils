@@ -1,14 +1,15 @@
 """Non-compartmental analysis of a batch: individuals of a dose escalation.
 
 Run from the root of the repository with `python -m examples.nca_batch`.
-Writes `nca_batch.png` and `nca_batch.tsv` into the working directory.
+Writes `nca_batch_curves.png`, `nca_batch.png` and `nca_batch.tsv` into the
+working directory.
 """
 
 import numpy as np
 
 from pkpdutils import NCAOptions, Route, Timecourses, nca
 from pkpdutils.console import console
-from pkpdutils.plot import plot_nca_grid, plot_timecourse
+from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid
 
 rng = np.random.default_rng(1)
 time = np.array([0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 24])
@@ -53,8 +54,6 @@ if __name__ == "__main__":
     console.rule("Dose proportionality at a glance: AUC / dose")
     console.print(result["auc_inf_dn"].mean(dim="individual").values)
 
-    plot_timecourse(batch, log_y=True, by="individual").savefig(
-        "nca_batch_curves.png", dpi=120
-    )
+    plot_mean_timecourse(batch, by="dose").savefig("nca_batch_curves.png", dpi=120)
     plot_nca_grid(batch, result, ncols=4).savefig("nca_batch.png", dpi=100)
     console.print("written: nca_batch.tsv, nca_batch_curves.png, nca_batch.png")

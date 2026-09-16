@@ -184,7 +184,7 @@ The examples are runnable scripts in `examples/`, they are not part of the packa
 python -m examples.timecourses
 ```
 
-An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_example_scripts.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md`.
+An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_examples.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md` and the [Gallery](gallery.md), which shows the figure and the core snippet of every example.
 
 ## Documentation
 
@@ -213,6 +213,17 @@ The API reference is rendered from the docstrings by [mkdocstrings](https://mkdo
 ```
 
 Docstrings are therefore the place to document functions and classes, the markdown files provide the narrative around them. Adding a module to the reference means adding such a page and an entry to `nav` in `zensical.toml`.
+
+### Rendering the example figures
+
+The figures of the documentation are the figures of the examples, and they are committed to `docs/images/`, so that the build of the site stays a plain `zensical build` and does not run any analysis. `scripts/render_examples.py` refreshes them: it runs every example of `tests/examples/test_examples.py` as a module in a temporary directory, with the `Agg` backend and warnings as errors, and copies every PNG the example wrote into `docs/images/` under its own name. It prints the files it wrote and fails when an example fails or writes no figure at all.
+
+```bash
+uv run python scripts/render_examples.py                  # every example
+uv run python scripts/render_examples.py nca_single emax  # a selection
+```
+
+Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.png)`.
 
 ### Files for agents { #files-for-agents }
 

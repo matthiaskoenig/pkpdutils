@@ -75,6 +75,8 @@ q["ec50"], q["hill"], q["ec90"], q["ec90_ci_low"]
 compare_models([Emax(), SigmoidEmax(), Linear()], concentration, effect).table
 ```
 
+![A sigmoid Emax curve fitted to a concentration-effect relationship on a logarithmic concentration axis](images/emax.png)
+
 The example is `examples/emax.py`, the figures are described in [Plotting](plotting.md) and the reference of the models is in [API: fit.models](api/fit.models.md).
 
 ## References

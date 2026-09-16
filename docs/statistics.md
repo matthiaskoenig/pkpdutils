@@ -124,6 +124,12 @@ ratio_table({"auc_inf_obs": r}, percent=False, digits=4)  # plain ratios
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | auc_inf_obs | hour * milligram / liter | 12 | 12 | 95.6 % | 88.6 % | 103 % | 90 % | 10.3 % | 80.0 - 125.0 % | True |
 
+The ratios of a 2x2 crossover against the acceptance limits and the individual values behind them (`examples/bioequivalence.py`):
+
+![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
+
+![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.png)
+
 A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequence` along the individual dimension of both batches; they are given to `Timecourses.from_arrays` as `coords={"individual": ids, "period": ("individual", periods), "sequence": ("individual", sequences)}` and travel through the NCA to the result. Without them two results with the same individuals are paired, otherwise the groups are parallel; `design=Design.PARALLEL` overrides the detection.
 
 Drug-drug interactions:
@@ -153,6 +159,8 @@ ddi_table(with_inhibitor, without_inhibitor, ["auc_inf_obs", "cmax"], dim="indiv
 | auc_inf_obs | hour * milligram / liter | 12 | 12 | 2.62 | 2.33 | 2.94 | inhibitor | moderate | False | FDA 2020 |
 | cmax | milligram / liter | 12 | 12 | 1.40 | 1.28 | 1.53 | inhibitor | weak | False | FDA 2020 |
 
+![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
+
 Meta-analysis:
 
 ```python
@@ -172,6 +180,8 @@ random_effects(
     effects_from_arrays(log_ratios, variances, labels=labels, kind=EffectKind.LOG_RATIO)
 )  # effects computed elsewhere
 ```
+
+![The forest plot of five studies with the fixed and the random effect as diamonds](images/meta_analysis.png)
 
 `effects_from_arrays` defaults to `EffectKind.HEDGES_G` like `effect_size` and `meta_analysis`, so the kind of an effect computed elsewhere is given explicitly. Every scalar result carries `to_dict` (`Summary`, `TestResult`, `RatioResult`, `BEParameter`, `BEResult`, `EffectSize`, `PooledEffect`, `Heterogeneity`, `Study`, `MetaResult`, `DDIResult`) and every collection a `to_dataframe` (`BEResult`, `MetaResult`).
 

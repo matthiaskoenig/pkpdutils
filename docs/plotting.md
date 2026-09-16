@@ -18,6 +18,10 @@ fig = plot_mean_timecourse(
 fig.savefig("mean_curves.png")
 ```
 
+`plot_mean_timecourse(batch, by="dose")` of the dose escalation of `examples/nca_batch.py`:
+
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
+
 `plot_timecourse` draws one curve or every curve of a batch, with the standard error (or the standard deviation) as error bars when present. Without `by` every sample gets its own color and its label in the legend; `by` names a coordinate and gives one color and one legend entry per group, `facet` a coordinate drawn as one panel per value, and `max_legend` (12 by default) the number of entries above which no legend is drawn at all, since it would cover the figure rather than explain it. A faceted figure takes `axes`, one per value; the panels scale on their own data.
 
 ```python
@@ -28,7 +32,15 @@ fig = plot_timecourse(batch, facet="dose", by="sex")  # one panel per dose
 fig.savefig("curves.png")
 ```
 
+`plot_timecourse` of a single curve and of a batch (`examples/timecourses.py`), and of a dose scan with `by` (`examples/nca_from_sbmlsim.py`):
+
+![One group curve with error bars next to a batch of three individual curves](images/timecourses.png)
+
+![The simulated curves of a dose scan, one color per scanned dose](images/nca_from_sbmlsim.png)
+
 A curve carrying a dosing protocol of more than one dose gets a thin dotted vertical line at every dose time (`style.dose_color`, default `"gray"`) and an infusion the shaded window from the dose time to the end of the infusion; a batch draws no dose markers, since its curves may carry different protocols, while `plot_mean_timecourse` draws them for the protocol of the group.
+
+![The predicted curve of ten doses every twelve hours with a dotted line at every dose time](images/steady_state.png)
 
 ## NCA diagnostics
 
@@ -51,6 +63,12 @@ draw_nca_panel(tc, values, single.flags(), ax=axes[0])
 draw_nca_panel(tc, values, single.flags(), log_y=True, ax=axes[1])
 ```
 
+`plot_nca` of one curve (`examples/nca_single.py`) and `plot_nca_grid` of a `(dose, individual)` batch (`examples/nca_batch.py`):
+
+![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.png)
+
+![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
+
 `plot_intervals` plots a per-interval parameter (`interval_*`) against the interval number, one line per sample of a batch result or a single line with `**indexers` selecting one sample; a missing (incomplete) interval breaks the line rather than raising.
 
 ```python
@@ -60,6 +78,8 @@ fig = plot_intervals(result, "interval_ctrough")  # one line per sample
 fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 ```
 
+![The trough concentration of every dosing interval of four subjects](images/formats.png)
+
 `plot_troughs` is the steady state figure of a multiple dose study: the trough of every dosing interval (`interval_ctrough`, and `interval_cmin` when the analysis reports it), averaged over the subjects of a group with its spread as error bars. `x="time"` puts them at the end of their interval, the time the trough was taken, and `x="interval"` at the interval number; steady state is where the troughs stop rising.
 
 ```python
@@ -68,10 +88,6 @@ from pkpdutils.plot import plot_troughs
 fig = plot_troughs(result, by="arm")  # mean +- sd per arm
 fig = plot_troughs(result, x="interval", spread="se")
 ```
-
-![NCA diagnostics](images/nca_single.png)
-
-The image is written by `examples/nca_single.py`; copy it to `docs/images/` after a change of the figure.
 
 ## Fits
 
@@ -90,7 +106,19 @@ fig = plot_dose_proportionality(
 )
 ```
 
-The images are written by `examples/fitting_exponential.py`, `examples/emax.py` and `examples/dose_proportionality.py`.
+`plot_fit` of a Bateman fit on a logarithmic value axis (`examples/fitting_exponential.py`), of a sigmoid Emax fit with `log_x` (`examples/emax.py`) and of an allometric fit on log-log axes (`examples/covariate.py`):
+
+![A Bateman curve fitted to an oral timecourse with its weighted residuals below](images/fitting_exponential.png)
+
+![A sigmoid Emax curve fitted to a concentration-effect relationship](images/emax.png)
+
+![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
+
+`plot_goodness_of_fit` of the same Bateman fit and `plot_dose_proportionality` of a power fit with its acceptance wedge (`examples/dose_proportionality.py`):
+
+![Predicted against observed concentrations with the identity line](images/fitting_gof.png)
+
+![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
 
 ## Parameters, ratios and forest plots
 
@@ -110,7 +138,15 @@ fig = plot_forest(meta, annotate=False)  # the markers alone
 fig = plot_bland_altman(fit_result, log_ratio=True)
 ```
 
-The images are written by `examples/bioequivalence.py`, `examples/ddi.py` and `examples/meta_analysis.py`.
+`plot_parameters` and `plot_ratio` of a 2x2 crossover (`examples/bioequivalence.py`), `plot_ratio` against the interaction thresholds (`examples/ddi.py`) and `plot_forest` of five studies (`examples/meta_analysis.py`):
+
+![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.png)
+
+![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
+
+![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
+
+![The forest plot of five studies with the fixed and the random effect as diamonds](images/meta_analysis.png)
 
 ## Style
 

@@ -1,16 +1,18 @@
 """Creating timecourses.
 
 Run from the root of the repository with `python -m examples.timecourses`.
-The example prints the objects and writes `timecourses.tsv` into the working
-directory.
+The example prints the objects and writes `timecourses.tsv` and
+`timecourses.png` into the working directory.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from pkpdutils import Dose, Route, Timecourse, Timecourses
 from pkpdutils.console import console
+from pkpdutils.plot import plot_timecourse
 
 
 def single_timecourse() -> Timecourse:
@@ -106,4 +108,13 @@ if __name__ == "__main__":
     console.print(scan.sample_dims, scan.sample_shape)
 
     tcs.to_dataframe().to_csv("timecourses.tsv", sep="\t", index=False)
-    console.print("written: timecourses.tsv")
+
+    # the group curve with its standard deviation and the three individuals
+    fig, axes = plt.subplots(ncols=2, figsize=(11, 4))
+    fig.set_layout_engine("constrained")
+    plot_timecourse(tc, ax=axes[0])
+    axes[0].set_title("one group curve (mean and sd)")
+    plot_timecourse(tcs, ax=axes[1])
+    axes[1].set_title("a batch of three individuals")
+    fig.savefig("timecourses.png", dpi=120)
+    console.print("written: timecourses.tsv, timecourses.png")

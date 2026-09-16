@@ -98,6 +98,10 @@ summary.to_dataframe()  # auc_inf_obs, auc_inf_obs_sd, ..., auc_inf_obs_geocv, n
 result.summary_table("individual")  # the formatted table of the same statistics
 ```
 
+The two paths of `examples/group_uncertainty.py`: the reported group curve, whose spread the bootstrap and the delta method propagate, and the individual curves, whose parameters are summarized over the subjects.
+
+![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.png)
+
 Partial areas, e.g. \(\mathrm{AUC}_{0\text{-}6}\) of every sample:
 
 ```python

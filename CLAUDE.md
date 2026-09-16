@@ -31,6 +31,7 @@ uvx ty check                    # same check, straight from the working tree
 uv run zensical build --clean --strict
 uv run python scripts/llms_txt.py
 uv run zensical serve
+uv run python scripts/render_examples.py  # example figures into docs/images/ (committed)
 
 # examples, they are modules of the `examples` package and not part of pkpdutils
 python -m examples.timecourses
@@ -52,7 +53,7 @@ python -m examples.formats
 
 Release steps are in `docs/development.md`: the release is prepared on a branch, `uvx bump-my-version bump [dev|major|minor|patch]` updates `src/pkpdutils/__init__.py` and `CITATION.cff` and commits without tagging, and the tag is created on `develop` after the pull request was merged, which triggers the PyPI release workflow. A development version is finalized with `uvx bump-my-version bump dev` (`1.0.0.dev0` becomes `1.0.0`), while `major|minor|patch` start the next development cycle.
 
-Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`, configured in `zensical.toml`, built into the gitignored `site/`. The API reference is rendered from the docstrings by mkdocstrings; a page in `docs/api/` is just `::: pkpdutils.<module>`. Formulas use `pymdownx.arithmatex` with MathJax. `scripts/llms_txt.py` runs after the build and writes `llms.txt`, `llms-full.txt` and the markdown of every page into `site/`.
+Documentation is [Zensical](https://zensical.org/): markdown sources in `docs/`, configured in `zensical.toml`, built into the gitignored `site/`. The API reference is rendered from the docstrings by mkdocstrings; a page in `docs/api/` is just `::: pkpdutils.<module>`. Formulas use `pymdownx.arithmatex` with MathJax. `scripts/llms_txt.py` runs after the build and writes `llms.txt`, `llms-full.txt` and the markdown of every page into `site/`. `scripts/render_examples.py` runs every example of `tests/examples/test_examples.py` in a temporary directory and copies its figures into the committed `docs/images/`, which the pages embed and `docs/gallery.md` shows as one card per example; run it after an example or a plot function changed.
 
 ## Architecture
 

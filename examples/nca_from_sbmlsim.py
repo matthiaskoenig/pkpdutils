@@ -9,6 +9,7 @@ call is `Timecourses.from_xresult(xresult, "[Cve]", dose=..., substance=...)`, w
 takes the units from the result instead of the `unit` and `time_unit` arguments.
 
 Run from the root of the repository with `python -m examples.nca_from_sbmlsim`.
+Writes `nca_from_sbmlsim.png` into the working directory.
 """
 
 import numpy as np
@@ -17,6 +18,7 @@ import xarray as xr
 from pkpdutils import Dose, NCAOptions, Route, Timecourses, nca
 from pkpdutils.console import console
 from pkpdutils.nca import AUCMethod
+from pkpdutils.plot import PlotStyle, plot_timecourse
 
 
 def simulated_dataset() -> xr.Dataset:
@@ -59,3 +61,10 @@ if __name__ == "__main__":
             ["dim_dose", "auc_inf_obs", "cmax", "tmax", "thalf", "flags"]
         ]
     )
+
+    # the simulated curves of the scan, one color per scanned dose; a simulation
+    # is sampled densely, so the style drops the markers of the data points
+    plot_timecourse(batch, by="dim_dose", style=PlotStyle(data_marker="")).savefig(
+        "nca_from_sbmlsim.png", dpi=120
+    )
+    console.print("written: nca_from_sbmlsim.png")

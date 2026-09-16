@@ -155,6 +155,8 @@ result.to_quantities()["cl_f"]  # liter / hour
 result.flags()  # e.g. []
 ```
 
+![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.png)
+
 Options select the methods; the analysis of a batch returns the parameters over its sample dimensions:
 
 ```python
@@ -173,6 +175,8 @@ result["thalf"]  # DataArray over (study, individual), attrs["units"]
 result.to_dataframe()  # one row per sample, flags decoded
 result.flag_table()  # one boolean column per flag
 ```
+
+![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
 
 ### The parameter table of a publication
 
@@ -220,6 +224,8 @@ sd = nca(batch_single, options=NCAOptions(tau=12))
 ratio = accumulation_ratio(ss, sd)  # observed accumulation
 predicted = superposition(tc_single, Dosing.regimen(dose, interval=12, n_doses=10))
 ```
+
+![The predicted curve of ten doses every twelve hours with a dotted line at every dose time](images/steady_state.png)
 
 A curve carrying a dosing protocol of more than one dose is analysed over its dosing intervals without `tau`, `nca_single` and `nca` the same way:
 

@@ -46,6 +46,10 @@ batch = Timecourses.from_events(
 events = batch.to_events()  # the inverse, one row per dose and observation
 ```
 
+`examples/formats.py` writes a twice daily batch as event records, reads it back and analyses every dosing interval of the round trip:
+
+![The trough concentration of every dosing interval of four subjects](images/formats.png)
+
 ## PKNCA tables
 
 `read_pknca`/`Timecourses.from_pknca`: the concentration table and the dose table of the R package `PKNCA`[^pknca], joined on the subject.
