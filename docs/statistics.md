@@ -30,11 +30,11 @@ flowchart LR
 
 **Individual and summary data.** With the individual values of a group every test of scipy is available; a publication often gives only the mean, the standard deviation and the number of subjects. A summary sample is analysed with the Welch t test from its moments; on the log scale the moments of the logarithm follow from the log-normal relations \(\sigma^2 = \ln(1 + \mathrm{sd}^2/\mathrm{mean}^2)\) and \(\mu = \ln\mathrm{mean} - \sigma^2/2\), or directly from the geometric mean and CV when they are reported.
 
-**Designs.** In a parallel design two groups of different subjects are compared with the Welch interval. In a paired or crossover design every subject receives both treatments, and the within-subject differences remove the between-subject variability: a 2x2 crossover (two sequences RT and TR, two periods) is analysed with sequence, period and subject effects, which also tests the period and the carryover effect and gives the within-subject CV.
+**Designs.** In a parallel design two groups of different subjects are compared with the Welch interval. In a paired or crossover design every subject receives both treatments, and the within-subject differences remove the between-subject variability: the 2x2 crossover with its sequence, period and subject-within-sequence effects[^chow] is the design of a bioequivalence study and is analysed on [Bioequivalence](bioequivalence.md).
 
-**Bioequivalence.** Two formulations are bioequivalent when the 90 % confidence interval of the geometric mean ratio of \(\mathrm{AUC}\) and \(C_\mathrm{max}\) lies within 80-125 %[^fda_be]. That is the two one-sided tests procedure of Schuirmann at \(\alpha = 0.05\)[^schuirmann].
+**Bioequivalence.** Two formulations are bioequivalent when the 90 % confidence interval of the geometric mean ratio of \(\mathrm{AUC}\) and \(C_\mathrm{max}\) lies within 80-125 %[^fda_be], the two one-sided tests procedure of Schuirmann at \(\alpha = 0.05\)[^schuirmann]. The designs, the procedure, the within-subject CV and the table and figure of the report are on [Bioequivalence](bioequivalence.md).
 
-**Drug-drug interactions.** A perpetrator is classified by how much it changes the \(\mathrm{AUC}\) of a sensitive substrate: a strong, moderate or weak inhibitor raises it at least 5-fold, 2- to 5-fold or 1.25- to 2-fold, a strong, moderate or weak inducer lowers it by at least 80 %, 50-80 % or 20-50 %[^fda_ddi]; the EMA guideline uses the same thresholds[^ema_ddi]. With an interval of the ratio the classification is conservative and marked as uncertain when the interval spans a boundary.
+**Drug-drug interactions.** A perpetrator is classified by how much it changes the \(\mathrm{AUC}\) of a sensitive substrate, a strong, moderate or weak inhibitor or inducer[^fda_ddi][^ema_ddi], read conservatively from the bound of the interval closer to 1. The thresholds, the sensitivity of a substrate and the table and figure of the report are on [Drug-drug interactions](ddi.md).
 
 **Meta-analysis.** Effects of several studies (Hedges' g, a mean difference or the log ratio of geometric means, the effect native to pharmacokinetics) are pooled with inverse variance weights. The fixed effect model assumes one true effect; the random effects model of DerSimonian and Laird adds the between-study variance \(\tau^2\) to every weight and widens the interval when the studies disagree[^dl]. \(Q\), \(I^2\) and \(H^2\) measure that disagreement[^higgins].
 
@@ -48,13 +48,7 @@ flowchart LR
 
 **Strings instead of enumeration members.** Every option of `pkpdutils.stats` is taken either as its enumeration member or as the string of the member, so `compare(a, b, scale="log", test="paired_t")`, `multiple_comparison(p, method="holm")`, `effect_size(control, treatment, "log_ratio")` and `tost(test, reference, design="parallel")` run the analysis their members name. An unknown string raises a `ValueError` listing the members rather than falling back to a default.
 
-**2x2 crossover.** With the log values \(y_{i1}\), \(y_{i2}\) of subject \(i\) in the two periods, the period differences \(d_i = (y_{i2} - y_{i1})/2\) and the totals \(u_i = y_{i1} + y_{i2}\), and the sequences A (test in period 2) and B (test in period 1)[^chow]:
-
-\[\hat F = \bar d_A - \bar d_B, \qquad \hat P = \bar d_A + \bar d_B, \qquad \hat C = \bar u_A - \bar u_B,\]
-
-with \(\mathrm{var}(\hat F) = \mathrm{var}(\hat P) = \sigma_d^2 (1/n_A + 1/n_B)\) from the pooled within-sequence variance \(\sigma_d^2\) with \(n_A + n_B - 2\) degrees of freedom, and \(\mathrm{var}(\hat C)\) from the pooled variance of the totals. \(\hat F\) is the treatment effect of the analysis of variance with sequence, period and subject-within-sequence effects, its residual variance is \(\sigma_e^2 = 2\sigma_d^2\), and the within-subject CV is \(\sqrt{e^{\sigma_e^2} - 1}\). The analysis also rejects a reference sample whose `sequence` coordinate disagrees with the test's, and a design where both sequences have the test in the same period.
-
-**Two one-sided tests.** For the limits \(\theta_L < 1 < \theta_U\), \(t_L = (\ln\mathrm{GMR} - \ln\theta_L)/\mathrm{se}\) and \(t_U = (\ln\theta_U - \ln\mathrm{GMR})/\mathrm{se}\) are tested one-sided at \(\alpha\); rejecting both is the same as the \(1 - 2\alpha\) interval lying within the limits[^schuirmann].
+**The 2x2 crossover and the two one-sided tests.** The period-difference analysis of a crossover, the within-subject CV and the equivalence of the two one-sided tests with the interval inclusion are on [Bioequivalence](bioequivalence.md#math); the thresholds and the conservative reading of an interval are on [Drug-drug interactions](ddi.md#math).
 
 **Multiple comparisons.** Bonferroni \(\tilde p_i = \min(1, m p_i)\); Holm sorts the p values and takes \(\tilde p_{(i)} = \max_{j \le i}\min(1, (m-j+1)p_{(j)})\)[^holm]; Benjamini-Hochberg takes \(\tilde p_{(i)} = \min_{j \ge i}\min(1, m p_{(j)}/j)\)[^bh].
 
@@ -157,11 +151,12 @@ tests = [compare(smokers, non_smokers), compare(before, after, paired=True)]
 multiple_comparison([t.p_value for t in tests])  # Holm
 ```
 
-Ratios and bioequivalence, with `test_result` and `reference_result` two `NCAResult` objects of the same subjects (the walk-through of a 2x2 crossover is in [Workflows](workflows.md)):
+Ratios and bioequivalence, with `test_result` and `reference_result` two `NCAResult` objects of the same subjects:
 
 ```python
 # not executed
 from pkpdutils import bioequivalence, ratio
+from pkpdutils.stats import ratio_table
 
 r = ratio(
     test_result.sample("auc_inf_obs", "individual"),
@@ -171,74 +166,35 @@ be = bioequivalence(test_result, reference_result, parameters=["auc_inf_obs", "c
 be.bioequivalent, be["cmax"].gmr, be.to_dataframe()
 ```
 
-`ratio_table` formats the ratios of a study the way a paper prints them: one row per parameter with the point estimate and its interval in percent of the reference, the numbers rounded to `digits` significant digits as strings. It takes a mapping of `RatioResult` objects or the result of `bioequivalence`, which adds the within-subject coefficient of variation, the acceptance limits and the verdict.
+`ratio_table` formats the ratios of a study the way a paper prints them: one row per parameter with the point estimate and its interval in percent of the reference (`parameter`, `unit`, `n_test`, `n_reference`, `gmr`, `ci_low`, `ci_high`, `ci_level`), the numbers rounded to `digits` significant digits as strings. It takes a mapping of `RatioResult` objects or the result of `bioequivalence`, which adds `cv_intra`, `limits` and `bioequivalent`.
 
 ```python
 # not executed
-from pkpdutils.stats import ratio_table
-
-# parameter, unit, n_test, n_reference, gmr, ci_low, ci_high, ci_level and,
-# for a bioequivalence result, cv_intra, limits and bioequivalent
-ratio_table(be)
+ratio_table(be)  # the table of a bioequivalence report
 ratio_table({"auc_inf_obs": r}, percent=False, digits=4)  # plain ratios
 ```
 
-`ratio_table(be)` of the crossover of [Workflows](workflows.md):
+The designs, the two one-sided tests, the within-subject CV and the table and figure of a study are on [Bioequivalence](bioequivalence.md), which runs the crossover above end to end.
 
-| parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 12 | 12 | 93.2 % | 92.2 % | 94.2 % | 90 % | 1.46 % | 80.0 - 125.0 % | True |
-| auc_last | hour * milligram / liter | 12 | 12 | 93.0 % | 91.9 % | 94.1 % | 90 % | 1.62 % | 80.0 - 125.0 % | True |
-| cmax | milligram / liter | 12 | 12 | 81.9 % | 79.3 % | 84.6 % | 90 % | 4.39 % | 80.0 - 125.0 % | False |
-
-The ratios of a 2x2 crossover against the acceptance limits and the individual values behind them (`examples/bioequivalence.py`):
-
-![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
-
-![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.png)
-
-A 2x2 crossover is recognized from the coordinates `period` (1 or 2) and `sequence` along the individual dimension of both batches; they are given to `Timecourses.from_arrays` as `coords={"individual": ids, "period": ("individual", periods), "sequence": ("individual", sequences)}` and travel through the NCA to the result. Without them two results with the same individuals are paired, otherwise the groups are parallel; `design=Design.PARALLEL` overrides the detection.
-
-Drug-drug interactions:
+Drug-drug interactions: `ddi_classification` classifies the exposure ratio of a substrate with and without a perpetrator, `substrate_sensitivity` grades the substrate against a strong inhibitor, and `ddi_table` does both over several parameters of two results. The thresholds, the conservative reading of an interval and the figure with the class bands are on [Drug-drug interactions](ddi.md).
 
 ```python
 # not executed
 from pkpdutils import ddi_classification
-from pkpdutils.stats import DDIThresholds, substrate_sensitivity
+from pkpdutils.stats import DDIThresholds, ddi_table, substrate_sensitivity
 
 # `inhibited` and `control`: the NCAResult of the two arms of the study
 ddi = ddi_classification(
     ratio(
         inhibited.sample("auc_inf_obs", "individual"),
         control.sample("auc_inf_obs", "individual"),
-    ),
-    cmax_ratio=ratio(
-        inhibited.sample("cmax", "individual"), control.sample("cmax", "individual")
-    ),
+    )
 )
 ddi.kind, ddi.strength, ddi.uncertain
 ddi_classification(3.2, ci=(2.4, 4.3), thresholds=DDIThresholds.ema())
 substrate_sensitivity(6.1)
-```
-
-`ddi_table` does the same over several parameters of two results: it takes every parameter from both, forms the ratio with and without the perpetrator and classifies it, so that the exposure and the maximum are read next to each other. The classes are defined for the \(\mathrm{AUC}\) and are applied to every parameter of the table.
-
-```python
-# not executed
-from pkpdutils.stats import ddi_table
-
-# the `inhibited` and `control` results of the snippet above
 ddi_table(inhibited, control, ["auc_inf_obs", "cmax"], dim="individual")
 ```
-
-The interaction study of [Workflows](workflows.md), an inhibitor which lowers the elimination of the substrate to 35 %:
-
-| parameter | unit | n_test | n_reference | ratio | ci_low | ci_high | kind | strength | uncertain | source |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 10 | 10 | 2.88 | 2.46 | 3.36 | inhibitor | moderate | False | FDA 2020 |
-| cmax | milligram / liter | 10 | 10 | 1.07 | 0.904 | 1.26 | none | none | True | FDA 2020 |
-
-![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
 
 Meta-analysis:
 

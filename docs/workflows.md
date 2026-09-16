@@ -198,7 +198,7 @@ plot_ratio(be).savefig("bioequivalence.png", dpi=120)
 
 ![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
 
-Continue with [Statistics](statistics.md) for the designs, the intervals and the crossover analysis.
+Continue with [Bioequivalence](bioequivalence.md) for the designs, the two one-sided tests, the within-subject CV and the table of the report, and with [Statistics](statistics.md) for the samples and the intervals behind them.
 
 ## Drug-drug interaction
 
@@ -279,7 +279,7 @@ The exposure is raised almost threefold, a moderate inhibition; the peak of a bo
 
 ![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
 
-Continue with [Statistics](statistics.md) for the thresholds, the substrate sensitivity and the interval rules.
+Continue with [Drug-drug interactions](ddi.md) for the thresholds, the substrate sensitivity and the conservative reading of an interval, and with [Statistics](statistics.md) for the ratios behind them.
 
 ## Multiple dosing and steady state
 
