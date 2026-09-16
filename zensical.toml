@@ -39,6 +39,7 @@ nav = [
     { "Units" = "units.md" },
     { "Gallery" = "gallery.md" },
     { "Glossary" = "glossary.md" },
+    { "Validation" = "validation.md" },
   ] },
   { "References" = "references.md" },
   { "API reference" = [

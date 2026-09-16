@@ -1,0 +1,5749 @@
+{
+  "description": "Reference values of the non-compartmental analysis of the theophylline and the indomethacin dataset, transcribed from published results of Phoenix WinNonlin and PKNCA. Every number carries its source, its unit and the relative tolerance of the comparison. See tests/data/validation/README.md and docs/validation.md.",
+  "sources": {
+    "winnonlin-theoph-linear": {
+      "tool": "Phoenix WinNonlin 6.3 and 7.0",
+      "author": "Sungpil Han",
+      "title": "Validation of Noncompartmental Analysis Performed by NonCompart R package",
+      "date": "2018-08-07",
+      "url": "https://asancpt.github.io/NonCompart-tests/",
+      "file": "https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Theoph_Linear.csv",
+      "retrieved": "2026-09-16",
+      "precision": "the published numbers carry 8 to 15 significant digits",
+      "settings": "Theoph (n=12), extravascular, linear trapezoid ('down' of NonCompart), automatic (best fit) slope selection"
+    },
+    "winnonlin-theoph-linear-log": {
+      "tool": "Phoenix WinNonlin 6.3 and 7.0",
+      "author": "Sungpil Han",
+      "title": "Validation of Noncompartmental Analysis Performed by NonCompart R package",
+      "date": "2018-08-07",
+      "url": "https://asancpt.github.io/NonCompart-tests/",
+      "file": "https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Theoph_Log.csv",
+      "retrieved": "2026-09-16",
+      "precision": "the published numbers carry 8 to 15 significant digits",
+      "settings": "Theoph (n=12), extravascular, linear up / log down trapezoid ('down' of NonCompart), automatic (best fit) slope selection"
+    },
+    "winnonlin-indometh-linear": {
+      "tool": "Phoenix WinNonlin 6.3 and 7.0",
+      "author": "Sungpil Han",
+      "title": "Validation of Noncompartmental Analysis Performed by NonCompart R package",
+      "date": "2018-08-07",
+      "url": "https://asancpt.github.io/NonCompart-tests/",
+      "file": "https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Linear.csv",
+      "retrieved": "2026-09-16",
+      "precision": "the published numbers carry 8 to 15 significant digits",
+      "settings": "Indometh (n=6), intravenous bolus, linear trapezoid ('down' of NonCompart), automatic (best fit) slope selection"
+    },
+    "winnonlin-indometh-linear-log": {
+      "tool": "Phoenix WinNonlin 6.3 and 7.0",
+      "author": "Sungpil Han",
+      "title": "Validation of Noncompartmental Analysis Performed by NonCompart R package",
+      "date": "2018-08-07",
+      "url": "https://asancpt.github.io/NonCompart-tests/",
+      "file": "https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Log.csv",
+      "retrieved": "2026-09-16",
+      "precision": "the published numbers carry 8 to 15 significant digits",
+      "settings": "Indometh (n=6), intravenous bolus, linear up / log down trapezoid ('down' of NonCompart), automatic (best fit) slope selection"
+    },
+    "pknca-theoph-vignette": {
+      "tool": "PKNCA (R)",
+      "author": "Bill Denney",
+      "title": "Computing NCA Parameters for Theophylline (PKNCA vignette v02)",
+      "date": "",
+      "url": "https://cran.r-project.org/web/packages/PKNCA/vignettes/v02-example-theophylline.html",
+      "file": "",
+      "retrieved": "2026-09-16",
+      "precision": "the vignette prints the per-subject numbers with 5 to 9 significant digits and the summary with 3",
+      "settings": "pk.nca on datasets::Theoph with the PKNCA defaults: auc.method 'lin up/log down', min.hl.points 3, allow.tmax.in.half.life FALSE"
+    }
+  },
+  "datasets": {
+    "theoph": {
+      "file": "theoph.csv",
+      "n_subjects": 12,
+      "subject_column": "Subject",
+      "time_column": "Time",
+      "value_column": "conc",
+      "time_unit": "hr",
+      "unit": "mg/L",
+      "substance": "theophylline",
+      "route": "oral",
+      "dose": 320.0,
+      "dose_unit": "mg",
+      "dose_note": "The dataset gives the dose as 'Dose' in mg/kg together with the body weight 'Wt' in kg; 'Dose' * 'Wt' is 267.8 mg for subject 9 and between 318.6 and 320.7 mg for the other eleven. The comparators analysed every subject against a flat 320 mg, so the validation does the same; only cl_f, vz_f, cmax_dn and auc_inf_dn depend on the dose."
+    },
+    "indometh": {
+      "file": "indometh.csv",
+      "n_subjects": 6,
+      "subject_column": "Subject",
+      "time_column": "time",
+      "value_column": "conc",
+      "time_unit": "hr",
+      "unit": "ug/mL",
+      "substance": "indomethacin",
+      "route": "iv_bolus",
+      "dose": 25.0,
+      "dose_unit": "mg",
+      "dose_note": "An intravenous bolus of 25 mg indomethacin. The concentrations are mcg/mL, which is the same quantity as the mg/L the comparators declared."
+    }
+  },
+  "cases": {
+    "theoph-winnonlin-linear": {
+      "dataset": "theoph",
+      "comparator": "Phoenix WinNonlin",
+      "source": "winnonlin-theoph-linear",
+      "options": {
+        "auc_method": "linear",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": true
+        }
+      },
+      "note": "linear trapezoid",
+      "known_differences": [
+        {
+          "parameter": "tlag",
+          "subjects": [
+            "1",
+            "7",
+            "10"
+          ],
+          "reason": "pkpdutils reports tlag as NaN when the first sample of the curve is already measurable, WinNonlin reports 0; the three subjects carry a measurable concentration at the dose time (0.74, 0.15 and 0.24 mg/L)"
+        }
+      ],
+      "references": {
+        "1": {
+          "cmax": {
+            "value": 10.5,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.37,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 3.28,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 148.92305,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 148.92305,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 216.611933,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 216.6149558,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.3124891694,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1459.071104,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 4505.534819,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 20.80003053,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.048456997,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.99999973,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999999459,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.05,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.37,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 14.30437757,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0328125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.676912291,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 1.477296267,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 30.48674823,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "2": {
+          "cmax": {
+            "value": 8.33,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.92,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.3,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.9,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 91.5268,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 91.5268,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 100.1734591,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 100.0643176,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.08631686693000001,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 706.586566,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 999.772288,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 9.980410945,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.104086444,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.997195388,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.995793082,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 7.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.3,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.659341563,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02603125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.31304206,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.194458919,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 30.69044158,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "3": {
+          "cmax": {
+            "value": 8.2,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.17,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.05,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 99.2865,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 99.2865,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 109.5359707,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 109.5857218,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.09357173421000001,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 803.18587,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1150.964769,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.50764202,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.102444314,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999324962,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998649924,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.17,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.766087377,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.025625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.342299909,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.921414745,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 28.51709995,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "4": {
+          "cmax": {
+            "value": 8.6,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.07,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.65,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.15,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 106.7963,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 106.7963,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 118.3788814,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 118.4435586,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.09784330860000001,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 901.0842105,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1303.252401,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 11.009163,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.099287021,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998924137,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997848274,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.65,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.981246661,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.026875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.369934004,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.70318486,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 27.22596413,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "5": {
+          "cmax": {
+            "value": 11.4,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.35,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.57,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 121.2944,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 121.2944,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 139.4197778,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 139.2546304,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1300057863,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1017.114317,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1667.721612,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 11.96187254,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.086618884,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998647185,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997970777,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 7.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.35,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.002264041,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.035625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.435686806,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.295226724,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 26.49799465,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "6": {
+          "cmax": {
+            "value": 6.44,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 23.85,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.92,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 73.77555,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 73.77555,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 84.25441833,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 84.49669858,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1243717367,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 609.1523875,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 978.4284857,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 11.61278548,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.08779574,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998241337,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997889605,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 7.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 2.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 23.85,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.894997868,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.020125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.263295057,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.798020405,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 43.2597345,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "7": {
+          "cmax": {
+            "value": 7.09,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.48,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.22,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.15,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 90.7534,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 90.7534,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 103.7718018,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 103.893147,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1254522093,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 782.41986,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1245.098408,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 11.99842719,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.088336496,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998670168,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998005251,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 6.98,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.22,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.846668261,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02215625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.324286881,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.08368935,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 34.90844084,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "8": {
+          "cmax": {
+            "value": 7.56,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 2.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.25,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 88.55995,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 88.55995,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 103.9066868,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 103.6430515,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1476972973,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 739.534598,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1298.115755,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.49309159,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.08145054,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.991012391,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.988765489,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 6.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 3.53,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.510037883,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.023625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.324708396,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.079686301,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 37.81050811,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "9": {
+          "cmax": {
+            "value": 9.03,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.63,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.43,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.12,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 86.32615,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 86.32615,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 99.90871793,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 99.86606766,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1359497771,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 705.2296255,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1201.771538,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.02869542,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.082458634,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999443665,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.99888733,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 8.8,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.43,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.405998807,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02821875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.312214744,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.202923695,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 38.84279344,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "10": {
+          "cmax": {
+            "value": 10.21,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.55,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 23.7,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 2.42,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 138.3681,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 138.3681,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 170.6520606,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 170.5679125,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1891800223,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1278.180042,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 2473.993427,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 14.49729595,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.074959824,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999508684,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999017368,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.38,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 23.7,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 9.246915823,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.03190625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.533287689,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 1.87516048,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 25.01554014,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "11": {
+          "cmax": {
+            "value": 8.0,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.98,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.08,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.86,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 80.0936,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 80.0936,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 89.10274492,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 89.10071899,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1011096227,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 617.2422125,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 928.5599714,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.42122745,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.09545856,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999998256,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999996512,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.08,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.261236515,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.025,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.278446078,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.591359618,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 37.6221852,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "12": {
+          "cmax": {
+            "value": 9.75,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.52,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.17,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 119.9775,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 119.9775,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 130.5888316,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 130.639068,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.08125757334,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 977.8807235,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1330.384002,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.18757873,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.110259489,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999396802,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998793603,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.286508164,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.03046875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.408090099,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.450439262,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 22.22429356,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear",
+            "tolerance": 1e-06
+          }
+        }
+      }
+    },
+    "theoph-winnonlin-linear-log": {
+      "dataset": "theoph",
+      "comparator": "Phoenix WinNonlin",
+      "source": "winnonlin-theoph-linear-log",
+      "options": {
+        "auc_method": "linear_log",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": true
+        }
+      },
+      "note": "linear up / log down trapezoid",
+      "known_differences": [
+        {
+          "parameter": "tlag",
+          "subjects": [
+            "1",
+            "7",
+            "10"
+          ],
+          "reason": "pkpdutils reports tlag as NaN when the first sample of the curve is already measurable, WinNonlin reports 0; the three subjects carry a measurable concentration at the dose time (0.74, 0.15 and 0.24 mg/L)"
+        }
+      ],
+      "references": {
+        "1": {
+          "cmax": {
+            "value": 10.5,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.37,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 3.28,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 147.2347485,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 147.2347485,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 214.9236316,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 214.9266543,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.3149438828,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1499.129085,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 4545.592801,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 21.14980455,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.048456997,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.99999973,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999999459,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.05,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.37,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 14.30437757,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0328125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.671636349,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 1.488900954,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 30.72623247,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "2": {
+          "cmax": {
+            "value": 8.33,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.92,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.3,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.9,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 88.73127549,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 88.73127549,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 97.37793463,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 97.26879313,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.08879485044999999,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 716.2787279,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1009.46445,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.36645985,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.104086444,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.997195388,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.995793082,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 7.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.3,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.659341563,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02603125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.304306046,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.286165405,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 31.57150238,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "3": {
+          "cmax": {
+            "value": 8.2,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.17,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.05,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 95.87819779,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 95.87819779,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 106.1276685,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 106.1774195,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.09657680115,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 810.872683,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1158.651582,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.91752601,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.102444314,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999324962,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998649924,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.17,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.766087377,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.025625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.331648964,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.015236313,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 29.43292987,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "4": {
+          "cmax": {
+            "value": 8.6,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.07,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.65,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.15,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 102.6336232,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 102.6336232,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 114.2162046,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 114.2808818,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1014092656,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 911.7828093,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1313.951,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 11.50406813,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.099287021,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998924137,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997848274,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.65,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.981246661,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.026875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.356925639,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.801704023,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 28.21823042,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "5": {
+          "cmax": {
+            "value": 11.4,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.35,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.57,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 118.1793538,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 118.1793538,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 136.3047316,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 136.1395842,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.13297687930000002,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1038.879984,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1689.48728,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.3949276,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.086618884,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998647185,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997970777,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 7.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.35,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.002264041,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.035625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.425952286,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.34768079,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 27.10356775,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "6": {
+          "cmax": {
+            "value": 6.44,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 1.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 23.85,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.92,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 71.69701499,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 71.69701499,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 82.17588332,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 82.41816357,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1275175624,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 618.6659191,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 987.9420173,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.02228656,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.08779574,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998241337,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.997889605,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 7.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 2.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 23.85,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.894997868,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.020125,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.256799635,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.894086526,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 44.35393475,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "7": {
+          "cmax": {
+            "value": 7.09,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.48,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.22,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.15,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 87.96922744,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 87.96922744,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 100.9876292,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 101.1089745,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.12891085670000002,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 795.6267785,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1258.305327,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.45999472,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.088336496,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.998670168,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998005251,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 4.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 6.98,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.22,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.846668261,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02215625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.315586341,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.168704944,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 35.87084707,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "8": {
+          "cmax": {
+            "value": 7.56,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 2.02,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.25,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 86.80656348,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 86.80656348,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 102.1533003,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 101.8896649,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1502324132,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 756.3619816,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1314.943138,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.87225312,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.08145054,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.991012391,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.988765489,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 6.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 3.53,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.12,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.510037883,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.023625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.319229063,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.132546859,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 38.45949777,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "9": {
+          "cmax": {
+            "value": 9.03,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.63,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.43,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.12,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 83.93743601,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 83.93743601,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 97.52000394,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 97.47735367,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.13927981320000002,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 723.3794155,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1219.921328,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 12.50944708,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.082458634,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999443665,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.99888733,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 8.8,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.43,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 8.405998807,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.02821875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.304750012,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.281378046,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 39.79423233,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "10": {
+          "cmax": {
+            "value": 10.21,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.55,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 23.7,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 2.42,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 135.5760701,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 135.5760701,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 167.8600307,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 167.7758826,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1923266694,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 1306.740615,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 2502.554,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 14.90857585,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.074959824,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999508684,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999017368,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.38,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 23.7,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 9.246915823,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.03190625,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.524562596,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 1.906350181,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 25.43162571,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "11": {
+          "cmax": {
+            "value": 8.0,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.98,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.08,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.86,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 77.89347233,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 77.89347233,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 86.90261726,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 86.90059132,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1036694315,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 626.6357849,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 937.9535438,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.79315645,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.09545856,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999998256,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.999996512,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.08,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 7.261236515,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.025,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.271570679,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 3.682282653,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 38.57467217,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "12": {
+          "cmax": {
+            "value": 9.75,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 3.52,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 24.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 1.17,
+            "unit": "milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 115.2202082,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 115.2202082,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 125.8315397,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 125.8817762,
+            "unit": "hour * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.08432966474,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 982.6343023,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 1335.137581,
+            "unit": "hour ** 2 * milligram / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 10.61051612,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.110259489,
+            "unit": "1 / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.999396802,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.998793603,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 9.03,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 24.15,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 6.286508164,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.03046875,
+            "unit": "1 / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.393223562,
+            "unit": "hour / liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlag": {
+            "value": 0.0,
+            "unit": "hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl_f": {
+            "value": 2.543082606,
+            "unit": "liter / hour",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz_f": {
+            "value": 23.06452369,
+            "unit": "liter",
+            "source": "winnonlin-theoph-linear-log",
+            "tolerance": 1e-06
+          }
+        }
+      }
+    },
+    "indometh-winnonlin-linear": {
+      "dataset": "indometh",
+      "comparator": "Phoenix WinNonlin",
+      "source": "winnonlin-indometh-linear",
+      "options": {
+        "auc_method": "linear",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": false
+        }
+      },
+      "note": "linear trapezoid",
+      "references": {
+        "1": {
+          "cmax": {
+            "value": 1.5,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.04045212765957,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.04045212765957,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.356267234094,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.35783687568268,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.134031956080678,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.27125,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 7.79255448051922,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 3.30716073616985,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.158320482400297,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.997066727426208,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.994133454852416,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 5.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 4.37812701206527,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.06,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.0942506893637601,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.3936170212766,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.20655642136733898,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 10.6100019718742,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 67.0159780403391,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 35.0889819320671,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "2": {
+          "cmax": {
+            "value": 2.03,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.24851993865031,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.24851993865031,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.51317520778672,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.49582675451177,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0753322147298048,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 6.39875,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 9.39152229661219,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.67322912782616,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.302280019819912,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.947669111562042,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.940193270356619,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.29306317027801,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0812,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.140527008311469,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.52815950920245,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.162180906146511,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 7.11606980050102,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 23.541317103064,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 19.0228850663434,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "3": {
+          "cmax": {
+            "value": 2.72,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.5544211409396,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.5544211409396,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.74404283793542,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.64916698853258,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.05064624129685,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.00625,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.97267842561125,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 1.86233938216802,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.421892648718165,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875826051926574,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.860304308417396,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 10.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.5,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.64294680807057,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.1088,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.149761713517417,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 4.96536912751678,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.25658657833876203,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 6.67727402760856,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 15.8269504052657,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 12.4353503871431,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "4": {
+          "cmax": {
+            "value": 1.85,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.07,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.78527877697842,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.78527877697842,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.93897445882733,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.85545207631751,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.052295684771018404,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 4.381875,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 5.94890277791985,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.02414238750939,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.45544545661871,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.872824852340449,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.858694280378276,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 11.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.52191040768299,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.074,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.117558978353093,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.46223021582734,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.183407098132283,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 8.5063685820445,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 18.6770302753637,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 17.2181012106944,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "5": {
+          "cmax": {
+            "value": 2.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.06,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.45885817307692,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.45885817307692,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.69624897829181,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.6549884396387,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0880448382646355,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.7075,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.54586634839538,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.42776776221254,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.252747784168332,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875244222142275,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.85445159249932,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 8.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 1.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.74244612209262,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.082,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.107849959131673,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 4.04086538461538,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.282376805408852,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 9.27214074118575,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 36.6853492769314,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 22.5106043781483,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        },
+        "6": {
+          "cmax": {
+            "value": 2.31,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.09,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.335703125,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.335703125,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.59028523424544,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.4947956372543,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0709086026973962,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.5325,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 8.28929076671746,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.3088112018653,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.353520521401733,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.903953808627429,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.890232924145633,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.9606985693831,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0924,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.143611409369818,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 3.705625,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.209441054384092,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 6.96323505484772,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 19.6968340826101,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 16.0767950958536,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear",
+            "tolerance": 1e-06
+          }
+        }
+      }
+    },
+    "indometh-winnonlin-linear-log": {
+      "dataset": "indometh",
+      "comparator": "Phoenix WinNonlin",
+      "source": "winnonlin-indometh-linear-log",
+      "options": {
+        "auc_method": "linear_log",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": false
+        }
+      },
+      "note": "linear up / log down trapezoid",
+      "references": {
+        "1": {
+          "cmax": {
+            "value": 1.5,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.00989843640473,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.00989843640473,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.32571354283916,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.32728318442783,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.135792779556545,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.30479606543361,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 7.82610054595283,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 3.36503202212899,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.158320482400297,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.997066727426208,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.994133454852416,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 5.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 4.37812701206527,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.06,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.0930285417135663,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.3936170212766,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.20554257332966303,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 10.7493891829347,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 67.8963897782725,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 36.1720388189023,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "2": {
+          "cmax": {
+            "value": 2.03,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.20288778130665,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.20288778130665,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.46754305044307,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.45019459716812,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0763235712683076,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 6.41316873834365,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 9.40594103495584,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.71256647664518,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.302280019819912,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.947669111562042,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.940193270356619,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.29306317027801,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0812,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.138701722017723,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.52815950920245,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.163658871280983,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 7.20971582365952,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 23.8511160213461,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 19.5568334493971,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "3": {
+          "cmax": {
+            "value": 2.72,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.47439707309252,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.47439707309252,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.66401877008834,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.56914292068551,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0517523814407885,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.05529933530351,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 7.02172776091476,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 1.91640059768184,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.421892648718165,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875826051926574,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.860304308417396,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 10.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.5,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.64294680807057,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.1088,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.146560750803534,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 4.96536912751678,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.25455266279480404,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 6.8231091511022,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 16.1726192002464,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 13.0758104552207,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "4": {
+          "cmax": {
+            "value": 1.85,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.07,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.74838323133947,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.74838323133947,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.90207891318838,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.81855653067856,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.052960545335429904,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 4.40497183036616,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 5.97199960828601,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.05783501652781,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.45544545661871,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.872824852340449,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.858694280378276,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 11.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.52191040768299,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.074,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.116083156527535,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 2.46223021582734,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.184484083635652,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 8.61451419752526,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 18.9144804769393,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 17.7272489660434,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "5": {
+          "cmax": {
+            "value": 2.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.06,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.39837364783428,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.39837364783428,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.63576445304917,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.59450391439605,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0900652578952066,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.74729942566552,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.58566577406089,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.49857902379794,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.252747784168332,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875244222142275,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.85445159249932,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 8.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 1.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.74244612209262,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.082,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.105430578121967,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 4.04086538461538,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.278259013762662,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 9.48491431815119,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 37.5271907896694,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 23.6988079578533,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        },
+        "6": {
+          "cmax": {
+            "value": 2.31,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.09,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 3.29082661570518,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 3.29082661570518,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.54540872495062,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.44991912795948,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0718061383032739,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.59042055581008,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 8.34721132252754,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.3543720823454,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.353520521401733,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.903953808627429,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.890232924145633,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.9606985693831,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0924,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.141816348998025,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "c0": {
+            "value": 3.705625,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "auc_back_extrap_fraction": {
+            "value": 0.20823065693591702,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 7.05137318133842,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 19.9461495286872,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 16.6015561603423,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        }
+      }
+    },
+    "theoph-pknca": {
+      "dataset": "theoph",
+      "comparator": "PKNCA",
+      "source": "pknca-theoph-vignette",
+      "options": {
+        "auc_method": "linear_log",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": true
+        }
+      },
+      "note": "the per-subject numbers the PKNCA vignette prints for the subjects 1 and 6",
+      "references": {
+        "1": {
+          "clast": {
+            "value": 3.28,
+            "unit": "milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "cmax": {
+            "value": 10.5,
+            "unit": "milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "lambda_z": {
+            "value": 0.048457,
+            "unit": "1 / hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "tlast": {
+            "value": 24.37,
+            "unit": "hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "tmax": {
+            "value": 1.12,
+            "unit": "hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          }
+        },
+        "6": {
+          "auc_last": {
+            "value": 71.697015,
+            "unit": "hour * milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "clast": {
+            "value": 0.92,
+            "unit": "milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "cmax": {
+            "value": 6.44,
+            "unit": "milligram / liter",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "lambda_z": {
+            "value": 0.0877957,
+            "unit": "1 / hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "tlast": {
+            "value": 23.85,
+            "unit": "hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          },
+          "tmax": {
+            "value": 1.15,
+            "unit": "hour",
+            "source": "pknca-theoph-vignette",
+            "tolerance": 0.0001
+          }
+        }
+      }
+    }
+  },
+  "summary_cases": {
+    "theoph-pknca-summary": {
+      "dataset": "theoph",
+      "comparator": "PKNCA",
+      "source": "pknca-theoph-vignette",
+      "dim": "Subject",
+      "options": {
+        "auc_method": "linear_log",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": true
+        }
+      },
+      "note": "the summary of `pk.nca` over all twelve subjects the vignette prints: the geometric mean with the geometric coefficient of variation, the arithmetic mean and standard deviation of the half-life and the median with the range of tmax; PKNCA prints the coefficients of variation in percent, they are stored as fractions",
+      "references": {
+        "cmax_geomean": {
+          "value": 8.65,
+          "unit": "milligram / liter",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "cmax_geocv": {
+          "value": 0.17,
+          "unit": "dimensionless",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "auc_last_geomean": {
+          "value": 98.7,
+          "unit": "hour * milligram / liter",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "auc_last_geocv": {
+          "value": 0.225,
+          "unit": "dimensionless",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "auc_inf_obs_geomean": {
+          "value": 115.0,
+          "unit": "hour * milligram / liter",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "auc_inf_obs_geocv": {
+          "value": 0.284,
+          "unit": "dimensionless",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "thalf": {
+          "value": 8.18,
+          "unit": "hour",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "thalf_sd": {
+          "value": 2.12,
+          "unit": "hour",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "tmax_median": {
+          "value": 1.14,
+          "unit": "hour",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "tmax_min": {
+          "value": 0.63,
+          "unit": "hour",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        },
+        "tmax_max": {
+          "value": 3.55,
+          "unit": "hour",
+          "source": "pknca-theoph-vignette",
+          "tolerance": 0.01
+        }
+      }
+    }
+  }
+}

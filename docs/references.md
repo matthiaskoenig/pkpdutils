@@ -93,6 +93,26 @@
 > CRAN package.
 > [cran.r-project.org/package=NonCompart](https://cran.r-project.org/package=NonCompart)
 
+**NonCompart validation report.** The published per-subject Phoenix WinNonlin results for the theophylline and the indomethacin dataset, the reference values of [Validation](validation.md).
+
+> Han S.
+> **Validation of Noncompartmental Analysis Performed by NonCompart R package.**
+> 2018.
+> [asancpt.github.io/NonCompart-tests](https://asancpt.github.io/NonCompart-tests/)
+
+**Theophylline dataset.** The twelve subject oral single dose study distributed as `datasets::Theoph` of R, one of the two validation datasets.
+
+> Boeckmann AJ, Sheiner LB, Beal SL.
+> **NONMEM Users Guide: Part V.**
+> NONMEM Project Group, University of California, San Francisco; 1994.
+
+**Indomethacin dataset.** The six subject intravenous bolus study distributed as `datasets::Indometh` of R, the second validation dataset.
+
+> Kwan KC, Breault GO, Umbenhauer ER, McMahon FG, Duggan DE.
+> **Kinetics of indomethacin absorption, elimination, and enterohepatic circulation in man.**
+> *Journal of Pharmacokinetics and Biopharmaceutics.* 1976;4(3):255-280.
+> [doi:10.1007/BF01063617](https://doi.org/10.1007/BF01063617)
+
 ## Regulatory guidance
 
 **FDA drug interaction guidance.** The thresholds of the classification of inhibitors, inducers and sensitive substrates.
@@ -332,6 +352,7 @@ The exchange formats of `pkpdutils.io`: the event records of NONMEM and Monolix,
 
 - [PKanalix documentation](https://monolixsuite.slp-software.com/pkanalix/2024R1/) - Lixoft/Simulations Plus's documentation for PKanalix, a GUI application for non-compartmental and compartmental PK analysis covering NCA rules, custom parameters, bioequivalence and regulatory reporting, for analysts who want a graphical cross-check to code-based NCA.
 - [PKNCA package documentation site](https://humanpred.github.io/pknca/) - the official documentation and vignette site for the PKNCA R package, with worked examples, AUC/half-life method articles, sparse sampling and bioequivalence vignettes, for analysts comparing `pkpdutils`'s NCA conventions against PKNCA's.
+- [PKNCA - theophylline vignette](https://cran.r-project.org/web/packages/PKNCA/vignettes/v02-example-theophylline.html) - the worked `pk.nca` example on `datasets::Theoph` whose printed results are the PKNCA reference values of [Validation](validation.md).
 - [PKNCA - FDA-oriented introduction vignette](https://humanpred.github.io/pknca/articles/v31-FDA-introduction.html) - frames PKNCA's design goals (regulatory readiness, reproducibility, CDISC-aligned data structures) for a regulatory audience, for analysts preparing regulatory NCA submissions.
 - [PKNCA training session vignette](https://humanpred.github.io/pknca/articles/v30-training-session.html) - a step-by-step walkthrough of an NCA workflow in R, for analysts new to R-based NCA.
 - [Pumas - handling missing and BLQ data](https://docs.pumas.ai/stable/nca/blq_handling/) - the BLQ conventions of the Pumas NCA (`:first`, `:middle`, `:last` with `:keep`, `:drop` and numeric imputation), the positional axis `BLQRules` implements, for analysts porting an analysis between the two.
