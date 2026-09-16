@@ -26,3 +26,6 @@ filename = "./src/pkpdutils/__init__.py"
 
 [[tool.bumpversion.files]]
 filename = "./CITATION.cff"
+
+[[tool.bumpversion.files]]
+filename = "./tests/test_package.py"
