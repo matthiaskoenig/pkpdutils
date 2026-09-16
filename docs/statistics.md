@@ -169,9 +169,7 @@ studies = [
 meta = meta_analysis(studies, EffectKind.LOG_RATIO)
 meta.random.estimate, meta.heterogeneity.i2, meta.to_dataframe()
 random_effects(
-    effects_from_arrays(
-        log_ratios, variances, labels=labels, kind=EffectKind.LOG_RATIO
-    )
+    effects_from_arrays(log_ratios, variances, labels=labels, kind=EffectKind.LOG_RATIO)
 )  # effects computed elsewhere
 ```
 

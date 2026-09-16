@@ -12,7 +12,9 @@ Every signature has the same shape, `f(data, *, <options>, ax=None, style=DEFAUL
 from pkpdutils.plot import plot_mean_timecourse
 
 fig = plot_mean_timecourse(batch, by="dose", spread="sd")
-fig = plot_mean_timecourse(batch, by="arm", spread="se", individuals=False, panels=("log",))
+fig = plot_mean_timecourse(
+    batch, by="arm", spread="se", individuals=False, panels=("log",)
+)
 fig.savefig("mean_curves.png")
 ```
 
@@ -21,8 +23,8 @@ fig.savefig("mean_curves.png")
 ```python
 from pkpdutils.plot import plot_timecourse
 
-fig = plot_timecourse(batch, log_y=True, by="dose")        # one color per dose
-fig = plot_timecourse(batch, facet="dose", by="sex")       # one panel per dose
+fig = plot_timecourse(batch, log_y=True, by="dose")  # one color per dose
+fig = plot_timecourse(batch, facet="dose", by="sex")  # one panel per dose
 fig.savefig("curves.png")
 ```
 
@@ -63,7 +65,7 @@ fig = plot_intervals(result, "interval_auc", individual="s2")  # one sample
 ```python
 from pkpdutils.plot import plot_troughs
 
-fig = plot_troughs(result, by="arm")                   # mean +- sd per arm
+fig = plot_troughs(result, by="arm")  # mean +- sd per arm
 fig = plot_troughs(result, x="interval", spread="se")
 ```
 
