@@ -36,14 +36,14 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     [![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.png)](images/nca_single.png)
 
-    The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail and the points of the terminal regression.
+    The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail, the terminal regression with its confidence band and the parameters with their intervals.
 
     ```python
     from examples.nca_single import tc
-    from pkpdutils import nca_single
+    from pkpdutils import NCAOptions, nca_single
     from pkpdutils.plot import plot_nca
 
-    result = nca_single(tc)
+    result = nca_single(tc, options=NCAOptions(seed=1))  # a fixed bootstrap seed
     print(result.to_quantities()["auc_inf_obs"])
     plot_nca(tc, result).savefig("nca_single.png", dpi=120)
     ```
