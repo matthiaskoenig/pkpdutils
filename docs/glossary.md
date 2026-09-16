@@ -74,6 +74,13 @@ The names used for the variables of the result datasets, with their symbols and 
 | `kind`, `strength`, `uncertain` | | class of an interaction (inhibitor, inducer), its strength and whether the interval spans a boundary | – | [Statistics](statistics.md) |
 | `estimate`, `variance`, `weight_fixed`, `weight_random` | \(\theta_i\), \(v_i\), \(w_i\) | effect of a study, its variance and its normalized weights in the pooling | – | [Statistics](statistics.md) |
 | `q`, `i2`, `h2`, `tau2` | \(Q\), \(I^2\), \(H^2\), \(\tau^2\) | heterogeneity statistics of a meta-analysis | –, %, –, – | [Statistics](statistics.md) |
+| `rate`, `midpoint` | \(\dot A_k\), \(\bar t_k\) | excretion rate of a urine collection and the midpoint of its interval, over the dimension `collection` | amount/time, time | [Urinary excretion](urine.md) |
+| `max_rate`, `tmax_rate`, `rate_last`, `mid_pt_last` | \(R_\mathrm{max}\) | the largest and the last measurable excretion rate with the midpoints they belong to | amount/time, time | [Urinary excretion](urine.md) |
+| `aurc_last`, `aurc_all`, `aurc_inf_obs`, `aurc_inf_pred` | \(\mathrm{AURC}\) | areas under the excretion rate curve, which are amounts | amount | [Urinary excretion](urine.md) |
+| `amount_recovered`, `percent_recovered`, `vol_ur` | \(A_e\), \(V_\mathrm{ur}\) | the amount collected over every interval, that amount as a percentage of the dose, and the volume collected | amount, %, l | [Urinary excretion](urine.md) |
+| `clr` | \(\mathrm{CL}_R\) | renal clearance, the recovered amount over the plasma area of the collection span | l/h | [Urinary excretion](urine.md) |
+| `auc_last_se`, `auc_last_df` | \(\nu\) | standard error of the area of a sparse design (Bailer; Nedelman and Jia, Holder for a batch design) and its Satterthwaite degrees of freedom (Nedelman, Gibiansky and Lau) | value·time, – | [Sparse sampling](sparse.md) |
+| `n_animals` | \(n_j\) | number of animals behind every nominal time of a sparse design, over the dimension `time` | – | [Sparse sampling](sparse.md) |
 
 ## Statistics of the parameter tables
 

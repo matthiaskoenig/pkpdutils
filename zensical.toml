@@ -30,6 +30,8 @@ nav = [
     { "Data formats" = "formats.md" },
     { "Non-compartmental analysis" = "nca.md" },
     { "Uncertainty" = "uncertainty.md" },
+    { "Urinary excretion" = "urine.md" },
+    { "Sparse sampling" = "sparse.md" },
     { "Curve fitting" = "fitting.md" },
     { "Pharmacodynamics" = "pd.md" },
     { "Statistics" = "statistics.md" },
@@ -63,6 +65,8 @@ nav = [
       { "steady_state" = "api/nca.steady_state.md" },
       { "uncertainty" = "api/nca.uncertainty.md" },
       { "report" = "api/nca.report.md" },
+      { "urine" = "api/nca.urine.md" },
+      { "sparse" = "api/nca.sparse.md" },
     ] },
     { "pkpdutils.fit" = [
       { "fit" = "api/fit.md" },

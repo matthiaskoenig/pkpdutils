@@ -37,7 +37,7 @@
 
 ## Non-compartmental analysis
 
-**Phoenix WinNonlin.** The rules for the selection of the terminal phase (best fit by adjusted R²) and the linear-up/log-down trapezoidal rule follow the Phoenix NCA implementation.
+**Phoenix WinNonlin.** The rules for the selection of the terminal phase (best fit by adjusted R²) and the linear-up/log-down trapezoidal rule follow the Phoenix NCA implementation. Its plasma models 200 to 202 (extravascular, intravenous bolus, infusion), the urine models 210 to 212 with the parameters of the excretion rate curve of [Urinary excretion](urine.md), and the standard errors of the sparse designs of [Sparse sampling](sparse.md) are the naming conventions of those pages.
 
 > Certara.
 > **Phoenix WinNonlin User's Guide: Noncompartmental Analysis.**
@@ -67,7 +67,7 @@
 > *Journal of Pharmacokinetics and Biopharmaceutics.* 1992;20(3):211-226.
 > [doi:10.1007/BF01062525](https://doi.org/10.1007/BF01062525)
 
-**Sparse and destructive sampling.** The variance of an AUC estimated from group data with one time point per subject, and its extension to sparse serial sampling.
+**Sparse and destructive sampling.** The variance of an AUC estimated from group data with one time point per subject, its degrees of freedom, and the extension of both to a batch design in which a subject contributes to several time points.
 
 > Bailer AJ.
 > **Testing for the equality of area under the curves when using destructive measurement techniques.**
@@ -78,6 +78,16 @@
 > **Applying Bailer's method for AUC confidence intervals to sparse sampling.**
 > *Pharmaceutical Research.* 1995;12(1):124-128.
 > [doi:10.1023/A:1016255124336](https://doi.org/10.1023/A:1016255124336)
+
+> Nedelman JR, Jia X.
+> **An extension of Satterthwaite's approximation applied to pharmacokinetics.**
+> *Journal of Biopharmaceutical Statistics.* 1998;8(2):317-328.
+> [doi:10.1080/10543409808835241](https://doi.org/10.1080/10543409808835241)
+
+> Holder DJ.
+> **Comments on Nedelman and Jia's extension of Satterthwaite's approximation applied to pharmacokinetics.**
+> *Journal of Biopharmaceutical Statistics.* 2001;11(1-2):75-79.
+> [doi:10.1081/BIP-100104199](https://doi.org/10.1081/BIP-100104199)
 
 **Delta method vs. bootstrap for AUC ratios.** A pharmacokinetics-specific comparison of confidence interval methods for an exposure metric.
 
@@ -160,6 +170,13 @@
 > **ICH Harmonised Guideline: Bioequivalence for Immediate-Release Solid Oral Dosage Forms M13A.**
 > 2024.
 > [database.ich.org](https://database.ich.org/sites/default/files/ICH_M13A_Step4_Final_Guideline_2024_0723.pdf)
+
+**ICH S3A.** The toxicokinetic guideline behind the sparse and microsampling designs of [Sparse sampling](sparse.md).
+
+> International Council for Harmonisation.
+> **S3A Guideline: Note for Guidance on Toxicokinetics: The Assessment of Systemic Exposure in Toxicity Studies - Questions and Answers, Focus on Microsampling.**
+> 2017.
+> [database.ich.org](https://database.ich.org/sites/default/files/S3A_Q%26As_Q%26As.pdf)
 
 **FDA population pharmacokinetics guidance.** Context for group and batch analyses and the handoff from a non-compartmental to a population pharmacokinetic analysis.
 

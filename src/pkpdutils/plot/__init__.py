@@ -14,6 +14,10 @@ every group with its spread, the individuals faint behind it, on a linear and
 a semi-logarithmic panel), `plot_timecourse` takes `by` to color the curves by
 group and `facet` for one panel per value of a coordinate, and `plot_troughs`
 shows the trough of every dosing interval, the figure of steady state.
+`plot_excretion` is the figure of a urine study (the excretion rate curve with
+its terminal regression and the amount recovered) and `plot_sparse` the figure
+of a sparse design (the mean curve with the Bailer standard errors and the
+shaded area).
 """
 
 from pkpdutils.plot.fit import (
@@ -25,9 +29,11 @@ from pkpdutils.plot.fit import (
 from pkpdutils.plot.meta import plot_forest
 from pkpdutils.plot.nca import (
     draw_nca_panel,
+    plot_excretion,
     plot_intervals,
     plot_nca,
     plot_nca_grid,
+    plot_sparse,
     plot_troughs,
 )
 from pkpdutils.plot.parameters import plot_parameters
@@ -42,6 +48,7 @@ __all__ = [
     "draw_nca_panel",
     "plot_bland_altman",
     "plot_dose_proportionality",
+    "plot_excretion",
     "plot_fit",
     "plot_forest",
     "plot_goodness_of_fit",
@@ -51,6 +58,7 @@ __all__ = [
     "plot_nca_grid",
     "plot_parameters",
     "plot_ratio",
+    "plot_sparse",
     "plot_timecourse",
     "plot_troughs",
     "save_figure",

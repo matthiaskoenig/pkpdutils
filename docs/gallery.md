@@ -335,4 +335,46 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     [nca_from_sbmlsim.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_from_sbmlsim.py) &middot; [Non-compartmental analysis](nca.md)
 
+-   __Urinary excretion__
+
+    ---
+
+    [![The excretion rate curve with its terminal regression and the cumulative amount recovered](images/urine.png)](images/urine.png)
+
+    The excretion rate of every urine collection against the midpoint of its interval with the terminal regression, and the amount recovered rising to its plateau on a second axis.
+
+    ```python
+    from examples.urine import excretion, plasma
+    from pkpdutils import nca_urine
+    from pkpdutils.plot import plot_excretion
+
+    urine = excretion()
+    result = nca_urine(urine, plasma=plasma())
+    print(result.to_quantities()["clr"])
+    plot_excretion(result, urine).savefig("urine.png", dpi=120)
+    ```
+
+    [urine.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/urine.py) &middot; [Urinary excretion](urine.md)
+
+-   __Sparse sampling__
+
+    ---
+
+    [![The mean curve of a sparse design with the Bailer standard errors and the shaded area](images/sparse.png)](images/sparse.png)
+
+    The mean curve of a destructive design with the standard error of every time point, the area the trapezoid rule integrates and the Bailer standard error of that area.
+
+    ```python
+    from examples.sparse import TIMES, serial_design
+    from pkpdutils import nca_sparse, sparse_mean
+    from pkpdutils.plot import plot_sparse
+
+    values = serial_design()
+    curve = sparse_mean(TIMES, values, time_unit="hr", unit="ng/ml")
+    result = nca_sparse(TIMES, values, time_unit="hr", unit="ng/ml")
+    plot_sparse(curve, result).savefig("sparse.png", dpi=120)
+    ```
+
+    [sparse.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/sparse.py) &middot; [Sparse sampling](sparse.md)
+
 </div>

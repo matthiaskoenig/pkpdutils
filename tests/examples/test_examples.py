@@ -31,6 +31,8 @@ SCRIPTS: list[str] = [
     "examples.ddi",
     "examples.meta_analysis",
     "examples.formats",
+    "examples.urine",
+    "examples.sparse",
 ]
 
 

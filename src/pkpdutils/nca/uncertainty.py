@@ -129,6 +129,10 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "interval_start",
         "interval_end",
         "interval_dose",
+        # the Satterthwaite degrees of freedom of the area of a sparse design
+        # (`pkpdutils.nca.sparse`), a property of that design rather than a
+        # measurement with a spread of its own
+        "auc_last_df",
     }
 )
 
