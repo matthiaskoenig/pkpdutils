@@ -49,8 +49,8 @@ def test_the_candidate_windows_are_the_windows_after_the_maximum() -> None:
     )
     starts = result.ds["candidate_t_first"].to_numpy()
     counts = result.ds["candidate_n_points"].to_numpy()
-    # the maximum sits at 1.5 h, so the windows start at 2 h and hold 8, 7, ...
-    # down to the three points of the last window
+    # the maximum sits at 1.5 h, so the windows start at 2 h and hold the seven
+    # points from there on, down to the three points of the last window
     np.testing.assert_allclose(starts, [2.0, 3.0, 4.0, 6.0, 8.0])
     np.testing.assert_allclose(counts, [7.0, 6.0, 5.0, 4.0, 3.0])
     assert result.ds["candidate_t_first"].dims == (CANDIDATE_DIM,)

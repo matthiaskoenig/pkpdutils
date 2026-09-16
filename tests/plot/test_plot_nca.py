@@ -851,3 +851,17 @@ def test_a_partial_area_past_the_last_point_follows_the_terminal_regression() ->
         y[tail], clast_pred * np.exp(-lambda_z * (x[tail] - 24.0)), rtol=1e-6
     )
     matplotlib.pyplot.close(fig)
+
+
+def test_the_partial_annotation_stays_inside_the_panel() -> None:
+    tc = oral()  # the peak sits at 2 h of a panel which runs to about 40 h
+    early = nca_single(tc, options=NCAOptions(partial_aucs={"auc_0_6": (0.0, 6.0)}))
+    late = nca_single(tc, options=NCAOptions(partial_aucs={"auc_8_24": (8.0, 24.0)}))
+    for result, name, align in (
+        (early, "auc_0_6", "left"),
+        (late, "auc_8_24", "center"),
+    ):
+        fig = plot_nca(tc, result, partial=name)
+        text = next(t for t in fig.axes[0].texts if t.get_text().startswith(name))
+        assert text.get_horizontalalignment() == align
+        matplotlib.pyplot.close(fig)

@@ -13,7 +13,6 @@ from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
 from pkpdutils.nca.options import NCAOptions, decode_flags
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.nca.sparse import area_window
-from pkpdutils.nca.terminal import CANDIDATE_DIM
 from pkpdutils.nca.urine import Excretion
 from pkpdutils.plot._common import (
     axes_of,
@@ -48,6 +47,11 @@ LEGEND_HEADROOM = 1.6
 #: the variables `plot_sparse` writes into its panel, which say whether a
 #: result comes from `pkpdutils.nca.sparse.nca_sparse`
 SPARSE_PANEL_VARIABLES: tuple[str, ...] = ("auc_last", "auc_last_se", "auc_last_df")
+
+#: share of the visible x range at either end within which an annotation is
+#: anchored at its own end rather than centred, so that it does not run over
+#: the spine of the panel
+EDGE_MARGIN = 0.15
 
 #: the variables `plot_terminal_windows` reads, which a result carries when the
 #: analysis kept the candidate windows (`TerminalPhase.keep_candidates`)
@@ -405,8 +409,17 @@ def _draw_partial_area(
     # its beginning
     tallest = int(np.nanargmax(y))
     x_text, top = float(x[tallest]), float(y[tallest])
-    # a text centred on the edge of the area would hang over it
-    align = "left" if tallest == 0 else "right" if tallest == x.size - 1 else "center"
+    # a text centred close to an edge of the panel runs over its spine, so
+    # there it is anchored at its own left or right end instead
+    left, right = ax.get_xlim()
+    margin = EDGE_MARGIN * (right - left)
+    align = (
+        "left"
+        if x_text < left + margin
+        else "right"
+        if x_text > right - margin
+        else "center"
+    )
     bottom = ax.get_ylim()[0]
     y_text = (
         float(np.sqrt(max(top, 1e-300) * max(bottom, top * 1e-3)))
@@ -490,7 +503,11 @@ def draw_nca_panel(
             protocol, so a multiple dose curve needs them shifted by the time
             between the first and the analysed dose; `plot_nca` and
             `plot_nca_grid` read the interval from the result
-            (`NCAResult.partial_aucs`) and shift it
+            (`NCAResult.partial_aucs`) and shift it. An interval which starts
+            before the first sample of the curve is shaded flat from that
+            sample on, while the analysis may add the segment from the dose to
+            it (`pkpdutils.nca.nca.area_between`), so the shading of such an
+            area can cover a little less than the number it carries
         ax: axes to draw on, a new figure by default
         style: colors and markers
 
@@ -564,19 +581,6 @@ def draw_nca_panel(
                         "alpha": 0.7,
                     },
                 )
-    if partial is not None and partial_range is not None:
-        _draw_partial_area(
-            ax,
-            t,
-            c,
-            values,
-            name=partial,
-            window=partial_range,
-            unit=unit_of(partial),
-            log_y=log_y,
-            annotate=annotate,
-            style=style,
-        )
     t_end = tlast + 3.0 * thalf if np.isfinite(thalf) else np.nan
     if np.isfinite(lambda_z) and np.isfinite(tlast) and np.isfinite(t_end):
         t_ext = np.linspace(tlast, t_end, 50)
@@ -799,6 +803,21 @@ def draw_nca_panel(
     else:
         ax.set_ylim(bottom=0)
     ax.set_xlim(left=0)
+    # the named area is shaded last, over the areas of the analysis and with
+    # the limits of the panel final, which is what its annotation is placed by
+    if partial is not None and partial_range is not None:
+        _draw_partial_area(
+            ax,
+            t,
+            c,
+            values,
+            name=partial,
+            window=partial_range,
+            unit=unit_of(partial),
+            log_y=log_y,
+            annotate=annotate,
+            style=style,
+        )
     heading = title if title is not None else (tc.label or tc.substance)
     if flags:
         heading = f"{heading} [{', '.join(flags)}]"
@@ -950,7 +969,7 @@ def plot_terminal_windows(
     questions, and every interactive tool shows it (the Slopes Selector of
     Phoenix WinNonlin, the "Check lambda_z" tab of PKanalix). The figure has
     two panels: the curve on a logarithmic value axis with the regression line,
-    the points it used and the chosen window as a shaded span
+    the points it used and the chosen window between two dashed lines
     (`draw_nca_panel`), and the adjusted \(R^2\) of every candidate window
     against the time its first point was taken at, the chosen window marked and
     the number of points of every window written above its marker. A window
@@ -988,8 +1007,9 @@ def plot_terminal_windows(
         The figure.
 
     Raises:
-        ValueError: if the result carries no candidate windows, or if the
-            indexers leave more than one sample.
+        ValueError: if the result carries no candidate windows; a result of
+            several samples carries none, since the analysis keeps them for a
+            single curve only.
     """
     values, flags = _sample_values(result, indexers)
     ds = result.ds.sel(**indexers) if indexers else result.ds
@@ -999,12 +1019,6 @@ def plot_terminal_windows(
             f"the result carries no candidate windows ({', '.join(missing)} "
             "missing); run the analysis of the single curve with "
             "NCAOptions(terminal=TerminalPhase(keep_candidates=True))"
-        )
-    extra = [str(d) for d in ds["candidate_t_first"].dims if str(d) != CANDIDATE_DIM]
-    if extra:
-        raise ValueError(
-            f"the candidate windows still carry the dimensions {extra}; select "
-            "one sample with indexers"
         )
     starts = ds["candidate_t_first"].to_numpy().astype(float)
     r2_adj = ds["candidate_r2_adj"].to_numpy().astype(float)

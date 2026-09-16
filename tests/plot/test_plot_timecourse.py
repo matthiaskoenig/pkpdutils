@@ -462,6 +462,8 @@ def test_plot_study_curves_colors_the_groups_the_same_in_every_panel() -> None:
         colors.append([line.get_color() for line in labelled])
     assert len(colors[0]) == 2 and len(colors[1]) == 2
     assert colors[0] == colors[1]
+    # both rows name the groups the same way, the mean row with the number of
+    # subjects behind the mean
     for ax, entries in (
         (fig.axes[0], ["A", "B"]),
         (fig.axes[2], ["A (n = 4)", "B (n = 4)"]),
@@ -469,7 +471,25 @@ def test_plot_study_curves_colors_the_groups_the_same_in_every_panel() -> None:
         legend = ax.get_legend()
         assert legend is not None
         assert [text.get_text() for text in legend.get_texts()] == entries
+        assert legend.get_title().get_text() == "arm"
     matplotlib.pyplot.close(fig)
+
+
+def test_plot_study_curves_names_a_numeric_group_with_its_unit() -> None:
+    batch = study_batch()
+    dose = np.where(np.arange(8) < 4, 50.0, 100.0)
+    ds = batch.ds.assign_coords(dose=("individual", dose))
+    fig = plot_study_curves(Timecourses(ds), by="dose")
+    for ax in (fig.axes[0], fig.axes[2]):
+        legend = ax.get_legend()
+        assert legend is not None
+        assert legend.get_title().get_text() == "dose"
+        labels = [text.get_text() for text in legend.get_texts()]
+        assert labels[0].startswith("50 mg") and labels[1].startswith("100 mg")
+    # no legend at all below the limit
+    bare = plot_study_curves(Timecourses(ds), by="dose", max_legend=1)
+    assert bare.axes[0].get_legend() is None
+    matplotlib.pyplot.close("all")
 
 
 def test_plot_study_curves_without_the_logarithmic_panels() -> None:

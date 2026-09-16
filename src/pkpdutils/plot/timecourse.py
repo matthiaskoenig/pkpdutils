@@ -695,6 +695,7 @@ def plot_study_curves(
     by: str | None = None,
     nominal_times: npt.ArrayLike | None = None,
     log_y_panels: bool = True,
+    max_legend: int = 12,
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
@@ -708,7 +709,10 @@ def plot_study_curves(
     study sampled by. This function draws the four panels in one call, the
     individual curves with `plot_timecourse` in the first row and the mean
     curves with `plot_mean_timecourse` (mean, spread band and the individuals
-    behind it) in the second.
+    behind it) in the second. A group keeps its color and its name over all
+    four panels: the legend of the individual row is drawn from the same group
+    labels as the one of the mean row (`50 mg`, which there carries the number
+    of subjects behind the mean as well).
 
     The nominal times come from the variable `nominal_time` of the batch when
     it carries one, else from `nominal_times` by nearest neighbour, else the
@@ -727,6 +731,8 @@ def plot_study_curves(
             the nearest of them
         log_y_panels: draw the two semi-logarithmic panels; `False` gives the
             two linear panels alone
+        max_legend: most entries the legend of the figure may have; above it
+            none is drawn, as in `plot_timecourse`
         axes: the four axes to draw into (two with `log_y_panels=False`), in
             reading order, a new figure by default
         style: colors and markers
@@ -742,16 +748,25 @@ def plot_study_curves(
     scales = (False, True) if log_y_panels else (False,)
     fig, grid = axes_of(axes, 2, len(scales), figsize=(5.5 * len(scales), 8.4))
     nominal = on_nominal_times(batch, nominal_grid(batch, nominal_times))
+    # the groups are named as the mean panels name them (`50 mg`), so that one
+    # reading of the legend holds for the whole figure
+    handles = None
+    if by is not None:
+        labels = [_facet_value(batch, by, value) for value, _ in batch.groupby(by)]
+        colors = group_colors(len(labels), style.cmap)
+        handles = _group_handles(dict(zip(labels, colors, strict=True)), style)
     for k, log_y in enumerate(scales):
         panel = grid[0][k]
         plot_timecourse(
             batch,
             log_y=log_y,
             by=by,
-            max_legend=12 if k == 0 else 0,
+            max_legend=max_legend if k == 0 else 0,
             ax=panel,
             style=style,
         )
+        if handles is not None and k == 0:
+            _legend(panel, max_legend, by, handles)
         panel.set_title(f"individuals, {_PANEL_TITLES['log' if log_y else 'linear']}")
     plot_mean_timecourse(
         nominal,
