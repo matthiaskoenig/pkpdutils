@@ -67,6 +67,8 @@ nav = [
       { "report" = "api/nca.report.md" },
       { "urine" = "api/nca.urine.md" },
       { "sparse" = "api/nca.sparse.md" },
+      { "tss" = "api/nca.tss.md" },
+      { "bioavailability" = "api/nca.bioavailability.md" },
     ] },
     { "pkpdutils.fit" = [
       { "fit" = "api/fit.md" },

@@ -69,13 +69,16 @@ from pkpdutils.nca import (
     NCAResult,
     TerminalMethod,
     TerminalPhase,
+    TSSResult,
     UncertaintyMethod,
+    bioavailability,
     nca,
     nca_single,
     nca_sparse,
     nca_urine,
     partial_auc,
     sparse_mean,
+    time_to_steady_state,
 )
 from pkpdutils.result import summary_table
 from pkpdutils.stats import (
@@ -140,6 +143,7 @@ __all__ = [
     "Route",
     "SigmoidEmax",
     "SigmoidImax",
+    "TSSResult",
     "TerminalMethod",
     "TerminalPhase",
     "Timecourse",
@@ -148,6 +152,7 @@ __all__ = [
     "UncertaintyMethod",
     "Weighting",
     "__version__",
+    "bioavailability",
     "bioequivalence",
     "carryover_table",
     "compare",
@@ -169,6 +174,7 @@ __all__ = [
     "ratio",
     "sparse_mean",
     "summary_table",
+    "time_to_steady_state",
     "ureg",
 ]
 

@@ -80,6 +80,7 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "vz_f",
         "vss",
         "thalf",
+        "thalf_eff",
         "lambda_z",
         "mrt",
         "clast_pred",
@@ -92,6 +93,10 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "cmax_ss_dn",
         "c0_dn",
         "accumulation_ratio_obs",
+        "accumulation_ratio_cmax_obs",
+        "accumulation_ratio_cmin_obs",
+        "accumulation_ratio_ctrough_obs",
+        "ptr",
         "auec_tau",
         "eavg",
     }

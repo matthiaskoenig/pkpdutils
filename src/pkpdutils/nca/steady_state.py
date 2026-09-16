@@ -11,18 +11,26 @@ same; the exposure over one interval, `AUC(0-tau)`, equals the single dose
   in the interval,
 - `Cavg = AUC(0-tau) / tau`,
 - `fluctuation = (Cmax,ss - Cmin,ss) / Cavg`,
-  `swing = (Cmax,ss - Cmin,ss) / Cmin,ss`,
+  `swing = (Cmax,ss - Cmin,ss) / Cmin,ss`, and the trough variants
+  `fluctuation_tau`, `swing_tau` and the peak-trough ratio `ptr`, which read
+  `Ctrough = C(tau)` where the first two read the smallest observed value,
+- `thalf_eff`, the effective half-life of the decline (`compute_parameters`),
 - `CLss = Dose / AUC(0-tau)` (`cl_ss`, `cl_ss_f` for an extravascular route),
   the clearance of a multiple dose analysis: the single dose `CL`, `Vz`, `Vss`,
   `auc_inf_dn` and `cmax_dn` are `NaN` there (`SINGLE_DOSE_PARAMETERS`),
 - the accumulation ratio `R = 1 / (1 - exp(-lambda_z tau))` predicted from the
-  terminal phase, and `accumulation_ratio_obs`, the observed ratio of the
-  exposure of the last and of the first dosing interval of the protocol.
+  terminal phase, and the observed ratios of the last over the first dosing
+  interval of the protocol: `accumulation_ratio_obs` of the exposure and
+  `accumulation_ratio_cmax_obs`, `accumulation_ratio_cmin_obs` and
+  `accumulation_ratio_ctrough_obs` of the peak, the minimum and the trough.
 
 `compute_steady_state` analyses the last dosing interval of the protocol of
 every row, `[t_K, t_K + tau]`, where `tau` is `NCAOptions.tau` or the distance
 of the last two doses; the parameters of every interval come from
-`pkpdutils.nca.intervals`. The point parameters of the same rows are computed
+`pkpdutils.nca.intervals`. A last interval whose last sample falls short of
+its end by at most `NCAOptions.tau_tolerance` of `tau` is completed with the
+terminal regression rather than given up (`complete_last_interval`). The point
+parameters of the same rows are computed
 from the last dose on: the values before it are dropped and the times are
 relative to it, so that `cmax`, `tmax`, the terminal phase and the
 extrapolated areas describe the last dosing interval and its decline; the
@@ -81,6 +89,140 @@ def _interval_length(times: np.ndarray, counts: np.ndarray) -> np.ndarray:
     return np.where(
         counts >= 2, take_rows(times, last) - take_rows(times, previous), np.nan
     )
+
+
+def complete_last_interval(
+    t: np.ndarray,
+    c: np.ndarray,
+    intervals: dict[str, np.ndarray],
+    values: dict[str, np.ndarray],
+    *,
+    last: np.ndarray,
+    t_start: np.ndarray,
+    t_end: np.ndarray,
+    route: Route | None,
+    options: NCAOptions,
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Complete a last dosing interval which falls a little short of its end.
+
+    A last sample a few minutes before the nominal end of the interval makes
+    every steady state parameter of the profile `NaN`, although the missing
+    piece of the exposure is a fraction of a percent. Phoenix WinNonlin
+    describes the case verbatim ("if dose time=0 and tau=24, the last sample
+    might be at 23.975 or 24.083 hours ... the program will estimate the
+    AUC_TAU based on the estimated concentration at 24 hours") and EMA asks for
+    the last sample within ten minutes of the nominal end precisely because it
+    is common.
+
+    An interval whose last measurable sample lies at most
+    `NCAOptions.tau_tolerance * tau` before its end is therefore analysed up to
+    that sample and completed with the terminal regression: the tail from
+    \(t_\mathrm{last}\) to the end of the interval of
+    \(C(t) = C_\mathrm{last} e^{-\lambda_z (t - t_\mathrm{last})}\) is
+
+    $$\frac{C_\mathrm{last}}{\lambda_z}
+    \left(1 - e^{-\lambda_z (t_\mathrm{end} - t_\mathrm{last})}\right),$$
+
+    the trough of the interval is the same regression at its end,
+    \(C_\mathrm{trough} = C_\mathrm{last} e^{-\lambda_z (t_\mathrm{end} -
+    t_\mathrm{last})}\), and the minimum of the interval is the smaller of the
+    observed minimum and that trough. The observed \(C_\mathrm{last}\) is
+    extrapolated with, as \(\mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}\) does.
+    The completed columns replace the `NaN` columns of the last interval, so
+    every parameter which reads them follows, and the share of the exposure
+    which was extrapolated is reported as `auc_tau_extrap_fraction`
+    (Phoenix `AUC_TAU_%Extrap`). Beyond the tolerance nothing is completed and
+    the profile keeps its `NCAFlag.INCOMPLETE_INTERVAL`.
+
+    Only a concentration analysis is completed: an effect timecourse has no
+    terminal regression to extrapolate with.
+
+    Args:
+        t: times `(N, n)` of the curves
+        c: values `(N, n)`
+        intervals: the per-interval variables `(N, K)` of `compute_intervals`,
+            whose last column is patched in place for the completed rows
+        values: the point parameters of the rows, which carry `tlast`, `clast`
+            and `lambda_z` relative to the last dose
+
+    Keyword Args:
+        last: column index of the last interval of every row `(N,)`
+        t_start: start of the last interval per row `(N,)`
+        t_end: end of the last interval per row `(N,)`
+        route: route of the batch
+        options: the options, `tau_tolerance`, `kind` and `auc_method` are used
+
+    Returns:
+        The mask of the completed rows `(N,)` and the extrapolated fraction of
+        their exposure `(N,)`, `NaN` for a row which was not completed.
+    """
+    n_rows = t.shape[0]
+    nan = np.full(n_rows, np.nan)
+    area_name = (
+        "interval_auc" if options.kind is Kind.CONCENTRATION else "interval_auec"
+    )
+    tlast, clast, lambda_z = (
+        values.get(name, nan) for name in ("tlast", "clast", "lambda_z")
+    )
+    if options.kind is not Kind.CONCENTRATION or options.tau_tolerance <= 0.0:
+        return np.zeros(n_rows, dtype=bool), nan
+    tau = t_end - t_start
+    with np.errstate(invalid="ignore"):
+        shortfall = t_end - (t_start + tlast)
+        completed = (
+            ~np.isfinite(take_rows(intervals[area_name], last))
+            & np.isfinite(t_start)
+            & np.isfinite(t_end)
+            & (shortfall > 0.0)
+            & (shortfall <= options.tau_tolerance * tau)
+            & np.isfinite(clast)
+            & (lambda_z > 0.0)
+        )
+    fraction = nan.copy()
+    if not completed.any():
+        return completed, fraction
+    rows = np.flatnonzero(completed)
+    # the same interval, ending at the last measurable sample: its exposure,
+    # its peak and its minimum are what was observed of the interval
+    observed, _ = compute_intervals(
+        t[rows],
+        c[rows],
+        dose_amount=None,
+        dose_time=t_start[rows, None],
+        tau=(tlast[rows]),
+        route=route,
+        options=options,
+    )
+    decay = np.exp(-lambda_z[rows] * shortfall[rows])
+    tail = clast[rows] / lambda_z[rows] * (1.0 - decay)
+    trough = clast[rows] * decay
+    area = observed[area_name][:, 0] + tail
+    # a row whose observed part is not an interval at all (no sample inside it)
+    # is not completed and keeps its `NCAFlag.INCOMPLETE_INTERVAL`
+    keep = np.isfinite(area)
+    completed[rows[~keep]] = False
+    rows, tail, trough, area = rows[keep], tail[keep], trough[keep], area[keep]
+    observed = {name: values[keep] for name, values in observed.items()}
+    value_max = observed["interval_cmax"][:, 0]
+    value_min = np.minimum(observed["interval_cmin"][:, 0], trough)
+    average = area / tau[rows]
+    column = {
+        "interval_n_points": observed["interval_n_points"][:, 0],
+        area_name: area,
+        "interval_cmax": value_max,
+        "interval_tmax": observed["interval_tmax"][:, 0],
+        "interval_cmin": value_min,
+        "interval_ctrough": trough,
+        "interval_c_start": observed["interval_c_start"][:, 0],
+        "interval_cavg": average,
+        "interval_fluctuation": (value_max - value_min) / average,
+        "interval_swing": (value_max - value_min) / value_min,
+    }
+    for name, patched in column.items():
+        if name in intervals:
+            intervals[name][rows, last[rows]] = patched
+    fraction[rows] = tail / area
+    return completed, fraction
 
 
 def compute_steady_state(
@@ -162,6 +304,7 @@ def compute_steady_state(
         options=options,
         lloq=lloq,
         windows=windows,
+        single_dose=False,
     )
     flags = out.pop("flags")
 
@@ -207,6 +350,21 @@ def compute_steady_state(
     last = np.clip(counts - 1, 0, n_dose - 1)
     has_interval = counts > 0
 
+    # a last interval which falls short of its end by at most
+    # `options.tau_tolerance` is completed with the terminal regression instead
+    # of being given up as incomplete
+    completed, extrap_fraction = complete_last_interval(
+        t,
+        c,
+        intervals,
+        out,
+        last=last,
+        t_start=np.where(has_interval, take_rows(times, last), np.nan),
+        t_end=np.where(has_interval, take_rows(times, last) + tau, np.nan),
+        route=route,
+        options=options,
+    )
+
     def last_interval(name: str) -> np.ndarray:
         """The value of the last dosing interval of every row.
 
@@ -236,16 +394,44 @@ def compute_steady_state(
     with np.errstate(divide="ignore", invalid="ignore"):
         accumulation_obs = area / first_interval(area_name)
     if options.kind is Kind.CONCENTRATION:
+        cmax_ss = last_interval("interval_cmax")
+        cmin_ss = last_interval("interval_cmin")
+        ctrough = last_interval("interval_ctrough")
+        cavg = last_interval("interval_cavg")
         out["auc_tau"] = area
-        out["cmin_ss"] = last_interval("interval_cmin")
-        out["cmax_ss"] = last_interval("interval_cmax")
-        out["ctrough"] = last_interval("interval_ctrough")
-        out["cavg"] = last_interval("interval_cavg")
+        # 0 where the interval was covered by the data, the extrapolated share
+        # where it was completed, `NaN` where it stays incomplete
+        out["auc_tau_extrap_fraction"] = np.where(
+            completed, extrap_fraction, np.where(np.isfinite(area), 0.0, np.nan)
+        )
+        out["cmin_ss"] = cmin_ss
+        out["cmax_ss"] = cmax_ss
+        out["ctrough"] = ctrough
+        out["cavg"] = cavg
         out["fluctuation"] = last_interval("interval_fluctuation")
         out["swing"] = last_interval("interval_swing")
         with np.errstate(divide="ignore", invalid="ignore"):
+            # the trough variants: the value at the end of the interval in
+            # place of its smallest observed value (Phoenix `Fluctuation%_Tau`,
+            # `Swing_Tau`; PKNCA `pk.calc.ptr`)
+            out["fluctuation_tau"] = (cmax_ss - ctrough) / cavg
+            out["swing_tau"] = (cmax_ss - ctrough) / ctrough
+            out["ptr"] = cmax_ss / ctrough
             out["accumulation_ratio"] = 1.0 / (1.0 - np.exp(-out["lambda_z"] * tau))
         out["accumulation_ratio_obs"] = accumulation_obs
+        with np.errstate(divide="ignore", invalid="ignore"):
+            # the observed accumulation of the peak, the minimum and the
+            # trough, the last over the first dosing interval of the protocol
+            # (CDISC `ARCMAX`, `ARCMIN`, `ARCTROUG`)
+            out["accumulation_ratio_cmax_obs"] = cmax_ss / first_interval(
+                "interval_cmax"
+            )
+            out["accumulation_ratio_cmin_obs"] = cmin_ss / first_interval(
+                "interval_cmin"
+            )
+            out["accumulation_ratio_ctrough_obs"] = ctrough / first_interval(
+                "interval_ctrough"
+            )
         if amount is not None and route is not None:
             # as `compute_parameters` does: without the fraction absorbed the
             # clearance of an extravascular dose is `CL/F`
@@ -277,19 +463,36 @@ def compute_steady_state(
     return out
 
 
-def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.DataArray:
-    """Observed accumulation ratio `AUC(0-tau) at steady state / AUC(0-tau) after a single dose`.
+def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.Dataset:
+    r"""Accumulation and stationarity of a steady state study against a single dose study.
 
     Both results come from analyses over the same dosing interval, so both
-    carry `auc_tau`. Within one multiple dose curve the ratio of the last and
-    the first dosing interval is reported as `accumulation_ratio_obs`.
+    carry `auc_tau`. The accumulation ratio is the exposure of the interval at
+    steady state over the exposure of the same interval after the first dose,
+
+    $$R_\mathrm{obs} = \frac{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss}}
+    {\mathrm{AUC}_{0\text{-}\tau}^\mathrm{single}},$$
+
+    and the stationarity ratio compares the exposure of the interval at steady
+    state with the total exposure of the single dose,
+
+    $$\mathrm{SR} = \frac{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss}}
+    {\mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}^\mathrm{single}},$$
+
+    which is 1 for time-invariant linear kinetics and says that the clearance
+    did not change over the study (CDISC `ARAUC` and `SRAUC`; Gabrielsson &
+    Weiner 2016, ch. 2.8). Within one multiple dose curve the ratio of the last
+    and the first dosing interval is reported as `accumulation_ratio_obs`.
 
     Args:
         steady_state: result of the analysis of the steady state curve
         single_dose: result of the analysis of the single dose curve
 
     Returns:
-        The observed accumulation ratio, `attrs["units"]` is `"dimensionless"`.
+        A dataset over the sample dimensions of the results with the variables
+        `accumulation_ratio` and `stationarity_ratio`, `attrs["units"]` of both
+        `"dimensionless"`; the stationarity ratio is `NaN` when the single dose
+        analysis reports no `auc_inf_obs`.
 
     Raises:
         ValueError: if either result has no `auc_tau`.
@@ -301,7 +504,12 @@ def accumulation_ratio(steady_state: NCAResult, single_dose: NCAResult) -> xr.Da
             )
     ratio = steady_state["auc_tau"] / single_dose["auc_tau"]
     ratio.attrs["units"] = "dimensionless"
-    return ratio.rename("accumulation_ratio")
+    if "auc_inf_obs" in single_dose:
+        stationarity = steady_state["auc_tau"] / single_dose["auc_inf_obs"]
+    else:
+        stationarity = xr.full_like(ratio, np.nan)
+    stationarity.attrs["units"] = "dimensionless"
+    return xr.Dataset({"accumulation_ratio": ratio, "stationarity_ratio": stationarity})
 
 
 def superposition(

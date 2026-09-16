@@ -121,6 +121,7 @@ PARAMETER_UNITS: dict[str, str] = {
     "aumc_all": "({unit}) * ({time}) ** 2",
     "aumc_inf": "({unit}) * ({time}) ** 2",
     "mrt": "{time}",
+    "thalf_eff": "{time}",
     "lambda_z": "1 / ({time})",
     "lambda_z_stderr": "1 / ({time})",
     "lambda_z_intercept": "dimensionless",
@@ -152,14 +153,21 @@ PARAMETER_UNITS: dict[str, str] = {
     "emax_baseline": "{unit}",
     "time_above": "{time}",
     "auc_tau": "({unit}) * ({time})",
+    "auc_tau_extrap_fraction": "dimensionless",
     "cmin_ss": "{unit}",
     "cmax_ss": "{unit}",
     "ctrough": "{unit}",
     "cavg": "{unit}",
     "fluctuation": "dimensionless",
     "swing": "dimensionless",
+    "fluctuation_tau": "dimensionless",
+    "swing_tau": "dimensionless",
+    "ptr": "dimensionless",
     "accumulation_ratio": "dimensionless",
     "accumulation_ratio_obs": "dimensionless",
+    "accumulation_ratio_cmax_obs": "dimensionless",
+    "accumulation_ratio_cmin_obs": "dimensionless",
+    "accumulation_ratio_ctrough_obs": "dimensionless",
     "cl_ss": "({dose}) / (({unit}) * ({time}))",
     "cl_ss_f": "({dose}) / (({unit}) * ({time}))",
     "auec_tau": "({unit}) * ({time})",
@@ -520,9 +528,11 @@ def _lag_time(
     dose (Gabrielsson & Weiner 2016, ch. 2.8; Phoenix WinNonlin, which computes
     `Tlag` "only when the dosing type is extravascular"). The times are
     relative to the dose, so only samples at or after it are candidates: a
-    pre-dose sample is not a lag of the absorption. `NaN` when the first sample
-    after the dose is already measurable, when no value is measurable, and for
-    every intravenous route, which has no absorption phase.
+    pre-dose sample is not a lag of the absorption. A curve whose first sample
+    at or after the dose is already measurable has no such sample and its lag
+    is 0, the time of the dose, as Phoenix WinNonlin reports it. `NaN` when no
+    value is measurable and for every intravenous route, which has no
+    absorption phase.
 
     Args:
         tp: packed times `(N, n)`, relative to the dose
@@ -546,7 +556,10 @@ def _lag_time(
     # the sample before it, which must itself be a sample after the dose
     previous = np.clip(first - 1, 0, n - 1)
     has_lag = has_measurable & (first > 0) & take_rows(after_dose, previous)
-    return np.where(has_lag, take_rows(tp, previous), np.nan)
+    # without such a sample the absorption started at the dose: the lag is 0
+    return np.where(
+        has_lag, take_rows(tp, previous), np.where(has_measurable, 0.0, np.nan)
+    )
 
 
 def compute_parameters(
@@ -560,6 +573,7 @@ def compute_parameters(
     options: NCAOptions,
     lloq: np.ndarray | None = None,
     windows: np.ndarray | None = None,
+    single_dose: bool = True,
 ) -> dict[str, np.ndarray]:
     """Single dose parameters of every row of `(N, n)` time and value arrays.
 
@@ -579,6 +593,12 @@ def compute_parameters(
         windows: the terminal window `(t_first, t_last)` of single rows
             `(N, 2)` in the times of the analysis, `NaN` for a row without one
             (`TerminalPhase.windows`, `sample_windows`)
+        single_dose: whether the rows are single dose curves. An infusion which
+            starts at the dose is 0 there, so a zero is inserted at the dose
+            time of a single dose row whose first sample comes later
+            (`_insert_dose_value`); the same row of a steady state interval
+            starts at its trough and nothing is inserted
+            (`pkpdutils.nca.steady_state.compute_steady_state` passes `False`)
 
     Returns:
         One `(N,)` array per parameter (see `PARAMETER_UNITS`) and `flags`.
@@ -655,6 +675,19 @@ def compute_parameters(
         tp_area, cp_area, n_area = insert_point(
             tp, cp, n_valid, np.where(insert, 0.0, np.nan), np.where(insert, c0, np.nan)
         )
+    elif route is Route.IV_INFUSION and single_dose:
+        # an infusion starts at 0 at its dose, so a curve whose first sample
+        # comes later starts at the dose with a zero, as Phoenix WinNonlin
+        # inserts it; a steady state interval starts at its trough instead
+        with np.errstate(invalid="ignore"):
+            at_dose = has_data & (tp[:, 0] > 0)
+        tp_area, cp_area, n_area = insert_point(
+            tp,
+            cp,
+            n_valid,
+            np.where(at_dose, 0.0, np.nan),
+            np.where(at_dose, 0.0, np.nan),
+        )
 
     auc_last, aumc_last = auc_aumc(
         tp_area, cp_area, n_area, options.auc_method, t_end=tlast
@@ -705,6 +738,8 @@ def compute_parameters(
         mrt = aumc_inf / auc_inf_obs
         if route is Route.IV_INFUSION and dose_duration is not None:
             mrt = mrt - np.where(np.isnan(dose_duration), 0.0, dose_duration) / 2.0
+        # the effective half-life, PKNCA `pk.calc.thalf.eff`: `log(2) * mrt`
+        thalf_eff = np.log(2.0) * mrt
         flags |= np.where(
             extrap > options.extrapolation_warning, NCAFlag.EXTRAPOLATION_HIGH, 0
         )
@@ -738,6 +773,7 @@ def compute_parameters(
         "aumc_all": aumc_all,
         "aumc_inf": aumc_inf,
         "mrt": mrt,
+        "thalf_eff": thalf_eff,
         "lambda_z": lambda_z,
         "lambda_z_stderr": fit.se_slope,
         "lambda_z_intercept": fit.intercept,
@@ -1607,10 +1643,14 @@ def _insert_dose_value(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Add the value at the dose to every curve whose first sample is after it.
 
-    The value at time 0 is 0 for an extravascular dose and the back
-    extrapolated `c0` for an intravenous bolus (`bolus_c0`); an infusion and a
-    batch without a route are left as they are, so that an area reaching before
-    the first sample stays `NaN` there.
+    The value at time 0 is the back extrapolated `c0` for an intravenous bolus
+    (`bolus_c0`) and 0 for an extravascular dose and for an infusion, both of
+    which start at nothing when the dose is given: "for extravascular and
+    infusion single dose a concentration of zero is inserted at the dose time"
+    (Phoenix WinNonlin NCA). A batch without a route is left as it is, so that
+    an area reaching before the first sample stays `NaN` there. The insertion
+    describes a single dose curve; a dosing interval of a steady state analysis
+    starts at its trough and is handled by `pkpdutils.nca.intervals`.
 
     Args:
         tp: packed times `(N, n)`, relative to the dose
@@ -1625,7 +1665,7 @@ def _insert_dose_value(
         The packed times, values and counts, one column wider when a value was
         added.
     """
-    if route is None or route is Route.IV_INFUSION:
+    if route is None:
         return tp, cp, n_valid
     with np.errstate(invalid="ignore"):
         insert = (n_valid >= 1) & (tp[:, 0] > 0)

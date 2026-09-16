@@ -63,6 +63,9 @@ INDOMETH_PARAMETERS: tuple[str, ...] = (
     "vz",
     "vss",
 )
+#: the same profiles analysed as a 0.25 h infusion, which reports no `c0` and
+#: no back-extrapolated share
+INFUSION_PARAMETERS: tuple[str, ...] = (*WINNONLIN_PARAMETERS, "cl", "vz", "vss")
 PKNCA_SUMMARY_PARAMETERS: tuple[str, ...] = (
     "cmax_geomean",
     "cmax_geocv",
@@ -108,6 +111,9 @@ EXPECTED: dict[str, dict[str, tuple[str, ...]]] = {
     "indometh-winnonlin-linear-log": {
         str(subject): INDOMETH_PARAMETERS for subject in range(1, 7)
     },
+    "indometh-winnonlin-linear-infusion": {
+        str(subject): INFUSION_PARAMETERS for subject in range(1, 7)
+    },
     # the PKNCA vignette prints the per-subject results of two subjects only
     "theoph-pknca": {
         "1": ("cmax", "clast", "lambda_z", "tlast", "tmax"),
@@ -118,7 +124,7 @@ EXPECTED: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 #: every reference of the file, the number of comparisons this test is worth
-TOTAL_REFERENCES = 911
+TOTAL_REFERENCES = 1055
 
 #: the cases which cover every subject of their dataset
 FULL_CASES: tuple[str, ...] = (
@@ -126,6 +132,7 @@ FULL_CASES: tuple[str, ...] = (
     "theoph-winnonlin-linear-log",
     "indometh-winnonlin-linear",
     "indometh-winnonlin-linear-log",
+    "indometh-winnonlin-linear-infusion",
 )
 
 

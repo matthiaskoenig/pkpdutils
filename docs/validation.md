@@ -9,7 +9,7 @@ The comparison runs in the test suite (`tests/nca/test_validation.py`) and as a 
 | dataset | file | subjects | route | dose | concentrations | times |
 | --- | --- | --- | --- | --- | --- | --- |
 | theophylline | `tests/data/validation/theoph.csv` | 12 | oral | 320 mg | mg/L | 0 to 24.65 h, 11 samples |
-| indomethacin | `tests/data/validation/indometh.csv` | 6 | intravenous bolus | 25 mg | µg/mL | 0.25 to 8 h, 11 samples |
+| indomethacin | `tests/data/validation/indometh.csv` | 6 | intravenous bolus, and the same profiles as a 0.25 h infusion | 25 mg | µg/mL | 0.25 to 8 h, 11 samples |
 
 Both are the datasets `datasets::Theoph` and `datasets::Indometh` of R, copied verbatim from the [Rdatasets](https://vincentarelbundock.github.io/Rdatasets/) mirror; `tests/data/validation/README.md` names the source, the license (GPL-2 / GPL-3, as all of R) and the original studies. They are the two datasets the other tools publish their own validation against, which is the only reason to pick a theophylline study from 1994 and an indomethacin study from 1976.
 
@@ -19,7 +19,7 @@ Both are the datasets `datasets::Theoph` and `datasets::Indometh` of R, copied v
 
 No R installation was available, so every number is transcribed from a published source rather than computed here. Two sources are used.
 
-**Phoenix WinNonlin 6.3 and 7.0**, through the validation report of the NonCompart R package (Han 2018). The report compares NonCompart against WinNonlin on exactly these two datasets and publishes the raw WinNonlin output as CSV files, one per dataset and trapezoidal rule, with 8 to 15 significant digits per number. Those CSV files are the reference of the four WinNonlin cases: `Final_Parameters_Pivoted_Theoph_Linear.csv`, `..._Theoph_Log.csv`, `..._Indometh_Linear.csv` and `..._Indometh_Log.csv`. They cover 24 parameters per subject of the theophylline dataset and 26 of the indomethacin one, which carries `c0`, the back extrapolated fraction and the clearance and volumes of an intravenous dose on top.
+**Phoenix WinNonlin 6.3 and 7.0**, through the validation report of the NonCompart R package (Han 2018). The report compares NonCompart against WinNonlin on exactly these two datasets and publishes the raw WinNonlin output as CSV files, one per dataset and trapezoidal rule, with 8 to 15 significant digits per number. Those CSV files are the reference of the five WinNonlin cases: `Final_Parameters_Pivoted_Theoph_Linear.csv`, `..._Theoph_Log.csv`, `..._Indometh_Linear.csv`, `..._Indometh_Log.csv` and `..._Indometh_Linear_Infusion.csv`, the last one the indomethacin profiles analysed as a 0.25 h infusion. They cover 24 parameters per subject of the theophylline dataset and 26 of the indomethacin one, which carries `c0`, the back extrapolated fraction and the clearance and volumes of an intravenous dose on top; the infusion case carries 24, since an infusion has no \(C_0\) to back-extrapolate.
 
 **PKNCA**, through its theophylline vignette. The vignette prints the per-subject results only for the subjects 1 and 6 (`cmax`, `tmax`, `tlast`, `clast`, `lambda_z` and, for subject 6, `auc_last`) and a summary over all twelve subjects (the geometric mean and geometric coefficient of variation of `cmax`, `auc_last` and `auc_inf_obs`, the arithmetic mean and standard deviation of `thalf`, and the median with the range of `tmax`). The vignette also prints the `auclast` of subject 1 over the automatic interval 0 to 24 h, which is compared through `partial_auc` over the window PKNCA truncates that interval to, see "The known differences". Those are the numbers the reference file holds; the vignette prints nothing per subject for `cl`, `vz` or `mrt`, so nothing is recorded for them, and none is invented.
 
@@ -76,7 +76,9 @@ options = NCAOptions(
 result = nca(batch, options=options)
 ```
 
-The indomethacin analysis is the same call with `route=Route.IV_BOLUS`, `unit="ug/mL"`, a dose of 25 mg and `exclude_cmax=False`.
+The indomethacin analysis is the same call with `route=Route.IV_BOLUS`, `unit="ug/mL"`, a dose of 25 mg and `exclude_cmax=False`; the infusion case is that call with `route=Route.IV_INFUSION` and a `dose_duration` of 0.25 h, the run the report makes with `adm="Infusion", dur=0.25`.
+
+The infusion case is what validates two conventions of an infusion which the bolus case cannot: the zero inserted at the dose time of a curve whose first sample comes later, and the mean residence time corrected by half the duration. The indomethacin profiles start at 0.25 h, so `auc_last` of subject 1 is 1.741 with the inserted zero and 1.554 without it, and its `mrt` is 3.663 h with the correction and 3.788 h without; both agree with WinNonlin to machine precision.
 
 ## The comparison
 
@@ -107,7 +109,7 @@ One row per case and parameter, the largest relative deviation over the subjects
 | theoph | Phoenix WinNonlin | linear | `thalf` | 12 | 7.7e-11 | 1e-06 | winnonlin-theoph-linear |
 | theoph | Phoenix WinNonlin | linear | `cmax_dn` | 12 | < 1e-12 | 1e-06 | winnonlin-theoph-linear |
 | theoph | Phoenix WinNonlin | linear | `auc_inf_dn` | 12 | 1.5e-09 | 1e-06 | winnonlin-theoph-linear |
-| theoph | Phoenix WinNonlin | linear | `tlag` | 9 (3 known differences) | 0 | 1e-06 | winnonlin-theoph-linear |
+| theoph | Phoenix WinNonlin | linear | `tlag` | 12 | 0 | 1e-06 | winnonlin-theoph-linear |
 | theoph | Phoenix WinNonlin | linear | `cl_f` | 12 | 2.1e-10 | 1e-06 | winnonlin-theoph-linear |
 | theoph | Phoenix WinNonlin | linear | `vz_f` | 12 | 1.8e-10 | 1e-06 | winnonlin-theoph-linear |
 | theoph | Phoenix WinNonlin | linear_log | `cmax` | 12 | 0 | 1e-06 | winnonlin-theoph-linear-log |
@@ -131,7 +133,7 @@ One row per case and parameter, the largest relative deviation over the subjects
 | theoph | Phoenix WinNonlin | linear_log | `thalf` | 12 | 7.7e-11 | 1e-06 | winnonlin-theoph-linear-log |
 | theoph | Phoenix WinNonlin | linear_log | `cmax_dn` | 12 | < 1e-12 | 1e-06 | winnonlin-theoph-linear-log |
 | theoph | Phoenix WinNonlin | linear_log | `auc_inf_dn` | 12 | 1.5e-09 | 1e-06 | winnonlin-theoph-linear-log |
-| theoph | Phoenix WinNonlin | linear_log | `tlag` | 9 (3 known differences) | 0 | 1e-06 | winnonlin-theoph-linear-log |
+| theoph | Phoenix WinNonlin | linear_log | `tlag` | 12 | 0 | 1e-06 | winnonlin-theoph-linear-log |
 | theoph | Phoenix WinNonlin | linear_log | `cl_f` | 12 | 2.8e-10 | 1e-06 | winnonlin-theoph-linear-log |
 | theoph | Phoenix WinNonlin | linear_log | `vz_f` | 12 | 1.9e-10 | 1e-06 | winnonlin-theoph-linear-log |
 | indometh | Phoenix WinNonlin | linear | `cmax` | 6 | 0 | 1e-06 | winnonlin-indometh-linear |
@@ -186,6 +188,30 @@ One row per case and parameter, the largest relative deviation over the subjects
 | indometh | Phoenix WinNonlin | linear_log | `cl` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-log |
 | indometh | Phoenix WinNonlin | linear_log | `vz` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-log |
 | indometh | Phoenix WinNonlin | linear_log | `vss` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-log |
+| indometh | Phoenix WinNonlin | linear | `cmax` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `tmax` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `tlast` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `clast` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_all` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_obs` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_pred` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_extrap_fraction` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `aumc_last` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `aumc_inf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `mrt` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_r2_adj` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_n_points` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_t_first` | 5 (1 known difference) | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `lambda_z_t_last` | 6 | 0 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `thalf` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `cmax_dn` | 6 | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `auc_inf_dn` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `cl` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vz` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
+| indometh | Phoenix WinNonlin | linear | `vss` | 5 (1 known difference) | < 1e-12 | 1e-06 | winnonlin-indometh-linear-infusion |
 | theoph | PKNCA | linear_log | `clast` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `cmax` | 2 | 0 | 1e-04 | pknca-theoph-vignette |
 | theoph | PKNCA | linear_log | `lambda_z` | 2 | 4.6e-07 | 1e-04 | pknca-theoph-vignette |
@@ -220,13 +246,13 @@ The tolerance of a WinNonlin number is the machine precision tolerance of 1e-6; 
 
 ## The known differences
 
-**`tlag` of a curve whose first sample is measurable.** WinNonlin reports `Tlag = 0` for every subject of the theophylline dataset. `pkpdutils` reports `tlag = NaN` for the subjects 1, 7 and 10, whose concentration at the dose time is already measurable (0.74, 0.15 and 0.24 mg/L): `tlag` is the time of the last sample before the first measurable value, and there is no such sample. For the other nine subjects, whose first sample is 0, both report 0. The three entries are marked `xfail(strict=True)` in `tests/nca/test_validation.py`, which means the test suite fails if they ever start to agree without this page being updated.
+**The terminal window of the infusion run.** WinNonlin starts the terminal regression of subject 4 of the infusion case after the end of the infusion, at 0.5 h with ten points, where it starts at the observed maximum at 0.25 h with eleven points for the very same profile analysed as a bolus. `pkpdutils` has no rule which keeps the samples taken during an infusion out of the regression, so it regresses the same eleven points in both runs; every parameter which reads the terminal window follows (`lambda_z` by 6 %, `thalf` by 6 %, `vz` by 5 %, `auc_inf_obs` and `cl` by 0.4 %). The other five subjects and every parameter which does not read the window agree to machine precision. The fifteen entries of subject 4 are marked `xfail(strict=True)` in `tests/nca/test_validation.py`, which means the test suite fails if they ever start to agree without this page being updated.
 
 **The end of a partial interval.** The PKNCA vignette prints `auclast` of 92.365442 for subject 1 over the interval 0 to 24 h, where `partial_auc(batch, 0.0, 24.0)` returns 146.01. The difference is the treatment of the end of the interval, not the arithmetic: PKNCA sums the trapezoids between the observations which fall inside the interval and stops at the last of them, which is at 12.12 h for this subject, while `partial_auc` interpolates the concentration at 24 h with the trapezoidal rule of the analysis and integrates to there. Over the window PKNCA actually integrated, `partial_auc(batch, 0.0, 12.12)` reproduces its number to 4.8e-9, and that is the comparison the reference file holds (the case `theoph-pknca-partial`). An analyst who wants the PKNCA convention passes the last observation inside the interval as `t_end`.
 
 ## What is not covered
 
-- **Infusions.** The report also publishes a WinNonlin run of the indomethacin dataset as a 0.25 h infusion. It is not compared, because `pkpdutils` deliberately leaves an infusion curve as it is (`nca/nca.py`, `_insert_dose_value`) where WinNonlin adds a zero at the dose time and subtracts half the infusion duration from the mean residence time. For subject 1 that is `auc_last` 1.554 against 1.741 and `mrt` 4.018 h against 3.663 h, a difference of convention rather than of arithmetic, and changing the convention is not part of a validation.
+- **Extravascular indomethacin.** The report also publishes a run of the indomethacin dataset as an extravascular dose. It is not compared: the bolus and the infusion run already cover the dataset, and the extravascular run adds no rule which the theophylline dataset does not exercise.
 - **The `pred` variants of the clearance, the volume and the mean residence time** (`Cl_pred`, `Vz_pred`, `Vss_pred`, `MRTINF_pred`, `AUMC_%Extrap_pred`) and `MRTlast`, which WinNonlin reports and `pkpdutils` does not. `auc_inf_pred` is reported and compared.
 - **Multiple dosing, steady state, urine and sparse sampling.** Both datasets are single dose plasma profiles with dense sampling. The steady state parameters are covered by `tests/nca/test_steady_state.py` and by the regression reference of `pkdb_analysis` 0.3.1 in `tests/data/reference/nca_reference.json`, not by a comparison against another tool.
 - **Values below the limit of quantification.** Neither dataset carries a limit of quantification, so no BLQ rule is exercised here; `tests/nca/test_blq.py` covers them against the written rules of the tools.

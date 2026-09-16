@@ -359,7 +359,9 @@ single = nca(
     options=NCAOptions(auc_method=AUCMethod.LOG, tau=12),
 )
 print(result["accumulation_ratio_obs"].values.round(3))
-print(accumulation_ratio(result, single).values.round(3))
+ratios = accumulation_ratio(result, single)
+print(ratios["accumulation_ratio"].values.round(3))
+print(ratios["stationarity_ratio"].values.round(3))
 
 plot_troughs(result, x="interval").savefig("troughs.png", dpi=120)
 plot_intervals(result, "interval_ctrough").savefig("intervals.png", dpi=120)
@@ -389,7 +391,7 @@ and the steady state parameters of the last interval over the four subjects:
 | ctrough | milligram / liter | 4 | 1.28 | 0.339 | 26.6 % |
 | fluctuation | dimensionless | 4 | 1.15 | 0.197 | 17.2 % |
 
-The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. `troughs.png` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. The same figure over a longer regimen, the ten doses of `examples/steady_state.py`, is the plateau itself:
+The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here as its `accumulation_ratio`, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. Its second variable is the stationarity ratio \(\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss} / \mathrm{AUC}_{0\text{-}\infty}^\mathrm{single}\), `[1. 1.003 1.017 1.001]` here: the exposure over one interval at steady state is the total exposure of a single dose, which says that the clearance did not change over the study. `troughs.png` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. The same figure over a longer regimen, the ten doses of `examples/steady_state.py`, is the plateau itself:
 
 ![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
 

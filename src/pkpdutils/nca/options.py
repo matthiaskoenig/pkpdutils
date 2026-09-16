@@ -490,6 +490,17 @@ class NCAOptions(BaseModel):
             dosing protocol (the distance of the last two doses); it is needed
             for a steady state curve given with its last dose only and it
             overrides the protocol for the last interval
+        tau_tolerance: how far the last sample of the analysed dosing interval
+            may fall short of its end, as a fraction of `tau`, before the
+            interval is given up as incomplete. Within the tolerance the
+            exposure of the interval is completed with the terminal regression,
+            `auc_tau_extrap_fraction` reports the share which was extrapolated
+            and the sample is not flagged; beyond it every steady state
+            parameter is `NaN` and the sample carries
+            `NCAFlag.INCOMPLETE_INTERVAL`. The default 0.1 covers the sample
+            which was taken a few minutes before or after the nominal end of
+            the interval, the case EMA and Phoenix WinNonlin both describe; 0
+            switches the completion off
         intervals: whether the per-interval parameters (`interval_*`) are part
             of the result of a multiple dose analysis
         effect_threshold: threshold of `time_above` for effect timecourses, `None` for none
@@ -530,6 +541,7 @@ class NCAOptions(BaseModel):
     acceptance: Acceptance = Acceptance()
     partial_aucs: dict[str, tuple[float, float]] = Field(default_factory=dict)
     tau: float | None = Field(default=None, gt=0.0)
+    tau_tolerance: float = Field(default=0.1, ge=0.0, lt=1.0)
     intervals: bool = True
     effect_threshold: float | None = None
     n_workers: int | None = Field(default=None, ge=1)

@@ -131,11 +131,14 @@ def test_partial_auc_from_zero_starts_at_zero_for_an_extravascular_dose() -> Non
     assert area == pytest.approx(observed + rise)
 
 
-def test_partial_auc_from_zero_is_nan_for_an_infusion() -> None:
+def test_partial_auc_from_zero_starts_at_zero_for_an_infusion() -> None:
     options = NCAOptions(auc_method=AUCMethod.LOG)
     batch = routed_batch(Route.IV_INFUSION)
-    assert np.isnan(partial_auc(batch, 0.0, 12.0, options=options).values).all()
-    assert np.isfinite(partial_auc(batch, 0.5, 12.0, options=options).values).all()
+    area = float(partial_auc(batch, 0.0, 12.0, options=options).values[0])
+    observed = float(partial_auc(batch, 0.5, 12.0, options=options).values[0])
+    # an infusion starts at 0 at its dose, as an extravascular dose does
+    rise = 0.5 * 0.5 * C0 * np.exp(-K * 0.5)
+    assert area == pytest.approx(observed + rise)
 
 
 def test_partial_auc_before_the_dose_is_nan() -> None:
