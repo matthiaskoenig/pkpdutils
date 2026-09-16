@@ -162,9 +162,15 @@ def test_accumulation_ratio_observed() -> None:
     options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
     ss = nca(Timecourses.from_timecourses([steady_state_curve()]), options=options)
     sd = nca(Timecourses.from_timecourses([single_dose()]), options=options)
-    ratio = accumulation_ratio(ss, sd)
-    assert float(ratio.values[0]) == pytest.approx(1 / (1 - np.exp(-K * TAU)), rel=1e-3)
-    assert ratio.attrs["units"] == "dimensionless"
+    ratios = accumulation_ratio(ss, sd)
+    assert float(ratios["accumulation_ratio"].values[0]) == pytest.approx(
+        1 / (1 - np.exp(-K * TAU)), rel=1e-3
+    )
+    assert ratios["accumulation_ratio"].attrs["units"] == "dimensionless"
+    # the stationarity ratio compares AUC(0-tau) at steady state with the
+    # total exposure of the single dose, which are equal for linear kinetics
+    assert float(ratios["stationarity_ratio"].values[0]) == pytest.approx(1.0, rel=1e-2)
+    assert ratios["stationarity_ratio"].attrs["units"] == "dimensionless"
 
 
 def test_superposition_reaches_analytic_steady_state() -> None:

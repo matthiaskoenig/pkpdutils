@@ -7,6 +7,7 @@
 sampling design (`docs/sparse.md`).
 """
 
+from pkpdutils.nca.bioavailability import bioavailability
 from pkpdutils.nca.nca import nca, nca_single, partial_auc
 from pkpdutils.nca.options import (
     Acceptance,
@@ -29,6 +30,7 @@ from pkpdutils.nca.report import M13A_STATISTICS, acceptability_table, methods_l
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.nca.sparse import nca_sparse, sparse_mean
 from pkpdutils.nca.steady_state import accumulation_ratio, superposition
+from pkpdutils.nca.tss import TSSResult, time_to_steady_state
 from pkpdutils.nca.urine import Excretion, nca_urine
 
 __all__ = [
@@ -46,11 +48,13 @@ __all__ = [
     "NCAFlag",
     "NCAOptions",
     "NCAResult",
+    "TSSResult",
     "TerminalMethod",
     "TerminalPhase",
     "UncertaintyMethod",
     "acceptability_table",
     "accumulation_ratio",
+    "bioavailability",
     "decode_flags",
     "methods_line",
     "nca",
@@ -60,4 +64,5 @@ __all__ = [
     "partial_auc",
     "sparse_mean",
     "superposition",
+    "time_to_steady_state",
 ]

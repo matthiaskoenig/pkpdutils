@@ -31,6 +31,8 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md), [Urinar
 | [nca.report](nca.report.md) | `M13A_STATISTICS`, `acceptability_table`, `methods_line`: the tables of a regulatory report |
 | [nca.urine](nca.urine.md) | `Excretion`, `nca_urine`: the excretion rate curve, the amount recovered and the renal clearance of a urine study |
 | [nca.sparse](nca.sparse.md) | `nca_sparse`, `sparse_mean`, `bailer_variance`: the area of a sparse or destructive design with its standard error |
+| [nca.tss](nca.tss.md) | `time_to_steady_state`, `TSSResult`: the time to steady state from the troughs of the dosing intervals |
+| [nca.bioavailability](nca.bioavailability.md) | `bioavailability`: the absolute and the relative bioavailability of two analyses |
 
 ## pkpdutils.fit
 

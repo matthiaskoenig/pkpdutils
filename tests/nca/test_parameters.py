@@ -7,6 +7,7 @@ from pkpdutils import (
     AUCMethod,
     C0Method,
     Dose,
+    Dosing,
     NCAOptions,
     Route,
     TerminalMethod,
@@ -56,18 +57,27 @@ def test_tlag_of_an_absorption_delay() -> None:
 
 
 def test_tlag_without_delay_and_intravenously() -> None:
+    # the first sample after the dose is already measurable: the absorption
+    # started at the dose and the lag is 0, as Phoenix WinNonlin reports it
     t = np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0])
     c = np.array([0.5, 2.0, 1.5, 1.0, 0.5, 0.25])
-    assert np.isnan(nca_single(oral_curve(t, c), options=LINEAR)["tlag"])
+    assert float(nca_single(oral_curve(t, c), options=LINEAR)["tlag"]) == 0.0
     # an intravenous curve has no absorption and reports no lag time
     assert "tlag" not in nca_single(bolus_curve(t[1:]), options=LINEAR)
 
 
+def test_tlag_without_a_measurable_value_is_nan() -> None:
+    t = np.array([0.0, 0.5, 1.0, 2.0])
+    c = np.array([0.0, 0.0, 0.0, 0.0])
+    assert np.isnan(nca_single(oral_curve(t, c), options=LINEAR)["tlag"])
+
+
 def test_tlag_ignores_pre_dose_samples() -> None:
-    # the sample before the dose is not a lag of the absorption
+    # the sample before the dose is not a lag of the absorption: the first
+    # sample at the dose is measurable, so the lag is 0 and not -0.5
     t = np.array([-0.5, 0.0, 1.0, 2.0, 4.0, 8.0])
     c = np.array([0.0, 1.0, 2.0, 1.5, 0.75, 0.375])
-    assert np.isnan(nca_single(oral_curve(t, c), options=LINEAR)["tlag"])
+    assert float(nca_single(oral_curve(t, c), options=LINEAR)["tlag"]) == 0.0
 
 
 def test_auc_all_adds_the_trailing_triangle() -> None:
@@ -205,3 +215,120 @@ def test_new_parameters_of_a_batch_carry_units() -> None:
     assert result["auc_all"].attrs["units"] == "hour * milligram / liter"
     assert result["tlag"].to_numpy().tolist() == [0.5, 0.0]
     assert "tlag" in result.to_dataframe().columns
+
+
+def infusion_curve(t: np.ndarray, duration: float = 0.25) -> Timecourse:
+    return Timecourse(
+        time=t,
+        value=10.0 * np.exp(-0.5 * t),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_INFUSION, duration=duration),
+        substance="drug",
+    )
+
+
+def test_an_infusion_starts_at_zero_at_the_dose() -> None:
+    # the curve starts at 0.25 h: the area gains the triangle from the dose to
+    # the first sample, as Phoenix WinNonlin inserts it for an infusion
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
+    late = nca_single(infusion_curve(t), options=LINEAR).to_quantities()
+    early = nca_single(
+        infusion_curve(np.concatenate([[0.0], t])), options=LINEAR
+    ).to_quantities()
+    c1 = 10.0 * np.exp(-0.5 * 0.25)
+    # the triangle from (0, 0) to (0.25, c1) and its first moment
+    triangle = 0.5 * 0.25 * c1
+    moment = 0.25 * (0.0 * 0.0 + 0.25 * c1) / 2.0
+    without = 0.5 * 0.25 * (10.0 + c1)
+    assert late["auc_last"].magnitude == pytest.approx(
+        early["auc_last"].magnitude - without + triangle
+    )
+    assert late["aumc_last"].magnitude == pytest.approx(
+        early["aumc_last"].magnitude - 0.25 * (0.25 * c1) / 2.0 + moment
+    )
+    assert late["auc_all"].magnitude == pytest.approx(late["auc_last"].magnitude)
+
+
+def test_an_infusion_sampled_at_the_dose_is_unchanged() -> None:
+    t = np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
+    q = nca_single(infusion_curve(t), options=LINEAR).to_quantities()
+    # nothing is inserted where a sample was taken at the dose
+    times = np.concatenate([[0.0], t[1:]])
+    values = 10.0 * np.exp(-0.5 * times)
+    area = float(np.sum(np.diff(times) * (values[:-1] + values[1:]) / 2.0))
+    assert q["auc_last"].magnitude == pytest.approx(area)
+
+
+def test_a_steady_state_infusion_interval_does_not_start_at_zero() -> None:
+    # the interval of a multiple dose infusion starts at its trough, not at 0
+    doses = Dosing.regimen(
+        Dose(amount=100, unit="mg", route=Route.IV_INFUSION, duration=0.25),
+        interval=12.0,
+        n_doses=2,
+    )
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 12.25, 13.0, 16.0, 20.0, 24.0])
+    curve = Timecourse(
+        time=t,
+        value=10.0 * np.exp(-0.2 * (t % 12.0)) + 1.0,
+        time_unit="hr",
+        unit="mg/l",
+        dosing=doses,
+        substance="drug",
+    )
+    q = nca_single(curve, options=LINEAR).to_quantities()
+    # the area after the last dose starts at the first sample of that interval
+    # and not at a zero inserted at 12 h
+    assert q["auc_last"].magnitude == pytest.approx(
+        float(
+            np.sum(
+                np.diff(t[t >= 12.0])
+                * (curve.value[t >= 12.0][:-1] + curve.value[t >= 12.0][1:])
+                / 2.0
+            )
+        )
+    )
+
+
+def test_the_terminal_window_of_an_infusion_starts_after_the_infusion() -> None:
+    # the concentration rises during the infusion, so no sample at or before
+    # its end is a candidate of a window (Phoenix WinNonlin)
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
+    c = np.array([1.0, 2.0, 1.6, 1.0, 0.4, 0.05])
+    options = NCAOptions(
+        auc_method=AUCMethod.LINEAR,
+        terminal=TerminalPhase(method=TerminalMethod.BEST_FIT, exclude_cmax=False),
+    )
+
+    def curve(duration: float) -> Timecourse:
+        return Timecourse(
+            time=t,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(
+                amount=100, unit="mg", route=Route.IV_INFUSION, duration=duration
+            ),
+            substance="drug",
+        )
+
+    short = nca_single(curve(0.25), options=options)
+    long_infusion = nca_single(curve(0.5), options=options)
+    # the 0.5 h infusion may not use the sample at 0.5 h, the 0.25 h one may
+    assert float(short["lambda_z_t_first"]) == 0.5
+    assert float(long_infusion["lambda_z_t_first"]) == 1.0
+    assert float(short["lambda_z_n_points"]) == 5.0
+    assert float(long_infusion["lambda_z_n_points"]) == 4.0
+    # a bolus of the same data regresses from the maximum on
+    bolus = nca_single(
+        Timecourse(
+            time=t,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+            substance="drug",
+        ),
+        options=options,
+    )
+    assert float(bolus["lambda_z_t_first"]) == 0.5

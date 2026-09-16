@@ -55,6 +55,17 @@
       "retrieved": "2026-09-16",
       "precision": "the vignette prints the per-subject numbers with 5 to 9 significant digits and the summary with 3",
       "settings": "pk.nca on datasets::Theoph with the PKNCA defaults: auc.method 'lin up/log down', min.hl.points 3, allow.tmax.in.half.life FALSE"
+    },
+    "winnonlin-indometh-linear-infusion": {
+      "tool": "Phoenix WinNonlin 6.3 and 7.0",
+      "author": "Sungpil Han",
+      "title": "Validation of Noncompartmental Analysis Performed by NonCompart R package",
+      "date": "2018-08-07",
+      "url": "https://asancpt.github.io/NonCompart-tests/",
+      "file": "https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Linear_Infusion.csv",
+      "retrieved": "2026-09-16",
+      "precision": "the published numbers carry 8 to 15 significant digits",
+      "settings": "Indometh (n=6), intravenous infusion of 0.25 h, linear trapezoid ('down' of NonCompart), automatic (best fit) slope selection; the report runs tblNCA(Indometh, \"Subject\", \"time\", \"conc\", dose=25, adm=\"Infusion\", dur=0.25, concUnit=\"mg/L\", R2ADJ=0.8)"
     }
   },
   "datasets": {
@@ -101,17 +112,6 @@
         }
       },
       "note": "linear trapezoid",
-      "known_differences": [
-        {
-          "parameter": "tlag",
-          "subjects": [
-            "1",
-            "7",
-            "10"
-          ],
-          "reason": "pkpdutils reports tlag as NaN when the first sample of the curve is already measurable, WinNonlin reports 0; the three subjects carry a measurable concentration at the dose time (0.74, 0.15 and 0.24 mg/L)"
-        }
-      ],
       "references": {
         "1": {
           "cmax": {
@@ -1880,17 +1880,6 @@
         }
       },
       "note": "linear up / log down trapezoid",
-      "known_differences": [
-        {
-          "parameter": "tlag",
-          "subjects": [
-            "1",
-            "7",
-            "10"
-          ],
-          "reason": "pkpdutils reports tlag as NaN when the first sample of the curve is already measurable, WinNonlin reports 0; the three subjects carry a measurable concentration at the dose time (0.74, 0.15 and 0.24 mg/L)"
-        }
-      ],
       "references": {
         "1": {
           "cmax": {
@@ -5569,6 +5558,900 @@
             "value": 16.6015561603423,
             "unit": "liter",
             "source": "winnonlin-indometh-linear-log",
+            "tolerance": 1e-06
+          }
+        }
+      }
+    },
+    "indometh-winnonlin-linear-infusion": {
+      "dataset": "indometh",
+      "route": "iv_infusion",
+      "dose_duration": 0.25,
+      "comparator": "Phoenix WinNonlin",
+      "source": "winnonlin-indometh-linear-infusion",
+      "options": {
+        "auc_method": "linear",
+        "terminal": {
+          "method": "best_fit",
+          "min_points": 3,
+          "exclude_cmax": false
+        }
+      },
+      "note": "linear trapezoid, the dataset analysed as a 0.25 h infusion",
+      "references": {
+        "1": {
+          "cmax": {
+            "value": 1.5,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 1.74125,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 1.74125,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.05706510643443,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.0586347480231,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.153527034922993,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.27125,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 7.79255448051922,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 3.66319049340946,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.158320482400297,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.997066727426208,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.994133454852416,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 3.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 5.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 4.37812701206527,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.06,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.0822826042573771,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 12.1532371152478,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 76.7635174614965,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 44.5196226647266,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          }
+        },
+        "2": {
+          "cmax": {
+            "value": 2.03,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.9325,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.9325,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.19715526913642,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.17980681586146,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0827783597785359,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 6.39875,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 9.39152229661219,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.81246205799662,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.302280019819912,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.947669111562042,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.940193270356619,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.29306317027801,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0812,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.127886210765457,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 7.81945132328614,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 25.8682374307925,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 21.9919101610937,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          }
+        },
+        "3": {
+          "cmax": {
+            "value": 2.72,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.08,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.93375,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.93375,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.12337169699582,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.02849584759299,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0607105767072827,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.00625,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.97267842561125,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.10742031434102,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.421892648718165,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875826051926574,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.860304308417396,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 10.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.5,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.64294680807057,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.1088,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.124934867879833,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 8.00417062882588,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 18.9720552210258,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 16.8681517826394,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          }
+        },
+        "4": {
+          "cmax": {
+            "value": 1.85,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.07,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.4775,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.4775,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.64064120452848,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.55778843379069,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.061780905428841404,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 4.381875,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.06721967358498,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.17263122047032,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.429076150334429,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.867117934744728,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.850507676587819,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 10.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.5,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.61544094217238,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.074,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.105625648181139,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 9.46739752342239,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 22.0646090817291,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 20.5691634359909,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          }
+        },
+        "5": {
+          "cmax": {
+            "value": 2.05,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.06,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 1.95375,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 1.95375,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 2.19114080521489,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 2.14988026656177,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.1083411913328,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 3.7075,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 6.54586634839538,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.86242387199229,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.252747784168332,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.875244222142275,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.85445159249932,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 8.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 1.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 2.74244612209262,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.082,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.0876456322085957,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 11.409581684801,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 45.1421630553332,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 32.6590589840205,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          }
+        },
+        "6": {
+          "cmax": {
+            "value": 2.31,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tmax": {
+            "value": 0.25,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "tlast": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "clast": {
+            "value": 0.09,
+            "unit": "microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_last": {
+            "value": 2.8725,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_all": {
+            "value": 2.8725,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_obs": {
+            "value": 3.12708210924544,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_pred": {
+            "value": 3.0315925122543,
+            "unit": "hour * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_extrap_fraction": {
+            "value": 0.0814120321601879,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_last": {
+            "value": 5.5325,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "aumc_inf": {
+            "value": 8.28929076671746,
+            "unit": "hour ** 2 * microgram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "mrt": {
+            "value": 2.52580687910611,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z": {
+            "value": 0.353520521401733,
+            "unit": "1 / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2": {
+            "value": 0.903953808627429,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_r2_adj": {
+            "value": 0.890232924145633,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_n_points": {
+            "value": 9.0,
+            "unit": "dimensionless",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_first": {
+            "value": 0.75,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "lambda_z_t_last": {
+            "value": 8.0,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "thalf": {
+            "value": 1.9606985693831,
+            "unit": "hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cmax_dn": {
+            "value": 0.0924,
+            "unit": "microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "auc_inf_dn": {
+            "value": 0.125083284369818,
+            "unit": "hour * microgram / milligram / milliliter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "cl": {
+            "value": 7.99467334934562,
+            "unit": "liter / hour",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vz": {
+            "value": 22.61445337783,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
+            "tolerance": 1e-06
+          },
+          "vss": {
+            "value": 20.1930009419835,
+            "unit": "liter",
+            "source": "winnonlin-indometh-linear-infusion",
             "tolerance": 1e-06
           }
         }

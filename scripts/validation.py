@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import xarray as xr
 
 from pkpdutils import (
     AUCMethod,
@@ -99,11 +100,23 @@ def case(case_id: str) -> dict[str, Any]:
     raise KeyError(f"no case '{case_id}' in {REFERENCE_PATH}")
 
 
-def batch_of(dataset_id: str, *, dose: float) -> Timecourses:
+def batch_of(
+    dataset_id: str,
+    *,
+    dose: float,
+    route: str | None = None,
+    duration: float | None = None,
+) -> Timecourses:
+    """The batch of a dataset, optionally analysed under another route.
+
+    A case may override the route of its dataset and give an infusion
+    duration: the indomethacin profiles are published as a bolus and as a
+    0.25 h infusion of the same data.
+    """
     dataset = _document()["datasets"][dataset_id]
     frame = pd.read_csv(DATA_DIR / dataset["file"])
     frame["dose_amount"] = dose
-    return Timecourses.from_dataframe(
+    batch = Timecourses.from_dataframe(
         frame,
         sample=[dataset["subject_column"]],
         time_unit=dataset["time_unit"],
@@ -112,9 +125,15 @@ def batch_of(dataset_id: str, *, dose: float) -> Timecourses:
         value=dataset["value_column"],
         dose_amount="dose_amount",
         dose_unit=dataset["dose_unit"],
-        route=Route(dataset["route"]),
+        route=Route(route or dataset["route"]),
         substance=dataset["substance"],
     )
+    if duration is None:
+        return batch
+    ds = batch.ds.copy()
+    ds["dose_duration"] = xr.full_like(ds["dose_amount"], float(duration))
+    ds["dose_duration"].attrs = {"units": dataset["time_unit"]}
+    return Timecourses(ds)
 
 
 def options_of(spec: dict[str, Any]) -> NCAOptions:
@@ -133,9 +152,13 @@ def options_of(spec: dict[str, Any]) -> NCAOptions:
 def batch_and_options(case_id: str) -> tuple[Timecourses, NCAOptions]:
     entry = case(case_id)
     dataset = _document()["datasets"][entry["dataset"]]
-    return batch_of(entry["dataset"], dose=dataset["dose"]), options_of(
-        entry["options"]
+    batch = batch_of(
+        entry["dataset"],
+        dose=dataset["dose"],
+        route=entry.get("route"),
+        duration=entry.get("dose_duration"),
     )
+    return batch, options_of(entry["options"])
 
 
 @cache

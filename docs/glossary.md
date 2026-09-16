@@ -10,11 +10,12 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_extrap_fraction` | | extrapolated fraction of \(\mathrm{AUC}_{0\text{-}\infty}\) | – | [NCA](nca.md) |
 | `aumc_last`, `aumc_inf` | \(\mathrm{AUMC}\) | area under the first moment curve | value·time² | [NCA](nca.md) |
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | [NCA](nca.md) |
+| `thalf_eff` | \(t_{1/2,\mathrm{eff}}\) | effective half-life, \(\ln 2 \cdot \mathrm{MRT}\) | time | [NCA](nca.md) |
 | `cmax`, `tmax` | \(C_\mathrm{max}\), \(t_\mathrm{max}\) | maximum and its time | value, time | [NCA](nca.md) |
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum and its time | value, time | [NCA](nca.md) |
 | `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | [NCA](nca.md) |
 | `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\) | value | [NCA](nca.md) |
-| `tlag` | \(t_\mathrm{lag}\) | lag of the absorption: the last sample after the dose before the first measurable value (extravascular) | time | [NCA](nca.md) |
+| `tlag` | \(t_\mathrm{lag}\) | lag of the absorption: the last sample after the dose before the first measurable value (extravascular), 0 when the first sample at or after the dose is already measurable | time | [NCA](nca.md) |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 (bolus) | value | [NCA](nca.md) |
 | `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | [NCA](nca.md) |
 | `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes (bolus) | – | [NCA](nca.md) |
@@ -32,9 +33,15 @@ The names used for the variables of the result datasets, with their symbols and 
 | `lloq` | | limit of quantification of a sample, a coordinate of a batch and of its result | value | [NCA](nca.md) |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over a dosing interval | value·time | [NCA](nca.md) |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, trough and average over the interval | value | [NCA](nca.md) |
-| `fluctuation`, `swing` | | peak-trough fluctuation and swing over the interval | – | [NCA](nca.md) |
+| `fluctuation`, `swing` | | peak-trough fluctuation and swing over the interval, read against \(C_\mathrm{min,ss}\) | – | [NCA](nca.md) |
+| `fluctuation_tau`, `swing_tau`, `ptr` | \(\mathrm{PTR}\) | the same two measures read against \(C_\mathrm{trough}\), and the peak-trough ratio \(C_\mathrm{max,ss} / C_\mathrm{trough}\) | – | [NCA](nca.md) |
+| `auc_tau_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\tau}\) extrapolated to complete an interval whose last sample fell short of its end (`NCAOptions.tau_tolerance`), 0 when the data covers the interval | – | [NCA](nca.md) |
 | `accumulation_ratio` | \(R_\mathrm{pred}\) | accumulation at steady state, predicted from \(\lambda_z\) | – | [NCA](nca.md) |
 | `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first dosing interval of a protocol | – | [NCA](nca.md) |
+| `accumulation_ratio_cmax_obs`, `accumulation_ratio_cmin_obs`, `accumulation_ratio_ctrough_obs` | | the same ratio of the peak, the minimum and the trough of the interval | – | [NCA](nca.md) |
+| `stationarity_ratio` | \(\mathrm{SR}\) | \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state over \(\mathrm{AUC}_{0\text{-}\infty}\) of the single dose (`accumulation_ratio`) | – | [NCA](nca.md) |
+| `tss` | \(t_\mathrm{ss}\) | time to steady state from the troughs of the dosing intervals (`time_to_steady_state`) | time | [NCA](nca.md) |
+| `f_abs`, `f_rel` | \(F\) | absolute and relative bioavailability, the dose normalized exposure of a test over a reference treatment (`bioavailability`) | – | [NCA](nca.md) |
 | `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | clearance at steady state (`_f`: extravascular) | l/h | [NCA](nca.md) |
 | `n_doses`, `tau` | \(K\), \(\tau\) | number of doses of the protocol, length of the last dosing interval | –, time | [NCA](nca.md) |
 | `interval_auc`, `interval_cmax`, `interval_tmax`, `interval_cmin`, `interval_ctrough`, `interval_c_start`, `interval_cavg`, `interval_fluctuation`, `interval_swing`, `interval_n_points` | | parameters of every single dosing interval, over the extra dimension `interval` | value·time, value, time, value, value, value, value, –, –, – | [NCA](nca.md) |

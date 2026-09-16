@@ -41,10 +41,11 @@ The report validates the NonCompart R package against Phoenix WinNonlin on these
 | `theoph-winnonlin-linear-log` | [`Final_Parameters_Pivoted_Theoph_Log.csv`](https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Theoph_Log.csv) |
 | `indometh-winnonlin-linear` | [`Final_Parameters_Pivoted_Indometh_Linear.csv`](https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Linear.csv) |
 | `indometh-winnonlin-linear-log` | [`Final_Parameters_Pivoted_Indometh_Log.csv`](https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Log.csv) |
+| `indometh-winnonlin-linear-infusion` | [`Final_Parameters_Pivoted_Indometh_Linear_Infusion.csv`](https://raw.githubusercontent.com/asancpt/NonCompart-tests/master/Final_Parameters_Pivoted_Indometh_Linear_Infusion.csv) |
 
-The report states the settings of every run: `tblNCA(Theoph, "Subject", "Time", "conc", dose=320, concUnit="mg/L")` with `down="Log"` for the mixed rule, and `tblNCA(Indometh, "Subject", "time", "conc", dose=25, adm="Bolus", concUnit="mg/L", R2ADJ=0.8)`, again with `down="Log"` for the mixed rule. The WinNonlin columns are mapped onto the variables of `pkpdutils` one to one; the percentages (`AUC_%Extrap_obs`, `AUC_%Back_Ext_obs`) are stored as the fractions `pkpdutils` reports. The report's files are retrieved on 2026-09-16 and carry 8 to 15 significant digits per number.
+The report states the settings of every run: `tblNCA(Theoph, "Subject", "Time", "conc", dose=320, concUnit="mg/L")` with `down="Log"` for the mixed rule, `tblNCA(Indometh, "Subject", "time", "conc", dose=25, adm="Bolus", concUnit="mg/L", R2ADJ=0.8)`, again with `down="Log"` for the mixed rule, and `tblNCA(Indometh, "Subject", "time", "conc", dose=25, adm="Infusion", dur=0.25, concUnit="mg/L", R2ADJ=0.8)` for the infusion run, which the case `indometh-winnonlin-linear-infusion` reproduces with `Route.IV_INFUSION` and a dose duration of 0.25 h. The WinNonlin columns are mapped onto the variables of `pkpdutils` one to one; the percentages (`AUC_%Extrap_obs`, `AUC_%Back_Ext_obs`) are stored as the fractions `pkpdutils` reports. The report's files are retrieved on 2026-09-16 and carry 8 to 15 significant digits per number.
 
-The report also publishes runs of the indomethacin dataset as an infusion and as an extravascular dose. They are not used, see the "What is not covered" section of `docs/validation.md`.
+The report also publishes a run of the indomethacin dataset as an extravascular dose. It is not used, see the "What is not covered" section of `docs/validation.md`.
 
 ### PKNCA
 

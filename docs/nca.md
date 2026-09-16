@@ -8,15 +8,15 @@ Non-compartmental analysis (NCA) describes a concentration timecourse by paramet
 
 **Peak.** \(C_\mathrm{max}\) and \(t_\mathrm{max}\) are read from the observed points. After an extravascular dose they reflect the balance of absorption and elimination, and the time of the last sample before the first measurable value is the lag of the absorption, \(t_\mathrm{lag}\); after an intravenous bolus the concentration at time zero, \(C_0\), is not observed and is back-extrapolated from the first two points.
 
-**The \(C_0\) of a bolus.** The back extrapolation needs two samples which decline, so `C0Method.LOG_BACK_EXTRAPOLATION` (the default) falls back to the first observed value when the row has fewer than two points, when one of the two values is not positive, when the second value is not below the first or when the second time is not after the first, the fallback chain of Phoenix WinNonlin[^phoenix]. `C0Method.FIRST_VALUE` always takes the first value and `C0Method.NONE` estimates nothing: \(C_0\) is `NaN`, no point is inserted at the dose and the areas start at the first sample. Which rule a sample took is the variable `c0_method` (0 none, 1 back extrapolation, 2 first value) and how much of the exposure the estimate contributes is `auc_back_extrap_fraction`, the area of the segment from the dose to the first sample over \(\mathrm{AUC}_{0\text{-}\infty}\) (`aumc_back_extrap_fraction` for the moment); both are 0 when the first sample is taken at the dose. The inserted point never enters the terminal regression. For an extravascular single dose the value at the dose time is 0 and for a steady state interval the minimum observed value of the interval, neither of them an estimate of \(C_0\).
+**The \(C_0\) of a bolus.** The back extrapolation needs two samples which decline, so `C0Method.LOG_BACK_EXTRAPOLATION` (the default) falls back to the first observed value when the row has fewer than two points, when one of the two values is not positive, when the second value is not below the first or when the second time is not after the first, the fallback chain of Phoenix WinNonlin[^phoenix]. `C0Method.FIRST_VALUE` always takes the first value and `C0Method.NONE` estimates nothing: \(C_0\) is `NaN`, no point is inserted at the dose and the areas start at the first sample. Which rule a sample took is the variable `c0_method` (0 none, 1 back extrapolation, 2 first value) and how much of the exposure the estimate contributes is `auc_back_extrap_fraction`, the area of the segment from the dose to the first sample over \(\mathrm{AUC}_{0\text{-}\infty}\) (`aumc_back_extrap_fraction` for the moment); both are 0 when the first sample is taken at the dose. The inserted point never enters the terminal regression. A single dose infusion which carries no sample at the dose time starts at 0 there instead of at an estimate of \(C_0\): "for extravascular and infusion single dose a concentration of zero is inserted at the dose time"[^phoenix], so the areas of such a curve carry the triangle from the dose to its first sample. **The extravascular half of that rule is deliberately not applied** to the areas of the analysis: an extravascular curve whose first sample is after the dose starts at that sample, which is what `pkpdutils` has always done and what the regression reference of `pkdb_analysis` 0.3.1 holds; only a partial area (`partial_auc`, `NCAOptions.partial_aucs`) inserts the zero for an extravascular dose, because an interval which begins at the dose has to begin somewhere. The asymmetry is written down in [Validation](validation.md). A steady state interval starts at the value the curve has at the dose (the interpolated trough of the interval before it, the back-extrapolated \(C_0\) after a bolus), not at 0.
 
-**Terminal phase.** When absorption and distribution are over, the concentration declines mono-exponentially, \(C(t) = C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}\). The terminal rate constant \(\lambda_z\) is the slope of \(\ln C\) against \(t\) over the terminal points; the half-life is \(t_{1/2} = \ln 2 / \lambda_z\). Which points belong to the terminal phase is a judgement: the default `BEST_FIT` rule takes the window with the largest adjusted \(R^2\) among all windows of at least three points that end at \(t_\mathrm{last}\) and start after \(t_\mathrm{max}\), preferring more points when the adjusted \(R^2\) is equal within a tolerance, as Phoenix does. `LAST_N`, `ALL_AFTER_TMAX` (the rule of pkdb_analysis 0.3.1) and `MANUAL` are the alternatives. `TerminalPhase.exclude_cmax` (default `True`) restricts every window to start after \(t_\mathrm{max}\); with `exclude_cmax=False` the window start is unrestricted and every window of at least `min_points` points ending at \(t_\mathrm{last}\) is a candidate, including windows that begin before or at the maximum, which is how a curve that only rises reports `POSITIVE_SLOPE` instead of `TOO_FEW_POINTS`. How far the window reaches is the quality criterion every regulatory review asks for: the span \(\mathrm{span} = (t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\) (`lambda_z_span`, from `lambda_z_t_first` and `lambda_z_t_last`) counts the half-lives the regression covers, and a span below 2 flags the row `SPAN_LOW`: the half-life of such a curve is extrapolated from less than one doubling of the elimination and carries little information.
+**Terminal phase.** When absorption and distribution are over, the concentration declines mono-exponentially, \(C(t) = C_\mathrm{last}\, e^{-\lambda_z (t - t_\mathrm{last})}\). The terminal rate constant \(\lambda_z\) is the slope of \(\ln C\) against \(t\) over the terminal points; the half-life is \(t_{1/2} = \ln 2 / \lambda_z\). Which points belong to the terminal phase is a judgement: the default `BEST_FIT` rule takes the window with the largest adjusted \(R^2\) among all windows of at least three points that end at \(t_\mathrm{last}\) and start after \(t_\mathrm{max}\), preferring more points when the adjusted \(R^2\) is equal within a tolerance, as Phoenix does. `LAST_N`, `ALL_AFTER_TMAX` (the rule of pkdb_analysis 0.3.1) and `MANUAL` are the alternatives. After an intravenous infusion no sample taken at or before the end of the infusion is a candidate of any window: the concentration still rises while the drug is given, so the first point a window may start at is the first sample strictly after \(t_\mathrm{dose} + T\), which is the rule of Phoenix WinNonlin[^phoenix] and the only place where the route changes the selection. `TerminalPhase.exclude_cmax` (default `True`) restricts every window to start after \(t_\mathrm{max}\); with `exclude_cmax=False` the window start is unrestricted and every window of at least `min_points` points ending at \(t_\mathrm{last}\) is a candidate, including windows that begin before or at the maximum, which is how a curve that only rises reports `POSITIVE_SLOPE` instead of `TOO_FEW_POINTS`. How far the window reaches is the quality criterion every regulatory review asks for: the span \(\mathrm{span} = (t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\) (`lambda_z_span`, from `lambda_z_t_first` and `lambda_z_t_last`) counts the half-lives the regression covers, and a span below 2 flags the row `SPAN_LOW`: the half-life of such a curve is extrapolated from less than one doubling of the elimination and carries little information.
 
 **Clearance and volume.** With the dose \(D\), the clearance \(\mathrm{CL} = D / \mathrm{AUC}_{0\text{-}\infty}\) is the volume of plasma cleared of drug per time and the volume of distribution \(V_z = \mathrm{CL} / \lambda_z\) is the apparent volume the dose would occupy at the plasma concentration. After an extravascular dose the fraction absorbed \(F\) is unknown and both are reported relative to it as \(\mathrm{CL}/F\) (`cl_f`) and \(V_z/F\) (`vz_f`). The mean residence time \(\mathrm{MRT} = \mathrm{AUMC}_{0\text{-}\infty} / \mathrm{AUC}_{0\text{-}\infty}\) is the average time a molecule stays in the body (after an infusion of duration \(T\), minus \(T/2\)); the steady state volume \(V_\mathrm{ss} = \mathrm{CL} \cdot \mathrm{MRT}\) is reported for intravenous doses. A dose of 0, the encoding of a placebo arm, makes none of them a quantity: \(\mathrm{CL}\), \(V_z\), \(V_\mathrm{ss}\), `auc_inf_dn` and `cmax_dn` are `NaN` there, which the analysis reports in a debug log and not with a flag, since a zero dose is a property of the data and not a finding of the analysis.
 
-**Multiple dosing.** A curve accompanied by a dosing protocol of more than one dose, or analysed with `NCAOptions.tau`, is split into its dosing intervals \([t_k, t_{k+1}]\) and the last interval \([t_K, t_K + \tau]\), whose length \(\tau\) comes from the protocol (the distance of the last two doses) or from `tau` when it is given [^rt]. Every interval is described the same way as the classic steady state interval below: the value at its start and at its end are interpolated and inserted, so a sample outside the interval adds no area and does not enter its \(C_\mathrm{max}\) or \(C_\mathrm{min}\); after an intravenous bolus an interval that starts before the first sample of the curve starts at the back-extrapolated \(C_0\). An interval whose end is not covered by the data is incomplete: its parameters, and the steady state parameters when it is the last interval, are `NaN` and the row is flagged `INCOMPLETE_INTERVAL`. A sample recorded exactly at the end of a bolus interval may already be the post-dose value of the next dose; when it lies above the last sample inside the interval, which no decline can do, the trough is instead the log-linear regression of the last (up to three) samples of the interval and the row is flagged `EXTRAPOLATED_TROUGH`.
+**Multiple dosing.** A curve accompanied by a dosing protocol of more than one dose, or analysed with `NCAOptions.tau`, is split into its dosing intervals \([t_k, t_{k+1}]\) and the last interval \([t_K, t_K + \tau]\), whose length \(\tau\) comes from the protocol (the distance of the last two doses) or from `tau` when it is given [^rt]. Every interval is described the same way as the classic steady state interval below: the value at its start and at its end are interpolated and inserted, so a sample outside the interval adds no area and does not enter its \(C_\mathrm{max}\) or \(C_\mathrm{min}\); after an intravenous bolus an interval that starts before the first sample of the curve starts at the back-extrapolated \(C_0\). An interval whose end is not covered by the data is incomplete: its parameters, and the steady state parameters when it is the last interval, are `NaN` and the row is flagged `INCOMPLETE_INTERVAL`. A last interval whose last measurable sample falls short of the end by at most `NCAOptions.tau_tolerance` of \(\tau\) (10 % by default) is not given up: its exposure is completed with the terminal regression and the share which was extrapolated is reported as `auc_tau_extrap_fraction` ("The last sample a little short of \(\tau\)" below). A sample recorded exactly at the end of a bolus interval may already be the post-dose value of the next dose; when it lies above the last sample inside the interval, which no decline can do, the trough is instead the log-linear regression of the last (up to three) samples of the interval and the row is flagged `EXTRAPOLATED_TROUGH`.
 
-**Steady state.** The steady state parameters describe the last complete interval, under the assumption that repeated dosing has reached a state where every interval looks the same: with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation, the swing, the clearance at steady state \(\mathrm{CL}_\mathrm{ss}\), and the accumulation ratio, predicted from the terminal phase or observed as the ratio of the exposure of the last and the first interval of the protocol (`accumulation_ratio_obs`, `NaN` for a single dose protocol or when the first interval is incomplete).
+**Steady state.** The steady state parameters describe the last complete interval, under the assumption that repeated dosing has reached a state where every interval looks the same: with linear kinetics \(\mathrm{AUC}_{0\text{-}\tau}\) at steady state equals the single dose \(\mathrm{AUC}_{0\text{-}\infty}\). The interval is described by the average concentration \(C_\mathrm{avg} = \mathrm{AUC}_{0\text{-}\tau} / \tau\), the trough \(C_\mathrm{trough} = C(\tau)\), the fluctuation, the swing, the clearance at steady state \(\mathrm{CL}_\mathrm{ss}\), and the accumulation ratio, predicted from the terminal phase or observed as the ratio of the exposure of the last and the first interval of the protocol (`accumulation_ratio_obs`, `NaN` for a single dose protocol or when the first interval is incomplete); `accumulation_ratio_cmax_obs`, `accumulation_ratio_cmin_obs` and `accumulation_ratio_ctrough_obs` are the same ratio of the peak, the minimum and the trough. Regulators differ on whether the low point of an interval is its smallest observed value or the value at its end[^phoenix], so the fluctuation and the swing come in both forms: `fluctuation` and `swing` read \(C_\mathrm{min,ss}\), `fluctuation_tau` and `swing_tau` read \(C_\mathrm{trough}\), and `ptr` is the peak-trough ratio \(C_\mathrm{max,ss} / C_\mathrm{trough}\).
 
 **The reference dose.** With more than one dose the point parameters (\(C_\mathrm{max}\), \(t_\mathrm{max}\), \(C_\mathrm{last}\), \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\), the extrapolated areas, the terminal phase, \(\mathrm{MRT}\)) are computed from the last dose on: the values before it are dropped and the times are relative to it, the same analysis a single dose curve given with its last dose only would get. With one dose the reference dose is that dose and the analysis covers the whole curve.
 
@@ -44,7 +44,7 @@ flowchart TD
   LZ --> EXTRAP
   EXTRAP --> DOSEP["cl / cl_f, vz / vz_f, vss<br/>auc_inf_dn, cmax_dn<br/>(single dose analysis only)"]
   MD -->|yes| IV["compute_intervals<br/>interval_auc, interval_cmax,<br/>interval_ctrough per interval<br/>(the raw values, no BLQ rule)"]
-  IV --> SS["compute_steady_state<br/>the last complete interval<br/>auc_tau, cavg, fluctuation, cl_ss,<br/>accumulation_ratio(_obs)"]
+  IV --> SS["compute_steady_state<br/>the last complete interval,<br/>completed within tau_tolerance<br/>auc_tau, cavg, fluctuation(_tau), ptr, cl_ss,<br/>accumulation_ratio(_obs, _cmax_obs, ...)"]
   DOSEP --> OUT["NCAResult<br/>xarray.Dataset + attrs['units'] + flags"]
   PEAK --> OUT
   SS --> OUT
@@ -100,14 +100,36 @@ C_\mathrm{avg} = \frac{\mathrm{AUC}_{0\text{-}\tau}}{\tau}, \quad
 \mathrm{CL}_\mathrm{ss} = \frac{D_K}{\mathrm{AUC}_{0\text{-}\tau}}
 \]
 
-Accumulation ratio, predicted from the terminal phase or observed within one protocol as the ratio of the exposure of the last and the first dosing interval:
+The same three measures read against the trough at the end of the interval instead of the smallest observed value, with the peak-trough ratio:
+
+\[
+\mathrm{fluctuation}_\tau = \frac{C_\mathrm{max,ss} - C_\mathrm{trough}}{C_\mathrm{avg}}, \quad
+\mathrm{swing}_\tau = \frac{C_\mathrm{max,ss} - C_\mathrm{trough}}{C_\mathrm{trough}}, \quad
+\mathrm{PTR} = \frac{C_\mathrm{max,ss}}{C_\mathrm{trough}}
+\]
+
+Effective half-life, the half-life a drug would need to have the mean residence time it has, \(t_{1/2,\mathrm{eff}} = \ln 2 \cdot \mathrm{MRT}\) (PKNCA `pk.calc.thalf.eff`[^pknca]); for a mono-exponential drug it is the terminal half-life, for a multi-exponential one it is the shorter half-life which governs the accumulation.
+
+Accumulation ratio, predicted from the terminal phase or observed within one protocol as the ratio of the last and the first dosing interval, of the exposure and of the peak, the minimum and the trough:
 
 \[
 R_\mathrm{pred} = \frac{1}{1 - e^{-\lambda_z \tau}}, \qquad
-R_\mathrm{obs} = \frac{\mathrm{AUC}_{0\text{-}\tau}\text{ of the last interval}}{\mathrm{AUC}_{0\text{-}\tau}\text{ of the first interval}}
+R_\mathrm{obs} = \frac{\mathrm{AUC}_{0\text{-}\tau}\text{ of the last interval}}{\mathrm{AUC}_{0\text{-}\tau}\text{ of the first interval}}, \qquad
+R_{\mathrm{obs},x} = \frac{x\text{ of the last interval}}{x\text{ of the first interval}}
 \]
 
-`accumulation_ratio` (`pkpdutils.nca.steady_state`) compares two separate results the same way, the steady state and the single dose analysis of the same dosing interval: \(R = \mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss} / \mathrm{AUC}_{0\text{-}\tau}^\mathrm{single}\).
+`accumulation_ratio` (`pkpdutils.nca.steady_state`) compares two separate results the same way, the steady state and the single dose analysis of the same dosing interval, and adds the stationarity ratio against the total exposure of the single dose:
+
+\[
+R = \frac{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss}}{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{single}}, \qquad
+\mathrm{SR} = \frac{\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss}}{\mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}^\mathrm{single}}
+\]
+
+Bioavailability, the dose normalized exposure of a test treatment over that of a reference treatment, absolute (`f_abs`) against an intravenous reference and relative (`f_rel`) against any other:
+
+\[
+F = \frac{\mathrm{AUC}_\mathrm{test} / D_\mathrm{test}}{\mathrm{AUC}_\mathrm{ref} / D_\mathrm{ref}}
+\]
 
 Superposition predicts the multiple dose curve as the sum of the single dose curve shifted to every dose time, scaled by the dose ratio, interpolated inside the observed range and extrapolated with \(\lambda_z\) beyond \(t_\mathrm{last}\); it assumes linear kinetics.
 
@@ -119,7 +141,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum observed value and its time | value, time | |
 | `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | |
 | `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\), which `auc_inf_pred` extrapolates with[^phoenix] | value | \(\lambda_z\) |
-| `tlag` | \(t_\mathrm{lag}\) | time of the last sample after the dose before the first measurable value[^phoenix]; a sample below the limit of quantification is one only under a rule which keeps or imputes it (`BLQRules.ich_m13a()`, `pkanalix()`, `pumas()`), the default drops it and the lag is `NaN` | time | `ORAL` |
+| `tlag` | \(t_\mathrm{lag}\) | time of the last sample after the dose before the first measurable value, 0 when the first sample at or after the dose is already measurable[^phoenix]; a sample below the limit of quantification is one only under a rule which keeps or imputes it (`BLQRules.ich_m13a()`, `pkanalix()`, `pumas()`), the default drops it. `NaN` when no value is measurable | time | `ORAL` |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 | value | `IV_BOLUS` |
 | `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | `IV_BOLUS` |
 | `cmax_half`, `tmax_half` | | value closest to \(C_\mathrm{max}/2\) before the maximum and its time | value, time | `ORAL` |
@@ -130,6 +152,7 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes, 0 with a sample at the dose | – | `IV_BOLUS` |
 | `aumc_last`, `aumc_all`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation[^phoenix] and to infinity | value·time² | \(\lambda_z\) for `_inf` |
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
+| `thalf_eff` | \(t_{1/2,\mathrm{eff}}\) | effective half-life, \(\ln 2 \cdot \mathrm{MRT}\)[^pknca] | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
 | `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_t_first` and `lambda_z_t_last` are the first and the last point of the window; `lambda_z_stderr` is the standard error of the slope) | –, time, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
@@ -142,7 +165,10 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over the last complete dosing interval | value·time | protocol (≥ 2 doses) or `tau` |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, value at the end, average over the last interval | value | protocol (≥ 2 doses) or `tau` |
 | `fluctuation`, `swing`, `accumulation_ratio` | | see Math | – | protocol (≥ 2 doses) or `tau` |
+| `fluctuation_tau`, `swing_tau`, `ptr` | | the fluctuation, the swing and the peak-trough ratio read against \(C_\mathrm{trough}\) instead of \(C_\mathrm{min,ss}\)[^phoenix] | – | protocol (≥ 2 doses) or `tau` |
+| `auc_tau_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\tau}\) which was extrapolated to complete an interval whose last sample fell short of its end, 0 for an interval the data covers[^phoenix] | – | protocol (≥ 2 doses) or `tau` |
 | `accumulation_ratio_obs` | \(R_\mathrm{obs}\) | observed accumulation, last over first interval | – | protocol of ≥ 2 doses, first interval complete |
+| `accumulation_ratio_cmax_obs`, `accumulation_ratio_cmin_obs`, `accumulation_ratio_ctrough_obs` | | the same ratio of the peak, the minimum and the trough of the interval | – | protocol of ≥ 2 doses, first interval complete |
 | `cl_ss`, `cl_ss_f` | \(\mathrm{CL}_\mathrm{ss}\), \(\mathrm{CL}_\mathrm{ss}/F\) | \(D_K / \mathrm{AUC}_{0\text{-}\tau}\) (`_f`: extravascular) | → l/h | protocol (≥ 2 doses) or `tau`, dose |
 | `n_doses`, `tau` | \(K\), \(\tau\) | number of doses of the protocol and the length of the last interval | –, time | protocol (≥ 2 doses) or `tau` |
 | `flags` | | `NCAFlag` bits, see below | – | |
@@ -649,12 +675,122 @@ The intervals no longer change, which is what steady state means, and the predic
 from pkpdutils.nca import accumulation_ratio
 
 first_dose = nca_single(single, options=NCAOptions(auc_method=AUCMethod.LOG, tau=12))
-print(float(accumulation_ratio(result, first_dose)))  # 1.1980336082689775
+ratios = accumulation_ratio(result, first_dose)
+print(float(ratios["accumulation_ratio"]))  # 1.1980336082689775
+print(float(ratios["stationarity_ratio"]))  # 0.99999998477002
 ```
+
+The second variable of that dataset is the stationarity ratio \(\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss} / \mathrm{AUC}_{0\text{-}\infty,\mathrm{obs}}^\mathrm{single}\) (CDISC `SRAUC`), 1 when the clearance did not change over the study.
 
 The per-interval parameters (`interval_*`, `NCAResult.intervals()`), the steady state parameters of the last interval and the point parameters from the last dose on are all part of the one result. A batch is analysed the same way, and `NCAOptions(tau=...)` turns a single dose curve into a multiple dose analysis of one interval; the walk-through of a twice daily study is in [Workflows](workflows.md).
 
-Large batches are analysed in chunks of at most `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and the chunks are mapped in order over the workers of `NCAOptions(n_workers=...)`; both apply to the steady state path as well. The core is vectorized numpy and releases the GIL, so the workers are threads of the calling process (no `if __name__ == "__main__":` guard, no copy of the batch, a pool that starts in half a millisecond and is shared with every later call). The default `n_workers=None` decides by size: the calling thread up to 20 000 rows (`pkpdutils.parallel.NCA_WORKER_THRESHOLD`), where the analysis is faster than the pool, and one thread per usable core, at most 8, above it; `n_workers=1` forces the serial run and `n_workers=n` uses that many threads. The rows are cut into about one chunk per worker, so a large batch keeps every thread busy, and the temporaries of the core live for as many chunks as run at once: a parallel run holds `min(n_workers, n_chunks) * chunk_rows` rows of them, not `chunk_rows`, which is what a large batch pays for its speed. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md)[^fda_poppk]; partial areas come from `partial_auc`, whose interval may start before the first sample of a curve but not before its dose: the value at the dose is then 0 for an extravascular dose, the back-extrapolated \(C_0\) for a bolus and `NaN` for an infusion. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
+### An interval whose last sample falls short of its end
+
+A study rarely samples exactly at the nominal end of the dosing interval, and a sample a few minutes early used to cost every steady state parameter of that profile. `NCAOptions.tau_tolerance` (0.1 of \(\tau\) by default) is how far the last measurable sample may fall short before the interval is given up: within it the exposure is completed with the terminal regression from \(t_\mathrm{last}\) to the end of the interval, the trough is that regression at the end, and `auc_tau_extrap_fraction` reports the share which was extrapolated[^phoenix]. The curve of the snippet above, cut half an hour before the end of its last interval:
+
+```python
+# the same ten doses, but the last sample an hour before the end of the
+# last interval, which is 8.3 % of tau and inside the tolerance
+short = superposition(
+    single, protocol, options=options, grid=np.arange(0.0, 119.1, 0.5)
+)
+completed = nca_single(short, options=options).to_quantities()
+print(f"{completed['auc_tau']:~P}")
+print(f"{completed['auc_tau_extrap_fraction']:~P}")
+print(f"{completed['ctrough']:~P}")
+
+# the same curve with the tolerance switched off
+strict = nca_single(short, options=options.model_copy(update={"tau_tolerance": 0.0}))
+print(float(strict["auc_tau"]), strict.flags())
+```
+
+```text
+53.33333252106773 h⋅mg/l
+0.03204862198179163
+1.584268987991663 mg/l
+nan ['INCOMPLETE_INTERVAL', 'EXTRAPOLATED_TROUGH']
+```
+
+The completed interval carries the exposure of the whole interval, 3.2 % of it extrapolated, and the trough is the terminal regression at \(\tau\); with the tolerance switched off, or with a sample which falls further short, the parameters stay `NaN` and the sample is flagged `INCOMPLETE_INTERVAL` as before.
+
+### Time to steady state
+
+The trough of every dosing interval is in the result, so the time at which the troughs reach their plateau is a curve through them (`pkpdutils.nca.tss`). `time_to_steady_state` estimates it with the two methods of PKNCA[^pknca]: `"monoexponential"` fits \(C_\mathrm{trough}(t) = C_\mathrm{ss}(1 - e^{-k t})\) and reports \(-\ln(1 - f) / k\), the time to the fraction \(f\) of the plateau, and `"stepwise"` regresses the troughs from every interval on and reports the start of the first interval whose trend is no longer significant. ICH M13A asks a study to "document appropriate dosage administration and sampling to demonstrate the attainment of steady-state"[^ich_m13a], and this is that number.
+
+```python
+from pkpdutils.nca import time_to_steady_state
+from pkpdutils.plot import plot_troughs
+
+estimate = time_to_steady_state(result, fraction=0.9)
+print(estimate.method, round(float(estimate.tss), 3), round(float(estimate.c_ss), 3))
+print(round(float(time_to_steady_state(result, method="stepwise").tss), 3))
+
+plot_troughs(result, x="time").savefig("troughs.png", dpi=120)
+```
+
+```text
+monoexponential 15.351 1.584
+0.0
+```
+
+The predicted curve accumulates with the terminal rate constant of the single dose curve, \(\lambda_z = 0.15\,\mathrm{h}^{-1}\), so 90 % of the plateau is reached after \(\ln 10 / \lambda_z = 15.35\) h, in the second dosing interval, and the plateau is the trough the intervals converge to, 1.584 mg/l. The stepwise estimate is 0: the troughs of a noiseless prediction carry no significant linear trend at all, which is the answer "already at steady state in the first interval". On measured data the stepwise estimate is the conservative one, since it only asks that the troughs stop rising. `plot_troughs` draws the troughs against the end of their interval, the figure of `examples/steady_state.py`:
+
+![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
+
+### Bioavailability
+
+The fraction of a dose which reaches the circulation is the dose normalized exposure of a test treatment over that of a reference treatment (`pkpdutils.nca.bioavailability`), absolute against an intravenous reference and relative against any other[^fda_bioavailability]. `bioavailability` is the geometric mean ratio of the two dose normalized samples with its confidence interval, paired by subject in a crossover:
+
+```python
+import numpy as np
+
+from pkpdutils import Route, Timecourses
+from pkpdutils.nca import bioavailability
+
+subjects = ["s1", "s2", "s3", "s4"]
+fractions = np.array([0.42, 0.55, 0.61, 0.70])
+sampling = np.array([0.0, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24])
+ke, ka, volume = 0.25, 1.2, 20.0
+
+
+def crossover(values: np.ndarray, amount: float, route: Route) -> Timecourses:
+    return Timecourses.from_arrays(
+        sampling,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={"individual": subjects},
+        dose={"amount": np.full(len(subjects), amount), "unit": "mg"},
+        route=route,
+        substance="drug",
+    )
+
+
+# 100 mg intravenously, and 200 mg orally of which a fraction is absorbed
+bolus = (100.0 / volume) * np.exp(-ke * sampling)
+absorbed = (
+    (200.0 / volume)
+    * ka
+    / (ka - ke)
+    * (np.exp(-ke * sampling) - np.exp(-ka * sampling))
+)
+reference = nca(
+    crossover(np.tile(bolus, (4, 1)), 100.0, Route.IV_BOLUS), options=options
+)
+test = nca(crossover(fractions[:, None] * absorbed, 200.0, Route.ORAL), options=options)
+
+f = bioavailability(test, reference, dim="individual")
+print(f"{f.name} {f.gmr:.3f} [{f.ci_low:.3f}, {f.ci_high:.3f}] ({f.ci_level:.0%})")
+```
+
+```text
+f_abs 0.557 [0.432, 0.719] (90%)
+```
+
+The four subjects absorb 42 % to 70 % of the oral dose and the estimate is the geometric mean of those fractions with the interval of four subjects around it. The reference is intravenous, so the ratio is the absolute bioavailability `f_abs`; against an extravascular reference the same call reports `f_rel`. `parameter=` selects the exposure to compare (`auc_inf_obs` by default, `auc_last` or `auc_tau` for a study which does not extrapolate), `paired=` overrides the pairing of a parallel design and `reference_route=` names the route of the reference when the result does not say which one it was.
+
+Large batches are analysed in chunks of at most `NCAOptions(chunk_rows=5000)` rows, which bounds the memory of the vectorized core, and the chunks are mapped in order over the workers of `NCAOptions(n_workers=...)`; both apply to the steady state path as well. The core is vectorized numpy and releases the GIL, so the workers are threads of the calling process (no `if __name__ == "__main__":` guard, no copy of the batch, a pool that starts in half a millisecond and is shared with every later call). The default `n_workers=None` decides by size: the calling thread up to 20 000 rows (`pkpdutils.parallel.NCA_WORKER_THRESHOLD`), where the analysis is faster than the pool, and one thread per usable core, at most 8, above it; `n_workers=1` forces the serial run and `n_workers=n` uses that many threads. The rows are cut into about one chunk per worker, so a large batch keeps every thread busy, and the temporaries of the core live for as many chunks as run at once: a parallel run holds `min(n_workers, n_chunks) * chunk_rows` rows of them, not `chunk_rows`, which is what a large batch pays for its speed. Group timecourses with `sd`/`se` get uncertainty variables per parameter, individual results are summarized with `NCAResult.summarize`, see [Uncertainty](uncertainty.md)[^fda_poppk]; partial areas come from `partial_auc`, whose interval may start before the first sample of a curve but not before its dose: the value at the dose is then 0 for an extravascular dose and for an infusion and the back-extrapolated \(C_0\) for a bolus. The figures are described in [Plotting](plotting.md), the examples are `examples/nca_single.py`, `examples/nca_batch.py`, `examples/steady_state.py` and `examples/nca_from_sbmlsim.py`, the reference of the modules is in [API: nca](api/nca.md).
 
 ## References
 
