@@ -271,12 +271,13 @@ print(
 
 ### The parameter table of a publication
 
-`summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, and `layout` transposes the table or unfolds it into one row per parameter, group and statistic.
+`summary_table(result, dim, ...)` (also `NCAResult.summary_table(...)`) turns the individual parameters into the table a paper prints: one row per parameter, the statistics of `summarize` as columns, the unit in its own column and every number formatted with `digits` significant digits as a string, so that the frame goes into the manuscript with `to_csv`, `to_markdown` or `to_latex` without further rounding. `cv` and `geocv` are fractions in the result and percentages in the table; `range` is `min - max` in one cell; a statistic a parameter does not carry (the `sd` of a discrete parameter such as \(t_\mathrm{max}\)) is an empty cell. `by` groups the samples by a coordinate along `dim`, which is how a dose escalation or a treatment arm is reported, `layout` transposes the table or unfolds it into one row per parameter, group and statistic, and `unit_style="short"` writes the units in the short symbols of pint (`mg/l` instead of `milligram / liter`). On the console, `pkpdutils.console.print_table(table, title=...)` renders the frame as a rich table, and `console.print(result)` renders a result itself (`NCAResult.rich_table(parameters=..., transpose=...)`): one row per variable with a column per sample for a handful of samples, one row per sample with the parameters in the header (`cmax [mg/l]`) for many, three significant digits, the flags by name.
 
 With the `result` of the snippet above, whose sample dimensions are `(dose, individual)`, the statistics are taken over the individuals and the dose stays a column of the table:
 
 ```python
 from pkpdutils import summary_table
+from pkpdutils.console import print_table
 
 table = summary_table(
     result,
@@ -284,6 +285,7 @@ table = summary_table(
     parameters=["auc_inf_obs", "cmax", "tmax", "thalf", "cl_f"],
 )
 print(table.to_string(index=False))
+print_table(table, title="Pharmacokinetic parameters")  # the rich rendering
 
 # the "geometric mean [CV %]" convention of the pharmacokinetic literature
 geometric = result.summary_table(

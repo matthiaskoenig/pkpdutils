@@ -11,9 +11,11 @@ import pandas as pd
 import xarray as xr
 from scipy.stats import t as student_t
 
-from pkpdutils.units import Q_, Quantity
+from pkpdutils.units import Q_, Quantity, short_unit
 
 if TYPE_CHECKING:
+    from rich.table import Table
+
     from pkpdutils.stats.sample import ParameterSample
 
 
@@ -304,6 +306,10 @@ class ParameterResult:
     #: their extra dimension (the `interval_*` parameters of a multiple dose
     #: analysis: the mean trough per dosing interval over the subjects)
     summarized_point_variables: ClassVar[frozenset[str]] = frozenset()
+    #: the parameters `rich_table` shows by default with one row per sample,
+    #: in this order, the ones a reader looks for first; a subclass names its
+    #: headline parameters, an empty tuple shows every parameter
+    console_parameters: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a result dataset.
@@ -566,6 +572,97 @@ class ParameterResult:
         sample = self._sample(indexers)
         return self.decode_flags(int(sample["flags"].values))
 
+    def rich_table(
+        self,
+        *,
+        parameters: Sequence[str] | None = None,
+        digits: int = 3,
+        transpose: bool | None = None,
+        title: str | None = None,
+    ) -> "Table":
+        """The result as a rich table for the console, the units in short symbols.
+
+        A result of a few samples is shown with one row per variable (name,
+        unit, one column per sample), which fits a console; a result of many
+        samples with one row per sample and one column per parameter, as
+        `to_dataframe` lays it out. Every number is rounded to `digits`
+        significant digits, the flags are written by name, and the frame of
+        `to_dataframe` itself is unchanged and keeps the full precision.
+
+        Args:
+            parameters: the variables to show, in this order; by default every
+                variable with one row per variable, and the headline parameters
+                of the result type (`console_parameters`, every parameter if it
+                names none) with one row per sample.
+            digits: significant digits of the numbers.
+            transpose: one row per variable (`True`) or one row per sample
+                (`False`); by default one row per variable up to eight samples.
+            title: the title above the table; by default the type of the result,
+                the number of samples and the sample dimensions.
+
+        Returns:
+            The table, built by `pkpdutils.console.rich_table`.
+
+        Raises:
+            ValueError: if a name of `parameters` is not a variable of the result.
+        """
+        # imported here: pkpdutils.console imports the formatting of this module
+        from pkpdutils.console import rich_table
+
+        frame = self.to_dataframe()
+        count = len(frame)
+        if transpose is None:
+            transpose = count <= 8
+        if parameters is None:
+            if transpose:
+                names = list(self._variables)
+            else:
+                headline = [p for p in self.console_parameters if p in frame.columns]
+                names = headline or self.parameters
+        else:
+            names = list(parameters)
+        missing = [name for name in names if name not in frame.columns]
+        if missing:
+            raise ValueError(f"{missing} are no variables of the result")
+        if title is None:
+            samples = "1 sample" if count == 1 else f"{count} samples"
+            dims = (
+                ", ".join(self.sample_dims)
+                if self.sample_dims
+                else "no sample dimension"
+            )
+            title = f"{type(self).__name__}: {samples} ({dims})"
+        if transpose:
+            labels = [
+                "|".join(str(frame.iloc[i][dim]) for dim in self.sample_dims) or "value"
+                for i in range(count)
+            ]
+            rows = {
+                "variable": names,
+                "unit": [short_unit(self.units(name)) for name in names],
+            }
+            for i, label in enumerate(labels):
+                rows[label] = [frame.iloc[i][name] for name in names]
+            rows["variable"].append("flags")
+            rows["unit"].append("")
+            for i, label in enumerate(labels):
+                rows[label].append(frame.iloc[i]["flags"])
+            return rich_table(pd.DataFrame(rows), title=title, digits=digits)
+        headers = {}
+        for name in names:
+            unit = short_unit(self.units(name))
+            headers[name] = f"{name} [{unit}]" if unit else name
+        shown = frame[[*self.sample_dims, *names, "flags"]].rename(columns=headers)
+        return rich_table(shown, title=title, digits=digits)
+
+    def __rich__(self) -> "Table":
+        """The rich console protocol: `console.print(result)` shows `rich_table()`.
+
+        Returns:
+            The table of `rich_table` with its defaults.
+        """
+        return self.rich_table()
+
     def to_dataframe(self) -> pd.DataFrame:
         """One row per sample: the sample coordinates, every scalar variable and the decoded flags.
 
@@ -622,6 +719,7 @@ class ParameterResult:
         stats: Sequence[str] = DEFAULT_STATISTICS,
         digits: int | Mapping[str, int] = 3,
         units: Literal["column", "header"] = "column",
+        unit_style: Literal["long", "short"] = "long",
         layout: Literal[
             "parameters_rows", "parameters_columns", "long"
         ] = "parameters_rows",
@@ -639,6 +737,7 @@ class ParameterResult:
                 whole table or one per parameter.
             units: whether the unit is a column of its own or part of the
                 parameter name.
+            unit_style: the long form of pint or its short symbols.
             layout: parameters as rows, as columns, or one row per parameter,
                 group and statistic.
 
@@ -657,6 +756,7 @@ class ParameterResult:
             stats=stats,
             digits=digits,
             units=units,
+            unit_style=unit_style,
             layout=layout,
         )
 
@@ -934,6 +1034,7 @@ def summary_table(
     stats: Sequence[str] = DEFAULT_STATISTICS,
     digits: int | Mapping[str, int] = 3,
     units: Literal["column", "header"] = "column",
+    unit_style: Literal["long", "short"] = "long",
     layout: Literal[
         "parameters_rows", "parameters_columns", "long"
     ] = "parameters_rows",
@@ -972,6 +1073,10 @@ def summary_table(
         units: `"column"` gives the unit a column of its own (a row in the
             `"parameters_columns"` layout), `"header"` appends it to the
             parameter name (`"cmax [milligram / liter]"`).
+        unit_style: `"long"` writes the unit as the result stores it, the
+            canonical long form of pint (`milligram / liter`); `"short"`
+            writes its short symbols (`mg/l`, `pkpdutils.units.short_unit`),
+            the form a manuscript prints.
         layout: `"parameters_rows"` (one row per parameter and group, one
             column per statistic), `"parameters_columns"` (the transpose: one
             column per parameter, one row per statistic and group) or
@@ -982,8 +1087,8 @@ def summary_table(
 
     Raises:
         ValueError: if `dim` is not a sample dimension, a parameter is not a
-            variable of the result, a statistic is unknown, or `units` or
-            `layout` is not one of the values above.
+            variable of the result, a statistic is unknown, or `units`,
+            `unit_style` or `layout` is not one of the values above.
     """
     if dim not in result.sample_dims:
         raise ValueError(f"'{dim}' is not a sample dimension {result.sample_dims}")
@@ -994,6 +1099,8 @@ def summary_table(
         )
     if units not in ("column", "header"):
         raise ValueError(f"'units' must be 'column' or 'header', got '{units}'")
+    if unit_style not in ("long", "short"):
+        raise ValueError(f"'unit_style' must be 'long' or 'short', got '{unit_style}'")
     if layout not in ("parameters_rows", "parameters_columns", "long"):
         raise ValueError(
             "'layout' must be 'parameters_rows', 'parameters_columns' or 'long', "
@@ -1028,6 +1135,8 @@ def summary_table(
             }
             for name in names:
                 unit = result.units(name)
+                if unit_style == "short":
+                    unit = short_unit(unit)
                 parameter_digits = (
                     digits if isinstance(digits, int) else digits.get(name, 3)
                 )

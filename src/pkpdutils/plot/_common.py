@@ -15,7 +15,7 @@ from matplotlib.ticker import LogFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import Dosing
-from pkpdutils.units import parse_unit
+from pkpdutils.units import short_unit
 
 logger = logging.getLogger(__name__)
 
@@ -480,16 +480,10 @@ def dose_markers(
 def unit_label(unit: str) -> str:
     """A unit as the short symbols a figure carries, `mg/l` for `milligram / liter`.
 
-    The analyses of the package derive their units with pint and report its
-    canonical long form (`milligram / liter`, `hour * milligram / liter`),
-    which is too long for an axis label; the figures of the timecourses label
-    their axes with the short strings of the data (`mg/l`, `hr`). A unit in
-    the long form is therefore written in the short symbols of pint, while a
-    string the user spelled themselves (`hr`, `ng/ml`, anything that is not
-    the canonical long form) is kept as it is, so that a figure carries the
-    unit as the data carries it. A dimensionless quantity has no label at
-    all, and a string which is not a unit of the registry is passed through
-    unchanged.
+    The same rule as `pkpdutils.units.short_unit`, which the tables use: the
+    canonical long form of pint is written in its short symbols, a string the
+    user spelled is kept, a dimensionless quantity has no label at all, and a
+    string which is not a unit of the registry is passed through unchanged.
 
     Args:
         unit: the unit string of a variable.
@@ -497,14 +491,7 @@ def unit_label(unit: str) -> str:
     Returns:
         The label, empty for a dimensionless or empty unit.
     """
-    if not unit.strip() or unit == "dimensionless":
-        return ""
-    try:
-        parsed = parse_unit(unit)
-    except ValueError:
-        logger.debug("'%s' is not a unit of the registry, labelling it as it is", unit)
-        return unit
-    return f"{parsed:~P}" if unit == str(parsed) else unit
+    return short_unit(unit)
 
 
 def axis_label(name: str, unit: str) -> str:

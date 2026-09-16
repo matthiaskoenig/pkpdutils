@@ -78,6 +78,26 @@ class NCAResult(ParameterResult):
     #: that a multiple dose study reports the mean trough per interval over
     #: its subjects
     summarized_point_variables = frozenset(INTERVAL_UNITS)
+    #: the parameters the console table shows with one row per sample: the
+    #: exposure, the peak, the terminal phase, clearance and volume, and the
+    #: steady state parameters when the analysis has them
+    console_parameters = (
+        "cmax",
+        "tmax",
+        "auc_last",
+        "auc_inf_obs",
+        "auc_extrap_fraction",
+        "thalf",
+        "cl",
+        "cl_f",
+        "vz",
+        "vz_f",
+        "mrt",
+        "auc_tau",
+        "cmax_ss",
+        "ctrough",
+        "accumulation_ratio",
+    )
 
     @property
     def has_intervals(self) -> bool:

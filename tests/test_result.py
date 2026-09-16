@@ -443,3 +443,20 @@ def test_summary_table_digits_per_parameter() -> None:
     )
     # the mapping names the parameters which differ, the rest keeps three digits
     assert df.set_index("parameter")["mean"].to_dict() == {"a": "2.33", "k": "3"}
+
+
+def test_summary_table_short_units() -> None:
+    from pkpdutils.result import summary_table
+
+    result = make()
+    result.ds["a"].attrs["units"] = "milligram / liter"
+    long = summary_table(result, "s", parameters=["a"])
+    short = summary_table(result, "s", parameters=["a"], unit_style="short")
+    assert long["unit"].iloc[0] == "milligram / liter"
+    assert short["unit"].iloc[0] == "mg/l"
+    header = summary_table(
+        result, "s", parameters=["a"], units="header", unit_style="short"
+    )
+    assert header["parameter"].iloc[0] == "a [mg/l]"
+    with pytest.raises(ValueError, match="unit_style"):
+        summary_table(result, "s", unit_style="tiny")  # ty: ignore[invalid-argument-type]
