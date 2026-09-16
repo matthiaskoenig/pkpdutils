@@ -51,7 +51,7 @@ import matplotlib
 
 matplotlib.use("Agg", force=True)
 
-blocks = json.loads(open("blocks.json").read())
+blocks = json.loads(open("blocks.json", encoding="utf-8").read())
 namespace = {"__name__": "__main__"}
 for number, code in blocks:
     try:
@@ -71,7 +71,7 @@ def executable_blocks(page: Path) -> list[tuple[int, str]]:
     Returns:
         The number and the source of every fence without the skip marker.
     """
-    blocks = BLOCK.findall(page.read_text())
+    blocks = BLOCK.findall(page.read_text(encoding="utf-8"))
     return [
         (number, code)
         for number, code in enumerate(blocks, start=1)
@@ -96,18 +96,19 @@ def test_pages_are_found() -> None:
 def test_snippets(name: str, tmp_path: Path) -> None:
     """Every snippet of a page runs, in the order and the namespace of the page."""
     blocks = executable_blocks(DOCS_DIR / name)
-    (tmp_path / "blocks.json").write_text(json.dumps(blocks))
-    (tmp_path / "run_page.py").write_text(RUNNER)
+    (tmp_path / "blocks.json").write_text(json.dumps(blocks), encoding="utf-8")
+    (tmp_path / "run_page.py").write_text(RUNNER, encoding="utf-8")
     if DATA_DIR.is_dir():
         for data in DATA_DIR.iterdir():
             shutil.copy(data, tmp_path / data.name)
-    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg")
+    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-W", "error", "run_page.py"],
         cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert result.returncode == 0, f"{name}\n{result.stdout}\n{result.stderr}"
