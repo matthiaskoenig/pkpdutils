@@ -548,6 +548,10 @@ class Timecourse(BaseModel):
         substance: name of the substance or of the effect
         label: label of the curve, e.g. the group or the individual
         tissue: tissue or matrix the values were measured in, e.g. `"plasma"`
+        lloq: lower limit of quantification of the assay behind the values, in
+            their unit; the analysis reads it when `NCAOptions.lloq` names no
+            limit of its own (`pkpdutils.nca`), so that a study with two assays
+            or two analytes carries a limit per curve
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -563,6 +567,7 @@ class Timecourse(BaseModel):
     substance: str = "substance"
     label: str | None = None
     tissue: str | None = None
+    lloq: float | None = Field(default=None, gt=0.0)
 
     def __init__(
         self,
@@ -904,6 +909,10 @@ TIME_DIM = "time"
 #: name of the per sample time variable of a `Timecourses` dataset with ragged grids
 TIMES_VAR = "times"
 
+#: name of the per sample limit of quantification of a `Timecourses` dataset,
+#: a coordinate along the sample dimensions
+LLOQ_VAR = "lloq"
+
 #: name of the dose dimension of the dose variables of a `Timecourses` dataset;
 #: not `"dose"`, which stays free as a sample dimension (a dose group of a dose
 #: proportionality study, the dose axis of a simulation scan)
@@ -999,6 +1008,47 @@ def _numeric_column(
             f"non-numeric value {column.iloc[i]!r}"
         )
     return coerced.astype(np.float64)
+
+
+def _constant_per_sample(
+    values: np.ndarray, *, name: str, codes: np.ndarray, labels: Sequence[Any]
+) -> np.ndarray:
+    """One value per sample out of a column which has to be constant within a sample.
+
+    Args:
+        values: the column of the long frame as floats, one entry per row.
+
+    Keyword Args:
+        name: name of the column, for the message.
+        codes: the sample of every row.
+        labels: the samples, in the order of the batch.
+
+    Returns:
+        The value of every sample, `NaN` for a sample whose rows are all
+        missing.
+
+    Raises:
+        ValueError: if the column holds two different values within a sample,
+            naming the sample.
+    """
+    # one pass over the rows, grouped by sample, rather than one scan of the
+    # column per sample: a study with a few thousand subjects goes through here
+    grouped = pd.Series(np.asarray(values, dtype=np.float64)).groupby(codes, sort=True)
+    varying = grouped.nunique(dropna=True) > 1
+    if bool(varying.any()):
+        index = int(varying.index[int(varying.to_numpy().argmax())])
+        rows = values[codes == index]
+        given = np.unique(rows[np.isfinite(rows)])
+        raise ValueError(
+            f"sample {labels[index]}: the column '{name}' is not constant, "
+            f"found {given.tolist()}"
+        )
+    # `first` skips the missing values, a sample without any value gives `NaN`
+    return (
+        grouped.first()
+        .reindex(range(len(labels)))
+        .to_numpy(dtype=np.float64, na_value=np.nan)
+    )
 
 
 def _frame_doses(
@@ -1636,6 +1686,7 @@ class _SampleArrays:
         dose_amount: the dose amounts, `None` without doses
         dose_time: the dose times, `None` without doses
         dose_duration: the infusion durations, `None` without doses
+        lloq: the limit of quantification per sample, `None` without
         labels: the coordinate values of every sample dimension which has one
         complete: whether a curve of the batch needs nothing derived, i.e.
             whether `Timecourse` would leave `sd`, `se` and `n` as they are
@@ -1657,6 +1708,7 @@ class _SampleArrays:
     dose_amount: np.ndarray | None
     dose_time: np.ndarray | None
     dose_duration: np.ndarray | None
+    lloq: np.ndarray | None
     labels: dict[str, np.ndarray]
     complete: bool
 
@@ -1796,6 +1848,37 @@ class Timecourses:
         """Route of the doses, `None` without dose information."""
         route = self.ds.attrs.get("route")
         return None if route is None else Route(route)
+
+    @property
+    def lloq(self) -> np.ndarray | None:
+        """Limit of quantification per sample of shape `sample_shape`, `None` without.
+
+        The variable or coordinate `lloq` over the sample dimensions: the
+        `lloq` of the curves a batch was built from, or the column the readers
+        of `pkpdutils.io` carry over (ADNCA `ALLOQ`). `NaN` for a sample whose
+        assay names no limit; the analysis reads it when `NCAOptions.lloq`
+        names no limit of its own.
+
+        Raises:
+            ValueError: if `lloq` carries a dimension which is not a sample
+                dimension, e.g. one limit per time point.
+        """
+        if LLOQ_VAR not in self.ds.variables:
+            return None
+        da = self.ds[LLOQ_VAR]
+        sample_dims = self.sample_dims
+        extra = [str(d) for d in da.dims if str(d) not in sample_dims]
+        if extra:
+            raise ValueError(
+                f"'{LLOQ_VAR}' must carry one value per sample, not per time "
+                f"point; it has the dimensions {extra}"
+            )
+        missing = [d for d in sample_dims if d not in da.dims]
+        if missing:
+            da = da.broadcast_like(self.ds["value"].isel({TIME_DIM: 0}, drop=True))
+        return np.asarray(
+            da.transpose(*sample_dims).to_numpy(), dtype=np.float64
+        ).reshape(self.sample_shape)
 
     @property
     def has_uncertainty(self) -> bool:
@@ -2253,13 +2336,22 @@ class Timecourses:
             )
         dose, route = dose_mapping(protocols)
 
+        # the limit of quantification is metadata of a curve and travels as a
+        # coordinate along the sample dimension, as the readers write it
+        limits = np.array(
+            [np.nan if tc.lloq is None else float(tc.lloq) for tc in timecourses]
+        )
+        coords: dict[str, Any] = {dim: list(labels)}
+        if np.isfinite(limits).any():
+            coords[LLOQ_VAR] = (dim, limits)
+
         return cls.from_arrays(
             time,
             values,
             time_unit=first.time_unit,
             unit=first.unit,
             dims=(dim,),
-            coords={dim: list(labels)},
+            coords=coords,
             sd=sd,
             se=se,
             n=n,
@@ -2282,6 +2374,7 @@ class Timecourses:
         sd: str | None = None,
         se: str | None = None,
         n: str | None = None,
+        lloq: str | None = None,
         dose_amount: str | None = None,
         dose_unit: str | None = None,
         dose_time: str | None = None,
@@ -2310,6 +2403,9 @@ class Timecourses:
             n: name of the column with the number of subjects; the batch keeps
                 one number per sample, and the counts per time point when the
                 column varies within a sample
+            lloq: name of the column with the limit of quantification, which
+                has to be constant within a sample; it becomes the coordinate
+                `lloq` along the sample dimension
             dose_amount: name of the dose column (constant per sample without
                 `dose_time`, one value per dose time with it)
             dose_unit: unit of the doses, required with `dose_amount`
@@ -2336,7 +2432,8 @@ class Timecourses:
             ValueError: if `sample` is empty, if the frame holds no sample, if
                 a column holds a value which is neither missing nor a number,
                 if a sample has fewer than two time points, a `NaN` time or
-                duplicate times, or if the doses of a sample are not a valid
+                duplicate times, if the limit of quantification is not constant
+                within a sample, or if the doses of a sample are not a valid
                 protocol; every one of them names the sample.
         """
         sample = list(sample)
@@ -2357,7 +2454,7 @@ class Timecourses:
         columns = {
             name: _numeric_column(df, name, codes=codes, labels=keys).to_numpy()
             for name in dict.fromkeys(
-                name for name in (time, value, sd, se, n) if name is not None
+                name for name in (time, value, sd, se, n, lloq) if name is not None
             )
         }
         times = columns[time]
@@ -2412,17 +2509,24 @@ class Timecourses:
             (counts == counts[0]).all()
             and np.array_equal(grid, np.broadcast_to(grid[0], grid.shape))
         )
+        dim = sample[0] if len(sample) == 1 else "_sample"
+        coordinates: dict[str, Any] = {
+            dim: (list(keys) if len(sample) == 1 else list(range(len(keys))))
+        }
+        if lloq is not None:
+            coordinates[LLOQ_VAR] = (
+                dim,
+                _constant_per_sample(
+                    columns[lloq], name=lloq, codes=codes, labels=keys
+                ),
+            )
         flat = cls.from_arrays(
             grid[0] if shared else grid,
             values,
             time_unit=time_unit,
             unit=unit,
-            dims=(sample[0] if len(sample) == 1 else "_sample",),
-            coords={
-                (sample[0] if len(sample) == 1 else "_sample"): (
-                    list(keys) if len(sample) == 1 else list(range(len(keys)))
-                )
-            },
+            dims=(dim,),
+            coords=coordinates,
             sd=spread["sd"],
             se=spread["se"],
             n=None if subjects is None else _batch_counts(subjects),
@@ -2652,6 +2756,7 @@ class Timecourses:
             dose_amount=aligned("dose_amount"),
             dose_time=aligned("dose_time"),
             dose_duration=aligned("dose_duration"),
+            lloq=self.lloq,
             labels={
                 d: self.ds[d].to_numpy() for d in sample_dims if d in self.ds.coords
             },
@@ -2726,6 +2831,10 @@ class Timecourses:
                 if np.ndim(row) > 0
                 else float(row)
             )
+        if arrays.lloq is not None:
+            limit = float(arrays.lloq[index])
+            if np.isfinite(limit):
+                data["lloq"] = limit
         dosing = self._dosing_at(arrays, index)
         if dosing is not None:
             data["dosing"] = dosing
@@ -3353,17 +3462,25 @@ class Timecourses:
     def to_dataframe(self) -> pd.DataFrame:
         """The batch as a long data frame: the sample coordinates, `time`, `value` and the optional columns.
 
-        One row per sample and time point. The dose variables are not part of
-        the frame: they live over the dose dimension, not over the time
-        dimension, and there is no one dose per row; `to_events` writes the
-        dosing protocol as its own rows.
+        One row per sample and time point. The limit of quantification of a
+        sample, which is one number per sample, is repeated in every row of it
+        (`from_dataframe(lloq="lloq")` reads it back). The dose variables are
+        not part of the frame: they live over the dose dimension, not over the
+        time dimension, and there is no one dose per row; `to_events` writes
+        the dosing protocol as its own rows.
 
         Returns:
             The long data frame.
         """
         names = ["value", *[v for v in ("sd", "se", "n") if v in self.ds]]
         dim_order = [*self.sample_dims, TIME_DIM]
-        sub = self.ds[names]
+        # a coordinate along the sample dimensions is a column of the frame of
+        # `xarray` already, a data variable has to be selected
+        has_lloq = self.lloq is not None
+        in_coords = LLOQ_VAR in self.ds.coords
+        sub = self.ds[[*names, LLOQ_VAR] if has_lloq and not in_coords else names]
+        if has_lloq:
+            names = [*names, LLOQ_VAR]
         if DOSE_DIM in sub.dims and DOSE_DIM not in self.sample_dims:
             sub = sub.drop_dims(DOSE_DIM)
         df = sub.to_dataframe(dim_order=dim_order).reset_index()

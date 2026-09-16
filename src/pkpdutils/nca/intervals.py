@@ -156,7 +156,9 @@ def _back_extrapolate(
     the estimate `pkpdutils.nca.nca.compute_parameters` uses at the dose of a
     single dose curve (Gabrielsson & Weiner 2016, ch. 2.8); with
     `C0Method.FIRST_VALUE`, or when the two samples do not decline, the first
-    sample is used.
+    sample is used; so is it with `C0Method.NONE`, which says that the `C0` of
+    a dose is not estimated, while a dosing interval still needs the value at
+    its start to be an interval at all.
 
     Args:
         tp: packed times `(N, n)`
@@ -185,7 +187,7 @@ def _back_extrapolate(
         )
         usable = (n_after >= 2) & (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)
     first_value = np.where(n_after >= 1, c1, np.nan)
-    if options.c0_method is C0Method.FIRST_VALUE:
+    if options.c0_method is not C0Method.LOG_BACK_EXTRAPOLATION:
         return first_value
     return np.where(usable, back, first_value)
 

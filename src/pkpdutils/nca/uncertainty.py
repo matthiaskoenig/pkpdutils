@@ -57,9 +57,11 @@ logger = logging.getLogger(__name__)
 LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
     {
         "auc_last",
+        "auc_all",
         "auc_inf_obs",
         "auc_inf_pred",
         "aumc_last",
+        "aumc_all",
         "aumc_inf",
         "auc_tau",
         "cmax",
@@ -80,8 +82,15 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "thalf",
         "lambda_z",
         "mrt",
+        "clast_pred",
         "auc_inf_dn",
         "cmax_dn",
+        "auc_last_dn",
+        "auc_all_dn",
+        "auc_tau_dn",
+        "cavg_dn",
+        "cmax_ss_dn",
+        "c0_dn",
         "accumulation_ratio_obs",
         "auec_tau",
         "eavg",
@@ -94,8 +103,11 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "tmax",
         "tmin",
         "tlast",
+        "tlag",
         "tmax_half",
         "temax",
+        # the rule which produced `c0`, an integer code and not a measurement
+        "c0_method",
         "lambda_z_n_points",
         "lambda_z_t_first",
         "lambda_z_t_last",
@@ -131,7 +143,9 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
         "c0",
         "cmax_half",
         "auc_last",
+        "auc_all",
         "aumc_last",
+        "aumc_all",
         "auc_tau",
         "cmin_ss",
         "cmax_ss",
@@ -489,6 +503,8 @@ def bootstrap(
     dose_amount = flatten_rows(timecourses.dose_amount, n_rows)
     dose_time = flatten_rows(timecourses.dose_time, n_rows)
     dose_duration = flatten_rows(timecourses.dose_duration, n_rows)
+    batch_lloq = timecourses.lloq
+    lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
     parts: list[dict[str, np.ndarray]] = []
     counts: list[int] = []
     for start, stop in chunk_bounds(n_rows, n_blocks):
@@ -510,6 +526,7 @@ def bootstrap(
                 dose_duration=repeat_block(dose_duration, start, stop, b),
                 route=timecourses.route,
                 options=options,
+                lloq=None if lloq is None else np.repeat(lloq[start:stop], b),
             )
         )
         counts.append(rows * b)
@@ -610,6 +627,11 @@ def delta(
         dose_duration=repeat_rows(timecourses.dose_duration, n_rows, n_time),
         route=timecourses.route,
         options=options,
+        lloq=(
+            None
+            if timecourses.lloq is None
+            else np.repeat(timecourses.lloq.reshape(n_rows), n_time)
+        ),
     )
     alpha = 1.0 - options.ci_level
     z = float(norm.ppf(1.0 - alpha / 2.0))

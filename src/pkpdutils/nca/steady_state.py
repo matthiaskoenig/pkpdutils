@@ -92,6 +92,7 @@ def compute_steady_state(
     dose_duration: np.ndarray | None,
     route: Route | None,
     options: NCAOptions,
+    lloq: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Point, per-interval and steady state parameters of every row of a batch.
 
@@ -126,6 +127,8 @@ def compute_steady_state(
         route: route of the batch
         options: the options; `tau` gives the length of the last interval when
             the protocol has one dose
+        lloq: limit of quantification per row `(N,)`, `None` for none; it
+            applies to the point parameters, as `NCAOptions.lloq` does
 
     Returns:
         The parameters of `pkpdutils.nca.nca.compute_parameters` plus the
@@ -153,6 +156,7 @@ def compute_steady_state(
         dose_duration=duration,
         route=route,
         options=options,
+        lloq=lloq,
     )
     flags = out.pop("flags")
 

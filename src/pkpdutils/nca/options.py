@@ -2,9 +2,9 @@
 
 `NCAOptions` selects the methods of an analysis: the kind of timecourse, the
 trapezoid rule, the terminal phase selection, the handling of values below the
-limit of quantification and the dosing intervals of a multiple dose analysis.
-`NCAFlag` names the conditions an analysis reports per sample instead of
-raising or warning.
+limit of quantification (`BLQRules`, one rule per position of the curve) and
+the dosing intervals of a multiple dose analysis. `NCAFlag` names the
+conditions an analysis reports per sample instead of raising or warning.
 """
 
 from enum import IntFlag, StrEnum
@@ -57,6 +57,27 @@ class BLQHandling(StrEnum):
     ZERO_BEFORE_TMAX = "zero_before_tmax"
 
 
+class BLQAction(StrEnum):
+    """What happens to a value below the lower limit of quantification.
+
+    The action of a position of the curve (`BLQRules`); a `float` in place of
+    a member imputes that number. `DROP` and `KEEP` leave no imputed value
+    behind, every other action writes one, which enters the areas and, unless
+    `BLQRules.terminal_regression`, stays out of the terminal regression.
+    """
+
+    #: the value is missing, as if it had not been measured
+    DROP = "drop"
+    #: the measured value below the limit is kept as it is
+    KEEP = "keep"
+    #: the value is 0
+    ZERO = "zero"
+    #: the value is the limit of quantification
+    LLOQ = "lloq"
+    #: the value is half the limit of quantification
+    HALF_LLOQ = "half_lloq"
+
+
 class C0Method(StrEnum):
     """Estimate of the concentration at time 0 after an intravenous bolus."""
 
@@ -64,6 +85,17 @@ class C0Method(StrEnum):
     LOG_BACK_EXTRAPOLATION = "log_back_extrapolation"
     #: the first observed value
     FIRST_VALUE = "first_value"
+    #: no estimate: `c0` is `NaN` and the areas start at the first sample
+    NONE = "none"
+
+
+#: `c0_method` of a row whose `C0` was not estimated (`C0Method.NONE`, no
+#: bolus, no data)
+C0_NONE: int = 0
+#: `c0_method` of a row whose `C0` is the log-linear back extrapolation
+C0_BACK_EXTRAPOLATION: int = 1
+#: `c0_method` of a row whose `C0` is the first observed value
+C0_FIRST_VALUE: int = 2
 
 
 class UncertaintyMethod(StrEnum):
@@ -109,7 +141,7 @@ class NCAFlag(IntFlag):
     NO_MAX = 8
     #: the maximum is the first point of an extravascular curve
     NO_ABSORPTION = 16
-    #: values below `lloq` were replaced
+    #: values below `lloq` were dropped or imputed (`BLQRules`)
     BLQ_TRUNCATED = 32
     #: fewer than two valid points; every parameter is NaN
     NO_DATA = 64
@@ -137,6 +169,133 @@ def decode_flags(value: int) -> list[str]:
         The names of the set flags, in the declaration order of `NCAFlag`.
     """
     return decode_flag_names(NCAFlag, value)
+
+
+class BLQRules(BaseModel):
+    r"""Rules for the values below the lower limit of quantification, by position.
+
+    The tools slice a profile on two incompatible axes and a rule set is
+    expressed on one of them, never on both (the model raises for a mixture):
+
+    - the **positional** axis `first`, `middle`, `last`: the values before the
+      first measurable value, between two measurable values and after the last
+      measurable value (PKNCA `conc.blq` with `"first"`/`"middle"`/`"last"`,
+      Pumas `Dict(:first => :keep, :middle => :drop, :last => :keep)`);
+    - the **tmax** axis `before_tmax`, `after_tmax`, split at the maximum of
+      the measurable values (PKNCA `"before.tmax"`/`"after.tmax"`, PKanalix,
+      which imputes 0 before and `LLOQ/2` after the maximum).
+
+    A rule is a `BLQAction` or a number, which is imputed as it is; a position
+    without a rule drops its values. A row whose values are all below the limit
+    has no measurable value: every value of it counts as `first` on the
+    positional axis and as `after_tmax` on the tmax axis.
+
+    An imputed value enters the areas (`auc_all` reports what the imputation
+    added to the tail) and stays out of the terminal regression unless
+    `terminal_regression` is set; a value which `BLQAction.KEEP` keeps is
+    treated the same way, since a value below the limit of quantification is
+    not a quantified value. ICH M13A (2024) asks for exactly that: values below
+    the limit are "treated as zero in PK parameter calculations" and "omitted
+    from the calculation of kel and t1/2" (`BLQRules.ich_m13a`).
+
+    Attributes:
+        first: rule for the values before the first measurable value
+        middle: rule for the values between two measurable values
+        last: rule for the values after the last measurable value
+        before_tmax: rule for the values before the maximum
+        after_tmax: rule for the values at or after the maximum
+        terminal_regression: whether an imputed or kept value below the limit
+            may enter the terminal regression
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    first: BLQAction | float | None = None
+    middle: BLQAction | float | None = None
+    last: BLQAction | float | None = None
+    before_tmax: BLQAction | float | None = None
+    after_tmax: BLQAction | float | None = None
+    terminal_regression: bool = False
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        """Check that only one of the two axes carries rules.
+
+        Returns:
+            This instance, unchanged.
+
+        Raises:
+            ValueError: if a positional rule and a tmax rule are both given.
+        """
+        positional = [
+            name
+            for name in ("first", "middle", "last")
+            if getattr(self, name) is not None
+        ]
+        by_tmax = [
+            name
+            for name in ("before_tmax", "after_tmax")
+            if getattr(self, name) is not None
+        ]
+        if positional and by_tmax:
+            raise ValueError(
+                f"the positional rules {positional} and the tmax rules {by_tmax} "
+                "are two axes of the same values, give one of them"
+            )
+        return self
+
+    @property
+    def by_tmax(self) -> bool:
+        """Whether the rules split the curve at the maximum instead of by position."""
+        return self.before_tmax is not None or self.after_tmax is not None
+
+    @classmethod
+    def from_handling(cls, handling: BLQHandling) -> "BLQRules":
+        """The rules of one of the two classic `BLQHandling` values.
+
+        Args:
+            handling: `BLQHandling.NAN` or `BLQHandling.ZERO_BEFORE_TMAX`.
+
+        Returns:
+            `first=middle=last=DROP` for `NAN` and `before_tmax=ZERO`,
+            `after_tmax=DROP` for `ZERO_BEFORE_TMAX`.
+        """
+        if handling is BLQHandling.ZERO_BEFORE_TMAX:
+            return cls(before_tmax=BLQAction.ZERO, after_tmax=BLQAction.DROP)
+        return cls(first=BLQAction.DROP, middle=BLQAction.DROP, last=BLQAction.DROP)
+
+    @classmethod
+    def ich_m13a(cls) -> "BLQRules":
+        """The rule set of ICH M13A (2024): zero at both ends, dropped in between.
+
+        Returns:
+            `first=ZERO`, `middle=DROP`, `last=ZERO`, the imputed values out of
+            the terminal regression.
+        """
+        return cls(
+            first=BLQAction.ZERO,
+            middle=BLQAction.DROP,
+            last=BLQAction.ZERO,
+            terminal_regression=False,
+        )
+
+    @classmethod
+    def pkanalix(cls) -> "BLQRules":
+        """The default rule set of PKanalix: 0 before the maximum, `LLOQ/2` after it.
+
+        Returns:
+            `before_tmax=ZERO`, `after_tmax=HALF_LLOQ`.
+        """
+        return cls(before_tmax=BLQAction.ZERO, after_tmax=BLQAction.HALF_LLOQ)
+
+    @classmethod
+    def pumas(cls) -> "BLQRules":
+        """The default rule set of Pumas: the ends kept, the middle dropped.
+
+        Returns:
+            `first=KEEP`, `middle=DROP`, `last=KEEP`.
+        """
+        return cls(first=BLQAction.KEEP, middle=BLQAction.DROP, last=BLQAction.KEEP)
 
 
 class TerminalPhase(BaseModel):
@@ -199,8 +358,11 @@ class NCAOptions(BaseModel):
         kind: concentration or effect timecourses
         auc_method: trapezoid rule of the areas
         terminal: selection of the terminal phase
-        lloq: lower limit of quantification in the unit of the values, `None` for none
-        blq: handling of values below `lloq`
+        lloq: lower limit of quantification in the unit of the values, `None`
+            to take the per-sample `lloq` of the batch (the coordinate the
+            readers of `pkpdutils.io` write), and no limit without one
+        blq: handling of values below `lloq`, one of the two classic
+            `BLQHandling` values or a `BLQRules` rule set by position
         c0_method: estimate of C(0) after an intravenous bolus
         extrapolation_warning: fraction of AUC(0-inf) above which `EXTRAPOLATION_HIGH` is set
         tau: length of the last dosing interval, `None` to take it from the
@@ -241,7 +403,7 @@ class NCAOptions(BaseModel):
     auc_method: AUCMethod = AUCMethod.LINEAR_LOG
     terminal: TerminalPhase = TerminalPhase()
     lloq: float | None = Field(default=None, gt=0.0)
-    blq: BLQHandling = BLQHandling.NAN
+    blq: BLQHandling | BLQRules = BLQHandling.NAN
     c0_method: C0Method = C0Method.LOG_BACK_EXTRAPOLATION
     extrapolation_warning: float = Field(default=0.2, gt=0.0, lt=1.0)
     tau: float | None = Field(default=None, gt=0.0)
@@ -256,6 +418,18 @@ class NCAOptions(BaseModel):
     bootstrap_spread: BootstrapSpread = BootstrapSpread.SE
     bootstrap_distribution: BootstrapDistribution = BootstrapDistribution.NORMAL
     delta_step: float = Field(default=0.01, gt=0.0, lt=1.0)
+
+    @property
+    def blq_rules(self) -> BLQRules:
+        """The rule set of `blq`, the two classic `BLQHandling` values included.
+
+        Returns:
+            `blq` itself when it is a `BLQRules`, else the rules of
+            `BLQRules.from_handling`.
+        """
+        if isinstance(self.blq, BLQRules):
+            return self.blq
+        return BLQRules.from_handling(self.blq)
 
     def resolve_uncertainty(self, has_uncertainty: bool) -> UncertaintyMethod:
         """The uncertainty method of an analysis.

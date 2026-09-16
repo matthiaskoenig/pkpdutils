@@ -109,6 +109,7 @@ def terminal_fit(
     tmax_idx: np.ndarray,
     phase: TerminalPhase,
     manual_mask: np.ndarray | None = None,
+    exclude: np.ndarray | None = None,
 ) -> TerminalFit:
     """Terminal log-linear regression of every row.
 
@@ -119,6 +120,9 @@ def terminal_fit(
         tmax_idx: packed index of the maximum per row
         phase: the selection rule and its parameters
         manual_mask: packed points of the regression for `TerminalMethod.MANUAL`
+        exclude: packed points which may not enter the regression `(N, n)`,
+            the values below the limit of quantification a BLQ rule kept or
+            imputed (`pkpdutils.nca.options.BLQRules`)
 
     Returns:
         The fit per row.
@@ -132,6 +136,8 @@ def terminal_fit(
     with np.errstate(divide="ignore", invalid="ignore"):
         y = np.where(in_row & (cp > 0), np.log(cp), np.nan)
     regressable = in_row & np.isfinite(y)
+    if exclude is not None:
+        regressable = regressable & ~exclude
     flags = np.zeros(n_rows, dtype=np.int64)
 
     if phase.method is TerminalMethod.MANUAL:

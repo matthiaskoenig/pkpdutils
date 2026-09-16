@@ -4,15 +4,20 @@ The names used for the variables of the result datasets, with their symbols and 
 
 | name | symbol | meaning | unit | page |
 | --- | --- | --- | --- | --- |
-| `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area under the curve to the last positive value | value·time | [NCA](nca.md) |
+| `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area under the curve to the last measurable value | value·time | [NCA](nca.md) |
+| `auc_all`, `aumc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area (and moment) to the last observation, the trailing zeros and the values a BLQ rule imputed included | value·time, value·time² | [NCA](nca.md) |
 | `auc_inf_obs`, `auc_inf_pred` | \(\mathrm{AUC}_{0\text{-}\infty}\) | area extrapolated to infinity, observed or predicted last value | value·time | [NCA](nca.md) |
 | `auc_extrap_fraction` | | extrapolated fraction of \(\mathrm{AUC}_{0\text{-}\infty}\) | – | [NCA](nca.md) |
 | `aumc_last`, `aumc_inf` | \(\mathrm{AUMC}\) | area under the first moment curve | value·time² | [NCA](nca.md) |
 | `mrt` | \(\mathrm{MRT}\) | mean residence time | time | [NCA](nca.md) |
 | `cmax`, `tmax` | \(C_\mathrm{max}\), \(t_\mathrm{max}\) | maximum and its time | value, time | [NCA](nca.md) |
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum and its time | value, time | [NCA](nca.md) |
-| `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last positive value and its time | value, time | [NCA](nca.md) |
+| `clast`, `tlast` | \(C_\mathrm{last}\), \(t_\mathrm{last}\) | last measurable (positive) value and its time | value, time | [NCA](nca.md) |
+| `clast_pred` | \(\hat C_\mathrm{last}\) | the terminal regression at \(t_\mathrm{last}\), \(e^{b - \lambda_z t_\mathrm{last}}\) | value | [NCA](nca.md) |
+| `tlag` | \(t_\mathrm{lag}\) | lag of the absorption: the last sample after the dose before the first measurable value (extravascular) | time | [NCA](nca.md) |
 | `c0` | \(C_0\) | back-extrapolated value at time 0 (bolus) | value | [NCA](nca.md) |
+| `c0_method` | | rule which produced \(C_0\): 0 none, 1 back extrapolation, 2 first value | – | [NCA](nca.md) |
+| `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes (bolus) | – | [NCA](nca.md) |
 | `cmax_half`, `tmax_half` | | half maximum during absorption | value, time | [NCA](nca.md) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | [NCA](nca.md) |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
@@ -22,6 +27,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
 | `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and maximum | value·time/dose, value/dose | [NCA](nca.md) |
+| `x_dn` | | any parameter `x` per dose, from `NCAResult.dose_normalized` (`auc_last_dn`, `auc_all_dn`, `auc_tau_dn`, `cavg_dn`, `cmax_ss_dn`, `c0_dn`, ...) | unit of `x`/dose | [NCA](nca.md) |
+| `dose_amount` | \(D\) | dose amount of a sample, the coordinate of a result the dose normalized variables divide by | dose | [NCA](nca.md) |
+| `lloq` | | limit of quantification of a sample, a coordinate of a batch and of its result | value | [NCA](nca.md) |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over a dosing interval | value·time | [NCA](nca.md) |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, trough and average over the interval | value | [NCA](nca.md) |
 | `fluctuation`, `swing` | | peak-trough fluctuation and swing over the interval | – | [NCA](nca.md) |

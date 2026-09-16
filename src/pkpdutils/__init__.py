@@ -55,7 +55,9 @@ from pkpdutils.fit.models import (
 from pkpdutils.fit.proportionality import ProportionalityResult
 from pkpdutils.nca import (
     AUCMethod,
+    BLQAction,
     BLQHandling,
+    BLQRules,
     BootstrapDistribution,
     BootstrapSpread,
     C0Method,
@@ -99,7 +101,9 @@ __all__ = [
     "Q_",
     "AUCMethod",
     "Allometric",
+    "BLQAction",
     "BLQHandling",
+    "BLQRules",
     "Bateman",
     "BiExp",
     "BootstrapDistribution",

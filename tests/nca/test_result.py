@@ -148,3 +148,89 @@ def test_parameter_unit_is_cached() -> None:
     second = parameter_unit(*args, **kwargs)
     assert second is first
     assert parameter_unit.cache_info().hits == hits + 1
+
+
+def test_dose_normalized_default_parameters() -> None:
+    from pkpdutils import Dose, NCAOptions, Route, Timecourse, nca_single
+
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    tc = Timecourse(
+        time=t,
+        value=10.0 * np.exp(-0.5 * t),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=50, unit="mg", route=Route.IV_BOLUS),
+        substance="drug",
+    )
+    result = nca_single(tc, options=NCAOptions())
+    dose = result.dose
+    assert dose is not None and float(dose) == 50.0
+    normalized = result.dose_normalized()
+    # every concentration and exposure parameter, and nothing else
+    assert "auc_last_dn" in normalized
+    assert "cmax_dn" in normalized
+    assert "c0_dn" in normalized
+    assert "auc_inf_dn" in normalized
+    assert "auc_inf_obs_dn" not in normalized  # the legacy name is kept
+    assert "aumc_last_dn" not in normalized  # a moment is no exposure
+    assert "thalf_dn" not in normalized
+    assert float(normalized["auc_last_dn"]) == pytest.approx(
+        float(result["auc_last"]) / 50.0
+    )
+    # pint simplifies mg/l per mg, as it does for the `auc_inf_dn` of the analysis
+    assert normalized["auc_last_dn"].attrs["units"] == "hour / liter"
+    assert (
+        normalized["auc_inf_dn"].attrs["units"] == result["auc_inf_dn"].attrs["units"]
+    )
+    assert normalized["cmax_dn"].attrs["units"] == "1 / liter"
+    # the general rule reproduces the `auc_inf_dn` of the analysis
+    assert float(normalized["auc_inf_dn"]) == pytest.approx(float(result["auc_inf_dn"]))
+
+
+def test_dose_normalized_selected_parameters_and_errors() -> None:
+    from pkpdutils import Dose, Route, Timecourse, Timecourses, nca
+
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    curves = [
+        Timecourse(
+            time=t,
+            value=amount / 10.0 * np.exp(-0.5 * t),
+            time_unit="hr",
+            unit="mg/l",
+            dose=Dose(amount=amount, unit="mg", route=Route.ORAL),
+            label=str(amount),
+        )
+        for amount in (50.0, 100.0)
+    ]
+    result = nca(Timecourses.from_timecourses(curves, dim="individual"))
+    normalized = result.dose_normalized(["cmax"])
+    assert "auc_last_dn" not in normalized
+    assert normalized["cmax_dn"].to_numpy().tolist() == pytest.approx(
+        (result["cmax"].to_numpy() / np.array([50.0, 100.0])).tolist()
+    )
+    with pytest.raises(ValueError, match="no parameters"):
+        result.dose_normalized(["nonsense"])
+
+
+def test_dose_normalized_without_a_dose() -> None:
+    from pkpdutils import Timecourse, nca_single
+
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    tc = Timecourse(time=t, value=10.0 * np.exp(-0.5 * t), time_unit="hr", unit="mg/l")
+    with pytest.raises(ValueError, match="carries no dose"):
+        nca_single(tc).dose_normalized()
+
+
+def test_dose_normalized_of_a_placebo_arm() -> None:
+    from pkpdutils import Dose, Route, Timecourse, nca_single
+
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    tc = Timecourse(
+        time=t,
+        value=10.0 * np.exp(-0.5 * t),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=0.0, unit="mg", route=Route.ORAL),
+    )
+    normalized = nca_single(tc).dose_normalized(["cmax"])
+    assert np.isnan(float(normalized["cmax_dn"]))

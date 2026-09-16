@@ -176,7 +176,7 @@ The two tables are the fixtures `tests/data/formats/pknca_conc.csv` and `pknca_d
 | `route_col` | `ROUTE` | route | `ORAL`/`PO`, `IV`/`INTRAVENOUS`/`IV BOLUS`, `IV INFUSION`; the caller's `route=` wins |
 | none | none | infusion duration | not in the dataset: an infusion protocol cannot be read and `Route.IV_INFUSION` raises, such a study is read from the event records or the PKNCA tables |
 | `dtype_col` | `DTYPE` | derivation type | `COPY` rows (the predose record duplicated into the previous interval) are dropped |
-| `lloq_col` | `ALLOQ` | lower limit of quantification | kept as the coordinate `lloq` along the sample dimension, informational: the analysis reads the scalar `NCAOptions.lloq` and never this coordinate |
+| `lloq_col` | `ALLOQ` | lower limit of quantification | kept as the coordinate `lloq` along the sample dimension; the analysis reads it per subject when `NCAOptions.lloq` names no limit of its own, see [NCA](nca.md) |
 | `covariates` | none | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
@@ -216,7 +216,7 @@ The dose times were recovered from `AFRLT - ARRLT`: the first subject was dosed 
 
 ## What is not read
 
-Only the event format round trips: `write_events`/`Timecourses.to_events` writes it back, and there is no `write_pknca` and no `write_adnca`, so a batch read from the two PKNCA tables or from an ADNCA dataset is written as event records (or as the long frame of `to_dataframe`). An `lloq` coordinate read from a table is informational as well: the analysis reads the scalar `NCAOptions.lloq` and never the coordinate.
+Only the event format round trips: `write_events`/`Timecourses.to_events` writes it back, and there is no `write_pknca` and no `write_adnca`, so a batch read from the two PKNCA tables or from an ADNCA dataset is written as event records (or as the long frame of `to_dataframe`). An `lloq` coordinate read from a table travels with the batch and is read by the analysis when the options name no limit, but it is not written back by `write_events`.
 
 Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments or several routes is filtered by the caller before reading, since a batch has one route. A record which resets the subject and doses (`EVID 4`) and a steady state code other than `SS 0`/`SS 1` describe a dosing history the protocol of a subject cannot hold, and raise rather than being read as an ordinary dose; the caller splits the periods into separate tables. Infusion protocols are read from the event records (`TINF`/`RATE`) and from the PKNCA dose table (`duration_col`), not from an ADNCA dataset, which carries no duration. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`/duration column) or as a positive rate. The PP/ADPP parameter output domains, bioequivalence period and sequence (given as coordinates by the caller), and reading SAS/XPT files directly (the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`) are out of scope of the readers.
 
