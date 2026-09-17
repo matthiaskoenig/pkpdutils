@@ -1,12 +1,21 @@
 """Tests of the shared worker pools (`pkpdutils.parallel`)."""
 
+import multiprocessing
 import os
+import sys
+import warnings
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
 import pytest
 
-from pkpdutils.parallel import evict, executor, resolve_workers, split_rows
+from pkpdutils.parallel import (
+    PROCESS_START_METHOD,
+    evict,
+    executor,
+    resolve_workers,
+    split_rows,
+)
 
 
 def die_on_zero(value: int) -> int:
@@ -14,6 +23,44 @@ def die_on_zero(value: int) -> int:
     if value == 0:
         os._exit(1)
     return value
+
+
+def default_start_method_of_python_314() -> str:
+    """The start method python 3.14 defaults to on this platform, never `fork`."""
+    if sys.platform == "darwin":
+        return "spawn"
+    if "forkserver" in multiprocessing.get_all_start_methods():
+        return "forkserver"
+    return "spawn"
+
+
+def test_the_process_pool_never_forks() -> None:
+    # python 3.13 forks on Linux by default, which copies a parent whose NCA
+    # threads may hold a lock into a child that then blocks forever; the pool
+    # starts its workers the way python 3.14 does on every version
+    expected = default_start_method_of_python_314()
+    assert expected == PROCESS_START_METHOD
+    evict("process", 3)
+    pool = executor("process", 3)
+    assert isinstance(pool, ProcessPoolExecutor)
+    context = pool._mp_context
+    assert context is not None and context.get_start_method() == expected
+    assert list(pool.map(abs, [-1, 2, -3])) == [1, 2, 3]
+    evict("process", 3)
+
+
+def test_a_process_pool_next_to_the_threads_does_not_warn() -> None:
+    # python 3.13 warns when it forks a multi-threaded process:
+    # "This process is multi-threaded, use of fork() may lead to deadlocks"
+    threads = executor("thread", 2)
+    assert list(threads.map(abs, [-1, -2])) == [1, 2]
+    evict("process", 3)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        pool = executor("process", 3)
+        assert list(pool.map(abs, [-1, 2, -3])) == [1, 2, 3]
+    assert [str(w.message) for w in caught if "fork" in str(w.message)] == []
+    evict("process", 3)
 
 
 def test_executor_is_shared_per_kind_and_size() -> None:
