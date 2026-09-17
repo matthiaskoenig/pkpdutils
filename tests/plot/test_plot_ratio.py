@@ -51,9 +51,18 @@ def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     matplotlib.pyplot.close("all")
 
 
-def test_plot_ratio_raises_for_an_empty_mapping() -> None:
-    with pytest.raises(ValueError):
-        plot_ratio({})
+def test_plot_ratio_raises_without_a_ratio() -> None:
+    # without a row the figure was an empty log axis with an inverted y range
+    # of 0.2 and the title "geometric mean ratios with  % intervals"; the
+    # empty input raises before a figure is created
+    figures = matplotlib.pyplot.get_fignums()
+    empty = BEResult(
+        parameters={}, bioequivalent=False, limits=(0.8, 1.25), ci_level=0.90
+    )
+    for ratios in ({}, empty):
+        with pytest.raises(ValueError, match="at least one ratio"):
+            plot_ratio(ratios)
+    assert matplotlib.pyplot.get_fignums() == figures
 
 
 def test_plot_ratio_annotates_the_estimates_and_renames_the_rows() -> None:
