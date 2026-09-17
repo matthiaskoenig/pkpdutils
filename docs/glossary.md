@@ -22,7 +22,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `cmax_half`, `tmax_half` | | half maximum during absorption | value, time | [NCA](nca.md) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | [NCA](nca.md) |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
-| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_t_first`, `lambda_z_t_last`: first and last point of the terminal window; `lambda_z_stderr`: standard error of the slope of the terminal regression) | | [NCA](nca.md) |
+| `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_t_first`, `lambda_z_t_last`: first and last point of the terminal window; `lambda_z_stderr`: standard error of the slope of the terminal regression) | –, time, time, –, –, –, 1/time | [NCA](nca.md) |
 | `lambda_z_span` | | half-lives the terminal phase covers, \((t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\); below 2 the sample is flagged `SPAN_LOW` | – | [NCA](nca.md) |
 | `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed | l/h | [NCA](nca.md) |
 | `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
@@ -57,32 +57,32 @@ The names used for the variables of the result datasets, with their symbols and 
 | `x_sd`, `x_se` | | standard deviation over subjects and standard error of the mean of a parameter `x` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_ci_low`, `x_ci_high` | | confidence interval of the estimate of a parameter `x` at `ci_level` | unit of `x` | [Uncertainty](uncertainty.md) |
 | `x_pi_low`, `x_pi_high` | | percentile interval of individual curves of a parameter `x`, `BootstrapSpread.SD` draws only | unit of `x` | [Uncertainty](uncertainty.md) |
-| `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation over subjects of a parameter `x` (log-normal parameters) | unit of `x`, - | [Uncertainty](uncertainty.md) |
-| `x_median`, `x_q25`, `x_q75`, `x_min`, `x_max`, `x_n` | | median, quartiles, smallest and largest value and count of finite values of a parameter `x` (summary only) | unit of `x`, - | [Uncertainty](uncertainty.md) |
-| `x_cv` | \(\mathrm{CV}\) | coefficient of variation of a parameter `x` over the samples, \(\mathrm{sd}/\lvert \bar x \rvert\), a fraction (summary only) | 1 | [Uncertainty](uncertainty.md) |
+| `x_geomean`, `x_geocv` | | geometric mean and geometric coefficient of variation over subjects of a parameter `x` (log-normal parameters) | unit of `x`, – | [Uncertainty](uncertainty.md) |
+| `x_median`, `x_q25`, `x_q75`, `x_min`, `x_max`, `x_n` | | median, quartiles, smallest and largest value and count of finite values of a parameter `x` (summary only) | unit of `x`, unit of `x`, unit of `x`, unit of `x`, unit of `x`, – | [Uncertainty](uncertainty.md) |
+| `x_cv` | \(\mathrm{CV}\) | coefficient of variation of a parameter `x` over the samples, \(\mathrm{sd}/\lvert \bar x \rvert\), a fraction (summary only) | – | [Uncertainty](uncertainty.md) |
 | `n` | | number of subjects (group data) or of samples along the reduced dimension (summary) | – | [Uncertainty](uncertainty.md) |
 | `auc_partial` | \(\mathrm{AUC}_{t_1\text{-}t_2}\) | area under the curve between two times, from `partial_auc` | value·time | [Uncertainty](uncertainty.md) |
 | `p_se` | | standard error of a fitted parameter `p`, from the Jacobian or the residual bootstrap | unit of `p` | [Curve fitting](fitting.md) |
 | `p_ci_low`, `p_ci_high` | | confidence interval of a fitted parameter `p` at `ci_level` | unit of `p` | [Curve fitting](fitting.md) |
-| `p_cv` | | relative standard error of a fitted parameter, \(\mathrm{se}(p) / \lvert p \rvert\), a fraction | 1 | [Curve fitting](fitting.md) |
+| `p_cv` | | relative standard error of a fitted parameter, \(\mathrm{se}(p) / \lvert p \rvert\), a fraction | – | [Curve fitting](fitting.md) |
 | `cost` | | the objective of the fit at the optimum, \(\tfrac12 \sum \rho(r^2)\) | – | [Curve fitting](fitting.md) |
 | `r2`, `rmse` | \(R^2\), \(\mathrm{RMSE}\) | goodness of fit on the unweighted residuals (`rmse` carries the unit of the values, it is reported as dimensionless) | –, value | [Curve fitting](fitting.md) |
 | `aic`, `aicc`, `bic` | | information criteria of the fit, with \(K = k + 1\) estimated parameters | – | [Curve fitting](fitting.md) |
 | `n_points`, `n_parameters` | \(n\), \(k\) | points used in the fit and free model parameters | – | [Curve fitting](fitting.md) |
 | `n_starts_converged`, `n_bootstrap` | | starts which converged and converged bootstrap replicates | – | [Curve fitting](fitting.md) |
-| `x_data`, `y_data`, `sd_data` | | the data of the fit, per point | unit of `x`, of `y` | [Curve fitting](fitting.md) |
+| `x_data`, `y_data`, `sd_data` | | the data of the fit, per point | unit of `x`, unit of `y`, unit of `y` | [Curve fitting](fitting.md) |
 | `y_pred`, `residuals` | | prediction and weighted residual, per point | unit of `y`, – | [Curve fitting](fitting.md) |
 | `correlation` | | correlation matrix of the fitted parameters | – | [Curve fitting](fitting.md) |
 | `akaike_weight` | \(w_i\) | probability that a model is the best of the compared set | – | [Curve fitting](fitting.md) |
 | `bound_low`, `bound_high` | | acceptance bounds of the exponent in the dose proportionality criterion | – | [Curve fitting](fitting.md) |
-| `gmr`, `log_ratio`, `se_log` | \(\mathrm{GMR}\) | geometric mean ratio test / reference, its logarithm and the standard error of the logarithm | –, – | [Statistics](statistics.md) |
-| `effect`, `cohen_d`, `hedges_g` | \(d\), \(g\) | effect of a comparison and the standardized effect sizes | unit of the parameter (ratio: –), – | [Statistics](statistics.md) |
+| `gmr`, `log_ratio`, `se_log` | \(\mathrm{GMR}\) | geometric mean ratio test / reference, its logarithm and the standard error of the logarithm | – | [Statistics](statistics.md) |
+| `effect`, `cohen_d`, `hedges_g` | \(d\), \(g\) | effect of a comparison and the standardized effect sizes | unit of the parameter (ratio: –), –, – | [Statistics](statistics.md) |
 | `bioequivalent`, `p_lower`, `p_upper`, `cv_intra`, `p_period`, `p_sequence` | | verdict and the two one-sided p values of the bioequivalence test, within-subject CV, period and carryover p values of a crossover | – | [Statistics](statistics.md) |
 | `kind`, `strength`, `uncertain` | | class of an interaction (inhibitor, inducer), its strength and whether the interval spans a boundary | – | [Statistics](statistics.md) |
 | `estimate`, `variance`, `weight_fixed`, `weight_random` | \(\theta_i\), \(v_i\), \(w_i\) | effect of a study, its variance and its normalized weights in the pooling | – | [Statistics](statistics.md) |
 | `q`, `i2`, `h2`, `tau2` | \(Q\), \(I^2\), \(H^2\), \(\tau^2\) | heterogeneity statistics of a meta-analysis | –, %, –, – | [Statistics](statistics.md) |
 | `rate`, `midpoint` | \(\dot A_k\), \(\bar t_k\) | excretion rate of a urine collection and the midpoint of its interval, over the dimension `collection` | amount/time, time | [Urinary excretion](urine.md) |
-| `max_rate`, `tmax_rate`, `rate_last`, `mid_pt_last` | \(R_\mathrm{max}\) | the largest and the last measurable excretion rate with the midpoints they belong to | amount/time, time | [Urinary excretion](urine.md) |
+| `max_rate`, `tmax_rate`, `rate_last`, `mid_pt_last` | \(R_\mathrm{max}\) | the largest and the last measurable excretion rate with the midpoints they belong to | amount/time, time, amount/time, time | [Urinary excretion](urine.md) |
 | `aurc_last`, `aurc_all`, `aurc_inf_obs`, `aurc_inf_pred` | \(\mathrm{AURC}\) | areas under the excretion rate curve, which are amounts | amount | [Urinary excretion](urine.md) |
 | `amount_recovered`, `percent_recovered`, `vol_ur` | \(A_e\), \(V_\mathrm{ur}\) | the amount collected over every interval, that amount as a percentage of the dose, and the volume collected | amount, %, l | [Urinary excretion](urine.md) |
 | `clr` | \(\mathrm{CL}_R\) | renal clearance, the recovered amount over the plasma area of the collection span | l/h | [Urinary excretion](urine.md) |
@@ -94,7 +94,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `criterion` | \(U\) | upper 95 % bound of the reference-scaled criterion of the FDA, at most zero for a bioequivalent formulation | – | [Bioequivalence](bioequivalence.md) |
 | `sd_ratio_upper` | \((s_{wT}/s_{wR})_\mathrm{upper}\) | upper 90 % bound of the ratio of the within-subject standard deviations, at most 2.500 for a narrow therapeutic index drug | – | [Bioequivalence](bioequivalence.md) |
 | `anova` | | the analysis of variance table of a replicate design: source, `df`, `sum_sq`, `mean_sq`, `f`, `p_value` | – | [Bioequivalence](bioequivalence.md) |
-| `power`, `n` | \(1-\beta\), \(n\) | power of the two one-sided tests and the total number of subjects of a design | –, – | [Bioequivalence](bioequivalence.md) |
+| `power`, `n` | \(1-\beta\), \(n\) | power of the two one-sided tests and the total number of subjects of a design | – | [Bioequivalence](bioequivalence.md) |
 | `substance` | | the analyte of every sample, a coordinate along a sample dimension of a batch of several analytes and of its result; a batch of one names it in `attrs` (`Timecourses.substance`) | – | [Data formats](formats.md) |
 | `route` | | the route of administration of every sample, a coordinate along a sample dimension of a batch of several routes and of its result; a batch of one names it in `attrs` (`Timecourses.route`) | – | [Data formats](formats.md) |
 | `nominal_time` | | the nominal (planned) time of every observation, over the sample dimensions and `time`, read from the `NRRLT` column of an ADNCA dataset | time | [Data formats](formats.md) |
