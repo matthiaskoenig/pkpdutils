@@ -24,18 +24,20 @@ confidence intervals and the correlation matrix are the empirical statistics
 of the replicate parameters, an alternative to the Jacobian-based ones above
 that does not rely on the local linear approximation; fewer than two
 converged replicates fall back to the Jacobian-based statistics and set
-`FitFlag.BOOTSTRAP_FALLBACK`. `fit_rows` distributes the rows over a
-`ProcessPoolExecutor` when `options.n_workers > 1`, with one child seed per
-row drawn up front so serial and pooled runs agree; `pkpdutils.fit.compare`
-ranks several models on the same data by the corrected Akaike information
-criterion (Burnham & Anderson 2002).
+`FitFlag.BOOTSTRAP_FALLBACK`. `fit_rows` distributes the rows over the shared
+process pool (`pkpdutils.parallel`) for a batch of more than
+`FIT_WORKER_THRESHOLD` rows or an explicit `options.n_workers > 1`, with one
+child seed per row drawn up front so serial and pooled runs agree;
+`pkpdutils.fit.compare` ranks several models on the same data by the corrected
+Akaike information criterion (Burnham & Anderson 2002).
 """
 
+import functools
 import logging
 import math
 import warnings
 from collections.abc import Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,11 +50,23 @@ from scipy.stats import t as student_t
 from pkpdutils.fit.model import Model, parameter_unit_expression
 from pkpdutils.fit.options import FitFlag, FitOptions, ParameterScale, Weighting
 from pkpdutils.fit.result import FitResult
-from pkpdutils.result import base_name, check_coordinate_collision
+from pkpdutils.parallel import evict, executor, resolve_workers
+from pkpdutils.result import base_name, check_coordinate_collision, nan_percentile
 
 logger = logging.getLogger(__name__)
 
 LN10 = math.log(10.0)
+
+#: rows from which `fit_rows` uses the process pool with `n_workers=None`.
+#: The pool is shared and started once per process, but that start is an
+#: import of `pkpdutils` and its dependencies in every worker, about a second,
+#: which a batch has to be big enough to earn back on its own: the measured
+#: break-even against the serial run is around 1 500 rows of the cheapest model
+#: (a mono-exponential row of about 1 ms), so the automatic default stays
+#: serial below 2 000 rows and a script whose rows are more expensive - several
+#: starts, a residual bootstrap, a sum of exponentials - asks for the pool with
+#: an explicit `FitOptions.n_workers`.
+FIT_WORKER_THRESHOLD = 2_000
 
 
 @dataclass
@@ -456,10 +470,10 @@ def replicate_statistics(
     The finite replicates of a column are counted first and a column with
     fewer than two of them is reported as `NaN`, the guard
     `pkpdutils.result.ParameterResult.summarize` uses: `numpy.nanstd` with
-    `ddof=1` on such a column has no degrees of freedom left and
-    `numpy.nanpercentile` of an all-`NaN` column has nothing to interpolate,
-    and both would warn (and abort the batch under a strict warning filter)
-    rather than return a meaningful number.
+    `ddof=1` on such a column has no degrees of freedom left (and would warn,
+    and abort the batch under a strict warning filter) and the percentiles of
+    an all-`NaN` column have nothing to interpolate, so neither returns a
+    meaningful number.
 
     Args:
         values: the replicates, `(B, m)`, `NaN` where a replicate has no value.
@@ -473,8 +487,9 @@ def replicate_statistics(
     with np.errstate(invalid="ignore"), warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         sd = np.nanstd(values, axis=0, ddof=1)
-        low = np.nanpercentile(values, 100.0 * alpha / 2.0, axis=0)
-        high = np.nanpercentile(values, 100.0 * (1.0 - alpha / 2.0), axis=0)
+        low, high = nan_percentile(
+            values, (100.0 * alpha / 2.0, 100.0 * (1.0 - alpha / 2.0)), axis=0
+        )
     usable = count > 1
     return (
         np.where(usable, sd, np.nan),
@@ -856,19 +871,27 @@ def fit_row(
 
 
 def _fit_row_job(
-    args: tuple[Model, np.ndarray, np.ndarray, np.ndarray | None, FitOptions, int],
+    model: Model,
+    options: FitOptions,
+    row: tuple[np.ndarray, np.ndarray, np.ndarray | None, int],
 ) -> RowFit:
-    """Worker entry point for `fit_rows`: fit one row from its arguments and seed.
+    """Worker entry point for `fit_rows`: fit one row from its data and seed.
 
-    A module-level function so it can be pickled for a `ProcessPoolExecutor`.
+    A module-level function so that it can be pickled for a
+    `ProcessPoolExecutor`. The model and the options come first, so that
+    `fit_rows` can bind them with `functools.partial`: they are then pickled
+    once per task of the pool instead of once per row, and a row sends only
+    its own arrays and its seed.
 
     Args:
-        args: `(model, x, y, sd, options, seed)` of one row.
+        model: the model.
+        options: the options.
+        row: `(x, y, sd, seed)` of one row.
 
     Returns:
         The fit of the row.
     """
-    model, x, y, sd, options, seed = args
+    x, y, sd, seed = row
     return fit_row(model, x, y, sd, options, np.random.default_rng(int(seed)))
 
 
@@ -879,11 +902,26 @@ def fit_rows(
     sd: np.ndarray | None,
     options: FitOptions,
 ) -> list[RowFit]:
-    """Fit every row of `(N, n)` arrays, serially or in a process pool.
+    """Fit every row of `(N, n)` arrays, serially or in the shared process pool.
 
     Row seeds are drawn from `options.seed` before the rows are distributed,
-    one child seed per row, so the result does not depend on `options.n_workers`
-    or the order the rows finish in.
+    one child seed per row, so the result does not depend on
+    `options.n_workers` or the order the rows finish in.
+
+    `options.n_workers` decides how many workers run the rows
+    (`pkpdutils.parallel.resolve_workers`): `None` is automatic and stays in
+    the calling process below `FIT_WORKER_THRESHOLD` rows, `1` is serial and
+    any other number is taken as given. A row is a python-heavy
+    `scipy.optimize.least_squares` search, so a parallel run maps the rows
+    over the shared process pool (`pkpdutils.parallel.executor`) in batches of
+    about a quarter of the rows of a worker, which keeps the number of tasks
+    (and with them the pickling of the model and the options) small. A worker
+    that dies takes the pool with it (`BrokenProcessPool`): the pool is then
+    evicted and the batch is fitted once more in a fresh one, with a warning.
+    A pooled call must run under an `if __name__ == "__main__":` guard, since
+    python's `spawn` and `forkserver` process start methods (the default on
+    macOS and Windows, and on Linux from python 3.14) re-import the module
+    without re-running it.
 
     Args:
         model: the model
@@ -895,16 +933,41 @@ def fit_rows(
     Returns:
         One `RowFit` per row, in row order.
     """
+    n_rows = int(y.shape[0])
     rng = np.random.default_rng(options.seed)
-    seeds = rng.integers(0, 2**32 - 1, size=y.shape[0])
-    jobs = [
-        (model, x[i], y[i], None if sd is None else sd[i], options, int(seeds[i]))
-        for i in range(y.shape[0])
+    seeds = rng.integers(0, 2**32 - 1, size=n_rows)
+    rows = [
+        (x[i], y[i], None if sd is None else sd[i], int(seeds[i]))
+        for i in range(n_rows)
     ]
-    if options.n_workers is not None and options.n_workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=options.n_workers) as pool:
-            return list(pool.map(_fit_row_job, jobs))
-    return [_fit_row_job(job) for job in jobs]
+    n_workers = resolve_workers(
+        options.n_workers, n_rows, threshold=FIT_WORKER_THRESHOLD
+    )
+    job = functools.partial(_fit_row_job, model, options)
+    if n_workers > 1 and n_rows > 1:
+        chunksize = max(1, n_rows // (4 * n_workers))
+        logger.debug(
+            "fit: %d rows over %d processes, chunksize %d",
+            n_rows,
+            n_workers,
+            chunksize,
+        )
+        try:
+            pool = executor("process", n_workers)
+            return list(pool.map(job, rows, chunksize=chunksize))
+        except BrokenProcessPool:
+            # a worker died (killed by the operating system, or by a crash in
+            # a native extension); the pool is shared, so it is dropped before
+            # the batch is fitted once more in a fresh one
+            logger.warning(
+                "fit: a worker of the shared process pool died, retrying the "
+                "%d rows in a new pool",
+                n_rows,
+            )
+            evict("process", n_workers)
+            pool = executor("process", n_workers)
+            return list(pool.map(job, rows, chunksize=chunksize))
+    return [job(row) for row in rows]
 
 
 def _as_rows(
@@ -948,6 +1011,36 @@ def _as_rows(
     return x_arr, y_arr, sd_arr, single
 
 
+def _named(
+    result: FitResult, x_name: str | None = None, y_name: str | None = None
+) -> FitResult:
+    """The result with the names of its variables in `attrs`.
+
+    `attrs["x_name"]` and `attrs["y_name"]` name what was fitted against
+    what, so that a figure of the result labels its axes with them
+    (`plot_fit`, `plot_dose_proportionality`) instead of `x` and `y`. A name
+    which is `None` is not written, and a result without the attributes falls
+    back to `x` and `y` in the figures.
+
+    Args:
+        result: the result of the engine.
+        x_name: name of the independent variable, `None` to leave it out.
+        y_name: name of the dependent variable, `None` to leave it out.
+
+    Returns:
+        The result carrying the names which were given, the result itself
+        when neither was.
+    """
+    names = {
+        key: value
+        for key, value in (("x_name", x_name), ("y_name", y_name))
+        if value is not None
+    }
+    if not names:
+        return result
+    return FitResult(result.ds.assign_attrs(**names), result.model)
+
+
 def fit(
     model: Model,
     x: Any,
@@ -957,6 +1050,8 @@ def fit(
     options: FitOptions | None = None,
     x_unit: str = "dimensionless",
     y_unit: str = "dimensionless",
+    x_name: str | None = None,
+    y_name: str | None = None,
     dims: Sequence[str] | None = None,
     coords: dict[str, Any] | None = None,
 ) -> FitResult:
@@ -970,6 +1065,12 @@ def fit(
         options: the options, defaults for `None`
         x_unit: unit of `x`
         y_unit: unit of `y`
+        x_name: name of the independent variable, stored as `attrs["x_name"]`
+            and used as the axis label by the figures of the fit
+            (`concentration`, `dose`, `weight`); the figures fall back to `x`
+            without it, as the arrays carry no name of their own
+        y_name: name of the dependent variable, stored as `attrs["y_name"]`,
+            the label of the value axis (`effect`, `auc_inf_obs`)
         dims: sample dimension names for a 2-D `y`, `("sample",)` by default
         coords: coordinate labels of the sample dimensions
 
@@ -989,7 +1090,7 @@ def fit(
             "2-D data has exactly one sample dimension; use fit_timecourses or fit_table for more"
         )
     rows = fit_rows(model, x_arr, y_arr, sd_arr, options)
-    return build_result(
+    result = build_result(
         model,
         rows,
         x=x_arr,
@@ -1001,20 +1102,25 @@ def fit(
         coords=coords or {},
         options=options,
     )
+    return _named(result, x_name, y_name)
 
 
 def _cv(se: float, value: float) -> float:
-    """The coefficient of variation in percent, `NaN` for a zero or missing value.
+    """The coefficient of variation as a fraction, `NaN` for a zero or missing value.
+
+    The package reports every coefficient of variation as a fraction
+    (`NCAResult` `x_geocv`, `stats.Summary.cv`); a table which shows percent
+    multiplies by 100 where it formats.
 
     Args:
         se: the standard error.
         value: the estimate.
 
     Returns:
-        `100 se / |value|`.
+        `se / |value|`.
     """
     with np.errstate(divide="ignore", invalid="ignore"):
-        return float(100.0 * np.float64(se) / np.abs(np.float64(value)))
+        return float(np.float64(se) / np.abs(np.float64(value)))
 
 
 #: dimension names `build_result` reserves for the parameter and point axes,
@@ -1026,10 +1132,13 @@ def _check_no_reserved_suffix(model: Model) -> None:
     """Reject a model whose parameter or derived name ends in a suffix of the result variables.
 
     The result writes the uncertainty of a parameter `p` as `p_se`,
-    `p_ci_low`, ... and `ParameterResult` reads that structure back with
-    `pkpdutils.result.base_name`, so a parameter named `k_n` or `auc_se`
-    would be classified as the uncertainty of a parameter `k` or `auc` that
-    does not exist, and `summarize` would then drop it.
+    `p_ci_low`, ... and the statistics of a summary as `p_median`, `p_min`,
+    `p_max`, ...; `ParameterResult` reads that structure back with
+    `pkpdutils.result.base_name`, so a parameter named `k_n`, `auc_se`,
+    `e_max` or `c_min` would be classified as a derived variable of a
+    parameter `k`, `auc`, `e` or `c` that does not exist, and `summarize`
+    would then drop it. Write such a parameter as `emax` or `cmin`, the
+    spelling of the rest of the package.
 
     Args:
         model: the model, for its parameter and derived names.

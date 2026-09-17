@@ -47,7 +47,8 @@ from pkpdutils.nca.options import (
     NCAFlag,
     NCAOptions,
 )
-from pkpdutils.result import base_name
+from pkpdutils.parallel import resolve_workers
+from pkpdutils.result import base_name, nan_percentile
 from pkpdutils.timecourse import Timecourses
 
 logger = logging.getLogger(__name__)
@@ -56,9 +57,11 @@ logger = logging.getLogger(__name__)
 LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
     {
         "auc_last",
+        "auc_all",
         "auc_inf_obs",
         "auc_inf_pred",
         "aumc_last",
+        "aumc_all",
         "aumc_inf",
         "auc_tau",
         "cmax",
@@ -72,14 +75,30 @@ LOGNORMAL_PARAMETERS: frozenset[str] = frozenset(
         "cl",
         "cl_f",
         "cl_ss",
+        "cl_ss_f",
         "vz",
         "vz_f",
         "vss",
         "thalf",
+        "thalf_eff",
         "lambda_z",
         "mrt",
+        "clast_pred",
         "auc_inf_dn",
         "cmax_dn",
+        "auc_last_dn",
+        "auc_all_dn",
+        "auc_tau_dn",
+        "cavg_dn",
+        "cmax_ss_dn",
+        "c0_dn",
+        "accumulation_ratio_obs",
+        "accumulation_ratio_cmax_obs",
+        "accumulation_ratio_cmin_obs",
+        "accumulation_ratio_ctrough_obs",
+        "ptr",
+        "auec_tau",
+        "eavg",
     }
 )
 
@@ -89,16 +108,36 @@ DISCRETE_PARAMETERS: frozenset[str] = frozenset(
         "tmax",
         "tmin",
         "tlast",
+        "tlag",
         "tmax_half",
         "temax",
+        # the rule which produced `c0`, an integer code and not a measurement
+        "c0_method",
         "lambda_z_n_points",
         "lambda_z_t_first",
+        "lambda_z_t_last",
+        "lambda_z_span",
         "lambda_z_intercept",
         "lambda_z_r2",
         "lambda_z_r2_adj",
         "lambda_z_stderr",
         "flags",
         "n",
+        "n_doses",
+        "tau",
+        "interval_n_points",
+        # the observed times and the bounds of a dosing interval: an interval
+        # starts and ends where the protocol says, so a standard error or a
+        # coefficient of variation of them is not a quantity either
+        "interval_tmax",
+        "interval_temax",
+        "interval_start",
+        "interval_end",
+        "interval_dose",
+        # the Satterthwaite degrees of freedom of the area of a sparse design
+        # (`pkpdutils.nca.sparse`), a property of that design rather than a
+        # measurement with a spread of its own
+        "auc_last_df",
     }
 )
 
@@ -113,7 +152,9 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
         "c0",
         "cmax_half",
         "auc_last",
+        "auc_all",
         "aumc_last",
+        "aumc_all",
         "auc_tau",
         "cmin_ss",
         "cmax_ss",
@@ -128,14 +169,121 @@ TERMINAL_INDEPENDENT_PARAMETERS: frozenset[str] = frozenset(
     }
 )
 
+#: the steady state parameters of the last dosing interval, which do not depend
+#: on the terminal phase as long as the interval is covered by the data; a
+#: completed interval (`NCAOptions.tau_tolerance`) carries a tail of the
+#: terminal regression, so they depend on it then (`terminal_independent`)
+COMPLETABLE_PARAMETERS: frozenset[str] = frozenset(
+    {"auc_tau", "cmin_ss", "cmax_ss", "ctrough", "cavg"}
+)
 
-def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
+
+def terminal_independent(options: NCAOptions) -> frozenset[str]:
+    """The parameters which do not depend on the terminal phase, for these options.
+
+    `TERMINAL_INDEPENDENT_PARAMETERS` holds for an analysis which reads the
+    dosing interval as it was measured. With `NCAOptions.tau_tolerance` above 0
+    the exposure of a last interval which falls short of its end is completed
+    with the terminal regression
+    (`pkpdutils.nca.steady_state.complete_last_interval`), so `auc_tau` and the
+    four parameters which read the same interval depend on the terminal window
+    and are dropped from the set: the delta method then skips the points at
+    which the window flipped for them as well, rather than differentiating
+    across two regressions.
+
+    Args:
+        options: the options of the analysis
+
+    Returns:
+        The names of the parameters whose derivative may be taken at every
+        point, whatever the terminal window does there.
+    """
+    if options.tau_tolerance > 0.0:
+        return TERMINAL_INDEPENDENT_PARAMETERS - COMPLETABLE_PARAMETERS
+    return TERMINAL_INDEPENDENT_PARAMETERS
+
+
+def flatten_rows(a: np.ndarray | None, n_rows: int) -> np.ndarray | None:
+    """A per row dose array of shape `(*sample_shape, n_dose)` as `(N, n_dose)`.
+
+    Args:
+        a: the array, or `None`
+        n_rows: number of rows `N` of the batch
+
+    Returns:
+        The flattened array `(N, n_dose)`, or `None`.
+    """
+    if a is None:
+        return None
+    return np.asarray(a, dtype=np.float64).reshape(n_rows, -1)
+
+
+def repeat_block(
+    a: np.ndarray | None, start: int, stop: int, repeats: int
+) -> np.ndarray | None:
+    """Repeat every row of a block of a flattened dose array, keeping the rows grouped.
+
+    Args:
+        a: the flattened array `(N, n_dose)` (`flatten_rows`), or `None`
+        start: first row of the block
+        stop: row after the last one of the block
+        repeats: copies per row
+
+    Returns:
+        The repeated block `((stop - start) * repeats, n_dose)`, or `None`.
+    """
+    if a is None:
+        return None
+    return np.repeat(a[start:stop], repeats, axis=0)
+
+
+def repeat_rows(a: np.ndarray | None, n_rows: int, repeats: int) -> np.ndarray | None:
+    """Repeat every row of a per row dose array, keeping the rows grouped.
+
+    The replicates of the bootstrap and the perturbed curves of the delta
+    method are `repeats` copies of every row of the batch, in blocks; the dose
+    arrays follow them row by row.
+
+    Args:
+        a: the array of shape `(*sample_shape, n_dose)`, or `None`
+        n_rows: number of rows `N` of the batch
+        repeats: copies per row
+
+    Returns:
+        The repeated array `(N * repeats, n_dose)`, or `None`.
+    """
+    return repeat_block(flatten_rows(a, n_rows), 0, n_rows, repeats)
+
+
+def _repeat_windows(windows: np.ndarray | None, repeats: int) -> np.ndarray | None:
+    """Repeat every terminal window of a batch once per replicate of its row.
+
+    Args:
+        windows: the windows `(N, 2)`, or `None`
+        repeats: copies per row
+
+    Returns:
+        The repeated windows `(N * repeats, 2)`, or `None`.
+    """
+    return None if windows is None else np.repeat(windows, repeats, axis=0)
+
+
+def resolve_spread(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    spread: BootstrapSpread | None = None,
+) -> np.ndarray:
     """The spread every time point is resampled with, `(n_samples, n_time)`.
 
     Args:
         timecourses: the batch
-        options: `bootstrap_spread` selects `se` or `sd`; the missing one is
-            derived from the other with `n`
+        options: `bootstrap_spread` selects `se` or `sd` when `spread` is not
+            given; the missing one is derived from the other with `n`
+
+    Keyword Args:
+        spread: the spread to return, overriding `options.bootstrap_spread`;
+            the delta method always propagates `se`, whatever the options say
 
     Returns:
         The spread per point (`NaN` where the batch has none).
@@ -143,15 +291,18 @@ def resolve_spread(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
     Raises:
         ValueError: if the requested spread is neither present nor derivable.
     """
+    kind = spread if spread is not None else options.bootstrap_spread
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     se = None if timecourses.se is None else timecourses.se.reshape(n_rows, n_time)
     sd = None if timecourses.sd is None else timecourses.sd.reshape(n_rows, n_time)
+    # one count per row, or one per row and time point: both convert the
+    # spread of a point, the second one with the count of that point
     n = (
         None
         if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)[:, None]
+        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows, -1)
     )
-    if options.bootstrap_spread is BootstrapSpread.SE:
+    if kind is BootstrapSpread.SE:
         if se is not None:
             return se
         if sd is not None and n is not None:
@@ -293,8 +444,8 @@ def reduce_replicates(
             count = finite.sum(axis=1)
             filled = np.where(finite, reps, np.nan)
             std = np.nanstd(filled, axis=1, ddof=1)
-            low, high = np.nanpercentile(
-                filled, [100 * alpha / 2, 100 * (1 - alpha / 2)], axis=1
+            low, high = nan_percentile(
+                filled, (100 * alpha / 2, 100 * (1 - alpha / 2)), axis=1
             )
             if spread_kind is BootstrapSpread.SE:
                 se = std
@@ -353,6 +504,12 @@ def bootstrap(
 ) -> dict[str, np.ndarray]:
     """Bootstrap the parameters of a batch.
 
+    The curves are processed in blocks: the replicates of a block are drawn,
+    analysed and reduced to their parameters before the next block is drawn, so
+    the `(N, B, n)` array of every replicate of the batch never exists at once.
+    The draws do not depend on the blocking, the random generator produces the
+    same numbers in the same order.
+
     Args:
         timecourses: the batch (group curves with `sd` or `se`)
         options: `n_boot`, `seed`, `bootstrap_spread`, `bootstrap_distribution`, `ci_level`
@@ -367,7 +524,13 @@ def bootstrap(
     """
     # the analysis of the replicates runs through the same core as the original
     # curves, whose module imports this one
-    from pkpdutils.nca.nca import run_rows
+    from pkpdutils.nca.nca import (
+        chunk_bounds,
+        merge_rows,
+        row_routes,
+        run_rows,
+        sample_windows,
+    )
 
     if (
         options.kind is Kind.EFFECT
@@ -383,46 +546,69 @@ def bootstrap(
     with np.errstate(invalid="ignore"):
         any_usable = (np.isfinite(spread) & (spread > 0)).any(axis=1)
     rng = np.random.default_rng(options.seed)
-    draws = resample_values(
-        c,
-        spread,
-        options.n_boot,
-        rng,
-        options.bootstrap_distribution,
-        clip_at_zero=options.kind is Kind.CONCENTRATION,
-    )
     b = options.n_boot
-
-    def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row array `B` times (the rows stay grouped).
-
-        Args:
-            a: the array, or `None`.
-
-        Returns:
-            The repeated array `(N * B,)`, or `None`.
-        """
-        return (
-            None
-            if a is None
-            else np.repeat(np.asarray(a, dtype=np.float64).reshape(n_rows), b)
-        )
-
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
-    values = run_rows(
-        np.repeat(t, b, axis=0),
-        draws.reshape(n_rows * b, n_time),
-        dose_amount=repeat(timecourses.dose_amount),
-        dose_time=repeat(timecourses.dose_time),
-        dose_duration=repeat(timecourses.dose_duration),
-        route=timecourses.route,
-        options=options,
-    )
-    replicates = {name: array.reshape(n_rows, b) for name, array in values.items()}
+
+    # the replicates are materialized block of curves by block of curves and
+    # only their parameters are kept, so the `(N, B, n)` array of every
+    # replicate of the batch never exists at once; a block carries as many
+    # replicate rows as the analysis would process at once anyway, so the core
+    # sees the same chunks (`chunk_rows` per worker) as an unblocked run and
+    # the draws, which are generated row block after row block from the same
+    # generator, are the same numbers. The worker count of the replicate rows
+    # decides the size of a block, so that an automatic run
+    # (`options.n_workers is None`) fills every thread of `run_rows` too.
+    workers = resolve_workers(options.n_workers, n_rows * b)
+    block_rows = max(1, (options.chunk_rows * workers) // b)
+    n_blocks = max(1, -(-n_rows // block_rows))
+    dose_amount = flatten_rows(timecourses.dose_amount, n_rows)
+    dose_time = flatten_rows(timecourses.dose_time, n_rows)
+    dose_duration = flatten_rows(timecourses.dose_duration, n_rows)
+    batch_lloq = timecourses.lloq
+    lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
+    windows = sample_windows(timecourses, options.terminal)
+    route, routes = row_routes(timecourses, n_rows)
+    parts: list[dict[str, np.ndarray]] = []
+    counts: list[int] = []
+    for start, stop in chunk_bounds(n_rows, n_blocks):
+        rows = stop - start
+        draws = resample_values(
+            c[start:stop],
+            spread[start:stop],
+            b,
+            rng,
+            options.bootstrap_distribution,
+            clip_at_zero=options.kind is Kind.CONCENTRATION,
+        )
+        parts.append(
+            run_rows(
+                np.repeat(t[start:stop], b, axis=0),
+                draws.reshape(rows * b, n_time),
+                dose_amount=repeat_block(dose_amount, start, stop, b),
+                dose_time=repeat_block(dose_time, start, stop, b),
+                dose_duration=repeat_block(dose_duration, start, stop, b),
+                route=route,
+                options=options,
+                lloq=None if lloq is None else np.repeat(lloq[start:stop], b),
+                routes=None if routes is None else np.repeat(routes[start:stop], b),
+                windows=_repeat_windows(
+                    None if windows is None else windows[start:stop], b
+                ),
+            )
+        )
+        counts.append(rows * b)
+    values = merge_rows(parts, counts)
+    # the per-interval parameters carry an extra dimension and are no
+    # parameters of a sample: they are left to the point estimate
+    replicates = {
+        name: array.reshape(n_rows, b)
+        for name, array in values.items()
+        if array.ndim == 1
+    }
     n_subjects = (
         None
-        if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)
+        if timecourses.n_subjects is None
+        else np.asarray(timecourses.n_subjects, dtype=np.float64).reshape(n_rows)
     )
     return reduce_replicates(
         replicates,
@@ -448,11 +634,22 @@ def delta(
     interval `x +- z se`, on the log scale for log-normal parameters; discrete
     parameters and the diagnostics of the terminal regression are skipped.
 
+    `x_sd = x_se sqrt(n)` is the spread of the parameter over subjects and
+    `x_geocv` is its geometric CV, as in the bootstrap: with `mu = x` and
+    `sd = x_sd`, the log-normal moment relation gives
+    `sigma_log² = ln(1 + (sd / mu)²)` and
+
+    `geocv = sqrt(exp(sigma_log²) - 1) = sd / mu`,
+
+    so the geometric CV equals the arithmetic CV over subjects (Efron &
+    Tibshirani 1993, ch. 13). Without `n` the between-subject scale is unknown
+    and `x_sd` and `x_geocv` are `NaN`.
+
     A perturbation which selects a different terminal window
     (`lambda_z_n_points` or `lambda_z_t_first` changes) makes the difference
     quotient a jump between two regressions instead of a derivative, which
     inflates the standard error of every terminal parameter. Such points are
-    skipped for every parameter outside `TERMINAL_INDEPENDENT_PARAMETERS` and
+    skipped for every parameter outside `terminal_independent(options)` and
     the row carries `NCAFlag.DELTA_WINDOW_CHANGE`, which says that the
     uncertainty of its terminal parameters is incomplete; use the bootstrap,
     which follows the window, for those rows.
@@ -472,14 +669,12 @@ def delta(
     """
     # the analysis of the perturbed curves runs through the same core as the
     # original curves, whose module imports this one
-    from pkpdutils.nca.nca import run_rows
+    from pkpdutils.nca.nca import row_routes, run_rows, sample_windows
 
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     t = timecourses.times.reshape(n_rows, n_time)
     c = timecourses.values.reshape(n_rows, n_time)
-    se = resolve_spread(
-        timecourses, options.model_copy(update={"bootstrap_spread": BootstrapSpread.SE})
-    )
+    se = resolve_spread(timecourses, options, spread=BootstrapSpread.SE)
     with np.errstate(invalid="ignore"):
         usable = np.isfinite(se) & (se > 0) & np.isfinite(c)
     h = np.where(usable, options.delta_step * se, 0.0)
@@ -490,39 +685,33 @@ def delta(
     c_pert = np.repeat(c, n_time, axis=0)
     c_pert[rows, cols] += np.repeat(h, n_time, axis=0)[rows, cols]
 
-    def repeat(a: np.ndarray | None) -> np.ndarray | None:
-        """Repeat a per row array `n_time` times (the rows stay grouped).
-
-        Args:
-            a: the array, or `None`.
-
-        Returns:
-            The repeated array `(N * n,)`, or `None`.
-        """
-        return (
-            None
-            if a is None
-            else np.repeat(np.asarray(a, dtype=np.float64).reshape(n_rows), n_time)
-        )
-
     logger.info("delta method: %d curves x %d perturbations", n_rows, n_time)
+    delta_route, delta_routes = row_routes(timecourses, n_rows)
     perturbed = run_rows(
         np.repeat(t, n_time, axis=0),
         c_pert,
-        dose_amount=repeat(timecourses.dose_amount),
-        dose_time=repeat(timecourses.dose_time),
-        dose_duration=repeat(timecourses.dose_duration),
-        route=timecourses.route,
+        dose_amount=repeat_rows(timecourses.dose_amount, n_rows, n_time),
+        dose_time=repeat_rows(timecourses.dose_time, n_rows, n_time),
+        dose_duration=repeat_rows(timecourses.dose_duration, n_rows, n_time),
+        route=delta_route,
         options=options,
+        routes=None if delta_routes is None else np.repeat(delta_routes, n_time),
+        lloq=(
+            None
+            if timecourses.lloq is None
+            else np.repeat(timecourses.lloq.reshape(n_rows), n_time)
+        ),
+        windows=_repeat_windows(sample_windows(timecourses, options.terminal), n_time),
     )
     alpha = 1.0 - options.ci_level
     z = float(norm.ppf(1.0 - alpha / 2.0))
     n_subjects = (
         None
-        if timecourses.n is None
-        else np.asarray(timecourses.n, dtype=np.float64).reshape(n_rows)
+        if timecourses.n_subjects is None
+        else np.asarray(timecourses.n_subjects, dtype=np.float64).reshape(n_rows)
     )
     any_usable = usable.any(axis=1)
+    independent = terminal_independent(options)
     step = np.where(usable, h, 1.0)
     weight = np.where(usable, se, 0.0)
     window_changed = _window_changed(point, perturbed, n_rows, n_time) & usable
@@ -535,17 +724,15 @@ def delta(
             name in DISCRETE_PARAMETERS
             or base_name(name) is not None
             or name not in perturbed
+            # the per-interval parameters carry an extra dimension
+            or base.ndim > 1
         )
         if skip:
             continue
         pert = perturbed[name].reshape(n_rows, n_time)
         # a point at which the terminal window flipped carries no derivative of
         # the parameters which depend on that window
-        keep = (
-            usable
-            if name in TERMINAL_INDEPENDENT_PARAMETERS
-            else usable & ~window_changed
-        )
+        keep = usable if name in independent else usable & ~window_changed
         with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
             derivative = np.where(keep, (pert - base[:, None]) / step, 0.0)
             var = np.sum((derivative * weight) ** 2, axis=1)
@@ -560,10 +747,12 @@ def delta(
                 rel = x_se / base
                 low = base * np.exp(-z * rel)
                 high = base * np.exp(z * rel)
+                # the geometric CV is the spread over subjects, as in the
+                # bootstrap: with mu = x and sd = x_sd the log-normal moment
+                # relation gives sigma_log² = ln(1 + (sd/mu)²), so
+                # geocv = sqrt(exp(sigma_log²) - 1) = |sd/mu|, the arithmetic CV
                 out[f"{name}_geomean"] = np.where(valid, base, np.nan)
-                out[f"{name}_geocv"] = np.where(
-                    valid, np.sqrt(np.expm1(rel * rel)), np.nan
-                )
+                out[f"{name}_geocv"] = np.where(valid, np.abs(x_sd / base), np.nan)
             else:
                 low = base - z * x_se
                 high = base + z * x_se

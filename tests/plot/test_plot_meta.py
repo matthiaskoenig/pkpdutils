@@ -1,3 +1,5 @@
+import warnings
+
 import matplotlib
 import matplotlib.pyplot
 import numpy as np
@@ -45,3 +47,39 @@ def test_plot_forest_hedges_g_linear_axis() -> None:
     assert "Hedges" in ax.get_xlabel()
     assert "I2" in ax.get_title() or "I²" in ax.get_title()
     matplotlib.pyplot.close("all")
+
+
+def test_plot_forest_never_touches_the_layout_engine_of_a_passed_ax() -> None:
+    # B15: `plot_forest(ax=...)` used to set the constrained layout engine on
+    # the caller's figure unconditionally, discarding a preceding
+    # `fig.subplots_adjust(...)` and any `tight_layout()` call afterwards.
+    result = meta_analysis(studies(), EffectKind.LOG_RATIO)
+    fig, ax = matplotlib.pyplot.subplots()
+    assert fig.get_layout_engine() is None
+    plot_forest(result, ax=ax)
+    assert fig.get_layout_engine() is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fig.tight_layout()
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_forest_annotates_the_effects_and_the_weights() -> None:
+    result = meta_analysis(studies(), EffectKind.LOG_RATIO)
+    fig = plot_forest(result)
+    ax = fig.axes[0]
+    texts = [a.get_text() for a in ax.texts]
+    # one per study and one per pooled effect
+    assert len(texts) == result.n_studies + 2
+    for text, weight in zip(texts, result.random.weights, strict=False):
+        assert "[" in text and "]" in text
+        assert f"{100 * weight:.1f} %" in text
+    assert "%" not in texts[-1] and "%" not in texts[-2]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_forest_without_annotation_writes_no_text() -> None:
+    result = meta_analysis(studies(), EffectKind.HEDGES_G)
+    fig = plot_forest(result, annotate=False)
+    assert not fig.axes[0].texts
+    matplotlib.pyplot.close(fig)

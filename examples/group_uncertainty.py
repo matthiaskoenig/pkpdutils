@@ -9,13 +9,24 @@ Run from the root of the repository with `python -m examples.group_uncertainty`.
 Writes `group_uncertainty.png` into the working directory.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 
-from pkpdutils import Dose, NCAOptions, Route, Timecourse, Timecourses, nca, nca_single
+from pkpdutils import (
+    AUCMethod,
+    BootstrapSpread,
+    Dose,
+    NCAOptions,
+    Route,
+    Timecourse,
+    Timecourses,
+    UncertaintyMethod,
+    nca,
+    nca_single,
+    partial_auc,
+)
 from pkpdutils.console import console
-from pkpdutils.nca import AUCMethod, UncertaintyMethod, partial_auc
-from pkpdutils.nca.options import BootstrapSpread
-from pkpdutils.plot import plot_timecourse
+from pkpdutils.plot import plot_mean_timecourse, plot_timecourse
 
 t = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
 mean = np.array([1.9, 2.6, 2.4, 1.8, 1.3, 0.95, 0.5, 0.12])
@@ -34,7 +45,7 @@ group = Timecourse(
 
 if __name__ == "__main__":
     console.rule("Bootstrap (default for group data): uncertainty of the mean curve")
-    boot = nca_single(group, NCAOptions(seed=1, n_boot=2000))
+    boot = nca_single(group, options=NCAOptions(seed=1, n_boot=2000))
     df = boot.to_dataframe().T
     console.print(
         df.loc[
@@ -50,7 +61,8 @@ if __name__ == "__main__":
         "Bootstrap with the spread of individuals (sd) instead of the mean (se)"
     )
     spread = nca_single(
-        group, NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD)
+        group,
+        options=NCAOptions(seed=1, n_boot=2000, bootstrap_spread=BootstrapSpread.SD),
     )
     # `ci_low`/`ci_high` stay an interval of the estimate, `pi_low`/`pi_high`
     # are the percentiles of the individual replicates
@@ -63,7 +75,7 @@ if __name__ == "__main__":
     )
 
     console.rule("Delta method")
-    delta = nca_single(group, NCAOptions(uncertainty=UncertaintyMethod.DELTA))
+    delta = nca_single(group, options=NCAOptions(uncertainty=UncertaintyMethod.DELTA))
     for name in ("auc_inf_obs", "cmax", "thalf"):
         console.print(
             f"{name:<12} {delta.to_quantities()[name]:~P}  se {delta.to_quantities()[name + '_se']:~P}"
@@ -84,9 +96,9 @@ if __name__ == "__main__":
         for i in range(8)
     ]
     individuals = Timecourses.from_timecourses(curves)
-    summary = nca(individuals, NCAOptions(auc_method=AUCMethod.LINEAR_LOG)).summarize(
-        "individual"
-    )
+    summary = nca(
+        individuals, options=NCAOptions(auc_method=AUCMethod.LINEAR_LOG)
+    ).summarize("individual")
     console.print(
         summary.to_dataframe().T.loc[
             [
@@ -104,6 +116,14 @@ if __name__ == "__main__":
     console.rule("Partial AUC 0-6 h of the individuals")
     console.print(partial_auc(individuals, 0.5, 6.0).values.round(3))
 
-    fig = plot_timecourse(group)
+    # the two paths side by side: the reported group curve, whose sd the
+    # bootstrap and the delta method propagate, and the individual curves,
+    # whose parameters are summarized over the sample dimension
+    fig, axes = plt.subplots(ncols=2, figsize=(11, 4.2))
+    fig.set_layout_engine("constrained")
+    plot_timecourse(group, ax=axes[0])
+    axes[0].set_title("group curve: mean and sd of 10 subjects")
+    plot_mean_timecourse(individuals, spread="sd", panels=("linear",), axes=[axes[1]])
+    axes[1].set_title("individual curves: summarized over the subjects")
     fig.savefig("group_uncertainty.png", dpi=120)
     console.print("written: group_uncertainty.png")

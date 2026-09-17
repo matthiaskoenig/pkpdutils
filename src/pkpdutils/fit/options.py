@@ -6,6 +6,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pkpdutils.fit.model import ModelParameter
+from pkpdutils.result import decode_flags as decode_flag_names
 
 #: loss functions of `scipy.optimize.least_squares`
 LOSSES: tuple[str, ...] = ("linear", "soft_l1", "huber", "cauchy", "arctan")
@@ -65,9 +66,7 @@ def decode_fit_flags(value: int) -> list[str]:
     Returns:
         The names of the flags set in `value`, in bit order.
     """
-    return [
-        f.name for f in FitFlag if f.value and value & f.value and f.name is not None
-    ]
+    return decode_flag_names(FitFlag, value)
 
 
 class FitOptions(BaseModel):
@@ -82,13 +81,18 @@ class FitOptions(BaseModel):
             robust loss they are approximations
         n_starts: number of start points (Latin hypercube in the start box)
         seed: seed of the start point sampling and the bootstrap
-        n_workers: worker processes for many samples or starts, `None` for
-            the calling process. A pooled call (`n_workers > 1` with more
-            than one row) must run under an `if __name__ == "__main__":`
-            guard on a platform whose default process start method is
-            `spawn` or `forkserver` (Windows and macOS; the NCA pool has the
-            same requirement), so the worker processes can re-import the
-            module without re-running it
+        n_workers: worker processes of a batch fit, one row per job (never the
+            starts of a single row). `None` is automatic: the calling process
+            up to 2 000 rows, where a batch does not earn back the start-up of
+            the workers, and one worker per core, at most 8, above it; `1` is
+            always serial and `n > 1` uses that many workers, which is how a
+            smaller batch of expensive rows (several starts, a residual
+            bootstrap) asks for the pool. A pooled call must run under an
+            `if __name__ == "__main__":` guard, since python's `spawn` and
+            `forkserver` process start methods (the default on macOS and
+            Windows, and on Linux from python 3.14) re-import the module
+            without re-running it; the NCA (`NCAOptions.n_workers`) runs in
+            threads and needs no guard
         ci_level: level of the confidence intervals
         bootstrap: number of residual bootstrap replicates, 0 for none
         max_nfev: maximal function evaluations per start, `None` for the scipy default

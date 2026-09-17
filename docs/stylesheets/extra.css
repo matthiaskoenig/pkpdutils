@@ -1,0 +1,12 @@
+/* The cards of the gallery carry a figure and a code block, which need more
+   width than the narrow columns the theme fits as many of into the content as
+   it can (16rem each): one wide card per row at every width, instead of two or
+   three narrow ones whose figure is a thumbnail and whose code scrolls. */
+.md-typeset .grid.cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+}
+
+/* a thumbnail fills the width of its card and keeps its aspect ratio */
+.md-typeset .grid.cards > ul > li > p > img {
+  width: 100%;
+}

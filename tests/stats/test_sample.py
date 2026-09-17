@@ -6,13 +6,23 @@ from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
     Summary,
+    coerce,
+    cohen_d,
+    exp_t_interval,
+    hedges_correction,
+    labels_match,
+    log_positive,
     lognormal_from_geometric,
     lognormal_from_moments,
     moments_from_lognormal,
     paired_indices,
     paired_values,
+    pooled_sd,
     summarize,
+    welch_df,
+    welch_se,
 )
+from pkpdutils.stats.tests import Alternative, TestMethod
 
 VALUES = np.array([80.0, 95.0, 110.0, 120.0, 150.0, np.nan])
 
@@ -225,6 +235,105 @@ def test_paired_values_errors() -> None:
         paired_values(ParameterSample(mean=1.0, sd=0.1, n=3), a)
     with pytest.raises(ValueError, match="needs individual data"):
         paired_values(a, ParameterSample(mean=1.0, sd=0.1, n=3))
+
+
+def test_coerce_accepts_a_member_and_a_string() -> None:
+    assert coerce(Scale.LOG, Scale) is Scale.LOG
+    assert coerce("log", Scale) is Scale.LOG
+    assert coerce("paired_t", TestMethod) is TestMethod.PAIRED_T
+    assert coerce("two-sided", Alternative) is Alternative.TWO_SIDED
+    with pytest.raises(ValueError, match="'logarithm' is not a valid Scale"):
+        coerce("logarithm", Scale)
+    # the message names the members
+    with pytest.raises(ValueError, match="'linear', 'log'"):
+        coerce("logarithm", Scale)
+
+
+def test_pooled_sd_and_cohen_d() -> None:
+    a, b = np.array([9.0, 10.0, 11.0, 10.0]), np.array([11.0, 12.0, 13.0, 12.0])
+    sp = pooled_sd(float(a.std(ddof=1)), 4, float(b.std(ddof=1)), 4)
+    assert sp == pytest.approx(np.sqrt(2.0 / 3.0))
+    d, g = cohen_d(
+        float(b.mean()),
+        float(b.std(ddof=1)),
+        4,
+        float(a.mean()),
+        float(a.std(ddof=1)),
+        4,
+    )
+    assert d == pytest.approx(2.0 / sp)
+    assert g == pytest.approx(d * hedges_correction(8))
+    # a single value has no pooled spread and two constant samples none either
+    assert np.isnan(pooled_sd(float("nan"), 1, 1.0, 4))
+    assert all(np.isnan(x) for x in cohen_d(1.0, float("nan"), 1, 2.0, 1.0, 4))
+    assert pooled_sd(0.0, 3, 0.0, 3) == 0.0
+    assert all(np.isnan(x) for x in cohen_d(1.0, 0.0, 3, 2.0, 0.0, 3))
+
+
+def test_welch_se_and_df() -> None:
+    se = welch_se(4.0, 5, 9.0, 10)
+    assert se == pytest.approx(np.sqrt(4.0 / 5 + 9.0 / 10))
+    df = welch_df(4.0, 5, 9.0, 10)
+    va, vb = 4.0 / 5, 9.0 / 10
+    assert df == pytest.approx((va + vb) ** 2 / (va**2 / 4 + vb**2 / 9))
+    # a sample without values or without variance gives NaN instead of dividing by zero
+    assert np.isnan(welch_se(4.0, 0, 9.0, 10)) and np.isnan(welch_df(4.0, 0, 9.0, 10))
+    assert np.isnan(welch_df(0.0, 5, 0.0, 10))
+
+
+def test_exp_t_interval() -> None:
+    low, high = exp_t_interval(np.log(1.1), 0.05, 10.0, 0.90)
+    tq = student_t.ppf(0.95, 10.0)
+    assert (low, high) == pytest.approx(
+        (np.exp(np.log(1.1) - tq * 0.05), np.exp(np.log(1.1) + tq * 0.05))
+    )
+    assert all(np.isnan(x) for x in exp_t_interval(0.0, float("nan"), 3.0, 0.95))
+
+
+def test_log_positive_and_labels_match() -> None:
+    assert log_positive(np.array([1.0, np.e]), "auc").tolist() == pytest.approx(
+        [0.0, 1.0]
+    )
+    with pytest.raises(ValueError, match="'auc' has non-positive values"):
+        log_positive(np.array([1.0, 0.0]), "auc")
+    labels = np.array(["s0", "s1"])
+    a = ParameterSample(values=np.array([1.0, 2.0]), labels=labels)
+    b = ParameterSample(values=np.array([3.0, 4.0]), labels=labels)
+    assert labels_match(a, b)
+    assert not labels_match(a, ParameterSample(values=np.array([3.0, 4.0])))
+    assert not labels_match(a, ParameterSample(mean=1.0, sd=0.1, n=4))
+    other = ParameterSample(values=np.array([3.0, 4.0]), labels=np.array(["x", "y"]))
+    assert not labels_match(a, other)
+
+
+def test_negative_moments_are_rejected() -> None:
+    # B26: a negative sd propagated into a negative standard error
+    with pytest.raises(ValueError, match="'sd' must not be negative"):
+        ParameterSample(mean=1.0, sd=-1.0, n=5)
+    with pytest.raises(ValueError, match="'geocv' must not be negative"):
+        ParameterSample(geomean=1.0, geocv=-0.3, n=5)
+    with pytest.raises(ValueError, match="'geomean' must be positive"):
+        ParameterSample(geomean=-1.0, geocv=0.3, n=5)
+    # a negative mean stays valid on the linear scale
+    assert summarize(
+        ParameterSample(mean=-1.0, sd=1.0, n=5), scale=Scale.LINEAR
+    ).se == (pytest.approx(1.0 / np.sqrt(5)))
+
+
+def test_n_is_an_integer() -> None:
+    sample = ParameterSample(mean=1.0, sd=0.1, n=5)
+    assert isinstance(sample.n, int) and sample.n == 5
+    with pytest.raises(ValueError, match="whole number"):
+        ParameterSample(mean=1.0, sd=0.1, n=4.5)  # ty: ignore[invalid-argument-type]
+
+
+def test_summarize_coerces_a_string_scale() -> None:
+    assert (
+        summarize(VALUES, scale="linear").to_dict()
+        == summarize(VALUES, scale=Scale.LINEAR).to_dict()
+    )
+    with pytest.raises(ValueError, match="not a valid Scale"):
+        summarize(VALUES, scale="natural")
 
 
 def test_summarize_non_positive_value_linear_vs_log() -> None:

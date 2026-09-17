@@ -30,6 +30,33 @@ class Scale(StrEnum):
     LOG = "log"
 
 
+def coerce[E: StrEnum](value: E | str, enum_type: type[E]) -> E:
+    """The member of an enumeration given as the member itself or as its string.
+
+    Every public function of `pkpdutils.stats` takes its options either way,
+    so `compare(a, b, scale="log")` is the analysis of
+    `compare(a, b, scale=Scale.LOG)` and an unknown string is rejected
+    instead of falling through to a default.
+
+    Args:
+        value: the member or the string of the member.
+        enum_type: the enumeration.
+
+    Returns:
+        The member.
+
+    Raises:
+        ValueError: if `value` is not a member, naming the members.
+    """
+    try:
+        return enum_type(value)
+    except ValueError:
+        members = ", ".join(f"'{member.value}'" for member in enum_type)
+        raise ValueError(
+            f"'{value}' is not a valid {enum_type.__name__}, use one of {members}"
+        ) from None
+
+
 def lognormal_from_moments(mean: float, sd: float) -> tuple[float, float]:
     r"""Log-scale moments of a log-normal distribution with the given mean and standard deviation.
 
@@ -93,7 +120,7 @@ def moments_from_lognormal(mu: float, sigma: float) -> tuple[float, float]:
     return mean, float(mean * np.sqrt(np.expm1(sigma**2)))
 
 
-def _log_positive(values: np.ndarray, name: str) -> np.ndarray:
+def log_positive(values: np.ndarray, name: str) -> np.ndarray:
     """The logarithms of an array which must be positive.
 
     Args:
@@ -111,6 +138,139 @@ def _log_positive(values: np.ndarray, name: str) -> np.ndarray:
             f"'{name}' has non-positive values, the log scale needs positive values"
         )
     return np.log(values)
+
+
+def hedges_correction(n_total: int) -> float:
+    r"""Small sample correction of the standardized mean difference.
+
+    \(J = 1 - 3 / (4N - 9)\) (Hedges 1981, the approximation of the exact
+    gamma expression), with \(N\) the total number of values.
+
+    Args:
+        n_total: total number of values of both samples.
+
+    Returns:
+        The factor `J`.
+    """
+    return 1.0 - 3.0 / (4.0 * n_total - 9.0)
+
+
+def pooled_sd(sd_a: float, n_a: int, sd_b: float, n_b: int) -> float:
+    r"""Pooled standard deviation of two samples.
+
+    \(s_p = \sqrt{((n_a - 1) s_a^2 + (n_b - 1) s_b^2) / (n_a + n_b - 2)}\).
+
+    Args:
+        sd_a: standard deviation of `a`.
+        n_a: size of `a`.
+        sd_b: standard deviation of `b`.
+        n_b: size of `b`.
+
+    Returns:
+        The pooled standard deviation, `NaN` if a sample holds fewer than
+        two values, so that its variance is not estimable.
+    """
+    if n_a < 2 or n_b < 2:
+        return float("nan")
+    total = n_a + n_b
+    return float(np.sqrt(((n_a - 1) * sd_a**2 + (n_b - 1) * sd_b**2) / (total - 2)))
+
+
+def cohen_d(
+    mean_a: float, sd_a: float, n_a: int, mean_b: float, sd_b: float, n_b: int
+) -> tuple[float, float]:
+    r"""Cohen's d and Hedges' g from the moments of two samples.
+
+    \(d = (\bar a - \bar b) / s_p\) with the pooled standard deviation,
+    \(g = J d\) with the small sample correction of `hedges_correction`
+    (Hedges 1981).
+
+    Args:
+        mean_a: mean of `a`.
+        sd_a: standard deviation of `a`.
+        n_a: size of `a`.
+        mean_b: mean of `b`.
+        sd_b: standard deviation of `b`.
+        n_b: size of `b`.
+
+    Returns:
+        `d` and `g`, both `NaN` if a sample holds a single value, so that
+        the pooled standard deviation is not estimable, or if it is zero.
+    """
+    pooled = pooled_sd(sd_a, n_a, sd_b, n_b)
+    if not pooled > 0:
+        return float("nan"), float("nan")
+    d = float((mean_a - mean_b) / pooled)
+    return d, d * hedges_correction(n_a + n_b)
+
+
+def welch_se(var_a: float, n_a: int, var_b: float, n_b: int) -> float:
+    r"""Standard error of the difference of two means with unequal variances.
+
+    \(\mathrm{se} = \sqrt{s_a^2/n_a + s_b^2/n_b}\).
+
+    Args:
+        var_a: variance of `a`.
+        n_a: size of `a`.
+        var_b: variance of `b`.
+        n_b: size of `b`.
+
+    Returns:
+        The standard error, `NaN` if a sample has no values.
+    """
+    if n_a < 1 or n_b < 1:
+        return float("nan")
+    return float(np.sqrt(var_a / n_a + var_b / n_b))
+
+
+def welch_df(var_a: float, n_a: int, var_b: float, n_b: int) -> float:
+    r"""Welch-Satterthwaite degrees of freedom.
+
+    \(\nu = (s_a^2/n_a + s_b^2/n_b)^2 / ((s_a^2/n_a)^2/(n_a-1) + (s_b^2/n_b)^2/(n_b-1))\).
+
+    A sample of a single value has no variance to propagate and two samples
+    without variance have no scale, both give `NaN`.
+
+    Args:
+        var_a: variance of `a`.
+        n_a: size of `a`.
+        var_b: variance of `b`.
+        n_b: size of `b`.
+
+    Returns:
+        The degrees of freedom, `NaN` if a sample holds fewer than two
+        values or both variances are zero.
+    """
+    if n_a < 2 or n_b < 2 or (var_a == 0.0 and var_b == 0.0):
+        return float("nan")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        va = np.float64(var_a) / n_a
+        vb = np.float64(var_b) / n_b
+        return float((va + vb) ** 2 / (va**2 / (n_a - 1) + vb**2 / (n_b - 1)))
+
+
+def exp_t_interval(
+    center: float, se: float, df: float, ci_level: float
+) -> tuple[float, float]:
+    r"""The exponentiated two-sided t interval of an estimate on the log scale.
+
+    \(\exp(\hat\theta \pm t_{1-\alpha/2, df}\,\mathrm{se})\), the interval of a
+    geometric mean or of a geometric mean ratio (FDA 2001).
+
+    Args:
+        center: the estimate on the log scale.
+        se: its standard error.
+        df: degrees of freedom.
+        ci_level: level of the interval.
+
+    Returns:
+        The lower and the upper bound of the interval of the ratio, both
+        `NaN` when `se` or `df` is not a positive number.
+    """
+    if not np.isfinite(se) or not df > 0:
+        return float("nan"), float("nan")
+    tq = float(student_t.ppf(1.0 - (1.0 - ci_level) / 2.0, df))
+    return float(np.exp(center - tq * se)), float(np.exp(center + tq * se))
 
 
 def _array(value: Any, name: str) -> np.ndarray:
@@ -232,7 +392,7 @@ class ParameterSample:
     coords: dict[str, np.ndarray] = field(default_factory=dict)
     mean: float | None = None
     sd: float | None = None
-    n: float | None = None
+    n: int | None = None
     geomean: float | None = None
     geocv: float | None = None
     name: str = "value"
@@ -243,9 +403,22 @@ class ParameterSample:
 
         Raises:
             ValueError: for neither values nor summary data, summary data
-                without `n` or without a pair of moments, an array which is
-                not 1-D, or labels or coordinates of another length.
+                without `n` or without a pair of moments, an `n` which is
+                not a whole number of at least 1, a negative `sd` or
+                `geocv`, a non-positive `geomean`, an array which is not
+                1-D, or labels or coordinates of another length.
         """
+        if self.sd is not None and self.sd < 0:
+            raise ValueError(f"'sd' must not be negative, got {self.sd}")
+        if self.geocv is not None and self.geocv < 0:
+            raise ValueError(f"'geocv' must not be negative, got {self.geocv}")
+        if self.geomean is not None and not self.geomean > 0:
+            raise ValueError(f"'geomean' must be positive, got {self.geomean}")
+        if self.n is not None:
+            count = float(self.n)
+            if not np.isfinite(count) or count != int(count):
+                raise ValueError(f"'n' must be a whole number, got {self.n}")
+            object.__setattr__(self, "n", int(count))
         if self.values is not None:
             values = _array(self.values, "values").astype(np.float64)
             object.__setattr__(self, "values", values)
@@ -261,7 +434,7 @@ class ParameterSample:
                 arr = _array(coord, key)
                 if arr.size != values.size:
                     raise ValueError(
-                        f"coordinate '{key}' has length {arr.size}, 'values' has length {values.size}"
+                        f"Coordinate '{key}' has length {arr.size}, 'values' has length {values.size}"
                     )
                 coords[key] = arr
             object.__setattr__(self, "coords", coords)
@@ -320,7 +493,7 @@ class ParameterSample:
         Raises:
             ValueError: if a finite value is not positive.
         """
-        return _log_positive(self.finite_values, self.name)
+        return log_positive(self.finite_values, self.name)
 
     def log_moments(self) -> tuple[float, float]:
         """Mean and standard deviation of the logarithm.
@@ -358,17 +531,22 @@ class ParameterSample:
             return float(self.mean), float(self.sd)
         return moments_from_lognormal(*self.log_moments())
 
-    def moments(self, scale: Scale) -> tuple[float, float, int]:
+    def moments(self, scale: Scale | str) -> tuple[float, float, int]:
         """Center, spread and size on a scale.
 
         Args:
-            scale: `LINEAR` for the arithmetic moments, `LOG` for the log moments.
+            scale: `LINEAR` for the arithmetic moments, `LOG` for the log
+                moments, as the member or as its string.
 
         Returns:
             The center, the standard deviation and the number of values.
+
+        Raises:
+            ValueError: if `scale` is not a `Scale`.
         """
+        resolved = coerce(scale, Scale)
         center, spread = (
-            self.log_moments() if scale is Scale.LOG else self.linear_moments()
+            self.log_moments() if resolved is Scale.LOG else self.linear_moments()
         )
         return center, spread, self.size
 
@@ -395,7 +573,9 @@ class ParameterSample:
             unit=self.unit,
         )
 
-    def summary(self, scale: Scale = Scale.LOG, ci_level: float = 0.95) -> Summary:
+    def summary(
+        self, scale: Scale | str = Scale.LOG, ci_level: float = 0.95
+    ) -> Summary:
         """The summary statistics, see `summarize`.
 
         Args:
@@ -406,6 +586,27 @@ class ParameterSample:
             The summary.
         """
         return summarize(self, scale=scale, ci_level=ci_level)
+
+
+def labels_match(a: ParameterSample, b: ParameterSample) -> bool:
+    """Whether both samples are individual, labelled and share an individual.
+
+    Which values are finite does not enter, so a missing value does not turn
+    a paired design into an unpaired one.
+
+    Args:
+        a: the first sample.
+        b: the second sample.
+
+    Returns:
+        `True` if the samples can be paired by label.
+    """
+    if not (a.is_individual and b.is_individual):
+        return False
+    labels_a, labels_b = a.labels, b.labels
+    if labels_a is None or labels_b is None:
+        return False
+    return bool(set(labels_a.tolist()) & set(labels_b.tolist()))
 
 
 def paired_indices(
@@ -460,7 +661,7 @@ def paired_indices(
     else:
         if a.values.size != b.values.size:
             raise ValueError(
-                f"paired samples need equal sizes, got {a.values.size} and {b.values.size}"
+                f"Paired samples need equal sizes, got {a.values.size} and {b.values.size}"
             )
         index_a = np.arange(a.values.size, dtype=np.intp)
         index_b = np.arange(b.values.size, dtype=np.intp)
@@ -503,7 +704,7 @@ def paired_values(
 def summarize(
     values: ParameterSample | ArrayLike,
     *,
-    scale: Scale = Scale.LOG,
+    scale: Scale | str = Scale.LOG,
     ci_level: float = 0.95,
     name: str = "value",
     unit: str = "dimensionless",
@@ -520,14 +721,19 @@ def summarize(
 
     Args:
         values: a sample, or individual values (`NaN` skipped).
-        scale: scale of the interval.
+        scale: scale of the interval, as the member or as its string.
         ci_level: level of the interval.
         name: name of the parameter (ignored for a sample, which carries its own).
         unit: unit of the parameter (ignored for a sample).
 
     Returns:
         The summary.
+
+    Raises:
+        ValueError: if `scale` is not a `Scale`, or for a non-positive value
+            on the log scale.
     """
+    scale = coerce(scale, Scale)
     sample = (
         values
         if isinstance(values, ParameterSample)
@@ -558,13 +764,10 @@ def summarize(
         median, q25, q75 = nan, nan, nan
         low_high = (nan, nan)
     if n > 1:
-        tq = float(student_t.ppf(1.0 - (1.0 - ci_level) / 2.0, n - 1))
         if scale is Scale.LOG:
-            ci = (
-                float(np.exp(mu - tq * sigma / np.sqrt(n))),
-                float(np.exp(mu + tq * sigma / np.sqrt(n))),
-            )
+            ci = exp_t_interval(mu, float(sigma / np.sqrt(n)), float(n - 1), ci_level)
         else:
+            tq = float(student_t.ppf(1.0 - (1.0 - ci_level) / 2.0, n - 1))
             ci = (mean - tq * se, mean + tq * se)
     else:
         ci = (nan, nan)

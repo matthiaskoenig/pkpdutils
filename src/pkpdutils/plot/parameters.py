@@ -7,10 +7,10 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from pkpdutils.plot._common import axis_label, figure_of, log_scale, unit_label
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import _figure_of, _plain_log_ticks
 from pkpdutils.result import ParameterResult
-from pkpdutils.stats.sample import ParameterSample, Scale, summarize
+from pkpdutils.stats.sample import ParameterSample, Scale, coerce, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,8 @@ def plot_parameters(
     dim: str,
     *,
     by: str | None = None,
-    log: bool = False,
-    scale: Scale = Scale.LOG,
+    log_y: bool = False,
+    scale: Scale | str = Scale.LOG,
     ci_level: float = 0.95,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
@@ -34,20 +34,30 @@ def plot_parameters(
     geometric mean (`scale=LOG`) or the arithmetic mean with the t interval
     of `summarize` at `ci_level` a marker with an error bar. A group with a
     non-positive value gets the arithmetic mean marker instead of the
-    geometric one, which is logged at debug level. With `log=True` the
+    geometric one, which is logged at debug level. With `log_y=True` the
     non-positive points are left out of the strip, since a logarithmic axis
     cannot show them.
+
+    The legend names the marker of the statistic once for the figure
+    (`geometric mean [95 % CI]`, `mean [...]` with `scale=Scale.LINEAR`); the
+    groups themselves are the ticks of the x axis and stay out of it.
 
     Args:
         result: the result the parameter is taken from.
         name: name of the parameter.
         dim: the sample dimension of the individuals.
+
+    Keyword Args:
         by: a coordinate along `dim` which groups the individuals, one
             group named after the parameter without it.
-        log: logarithmic y axis.
-        scale: scale of the mean and its interval.
+        log_y: logarithmic y axis; without a positive value across every group
+            the axis stays linear (logged at debug level).
+        scale: scale of the mean and its interval, the member or its string
+            (`Scale.LOG`, `"log"`).
         ci_level: level of the interval.
-        ax: axes to draw on, a new figure by default.
+        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
+            keeps its figure's own layout engine, so long tick labels can
+            clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
         style: colors and markers.
         **indexers: coordinate label per remaining sample dimension.
 
@@ -55,8 +65,10 @@ def plot_parameters(
         The figure.
 
     Raises:
-        ValueError: if `by` is not a coordinate along `dim`.
+        ValueError: if `by` is not a coordinate along `dim` or `scale` is not
+            a `Scale`.
     """
+    scale = coerce(scale, Scale)
     sample = result.sample(name, dim, **indexers)
     assert sample.values is not None
     if by is None:
@@ -70,14 +82,21 @@ def plot_parameters(
         groups = {
             str(key): sample.select(keys == key) for key in dict.fromkeys(keys.tolist())
         }
-    fig, ax = _figure_of(ax)
+    fig, ax = figure_of(ax)
     rng = np.random.default_rng(0)
+    # the marker with the whiskers is the statistic, not another data point:
+    # it is named once for the figure, since every group draws the same thing
+    summary_label = (
+        f"{'geometric mean' if scale is Scale.LOG else 'mean'} "
+        f"[{ci_level * 100:g} % CI]"
+    )
+    summary_handle: Any = None
     positions = np.arange(1, len(groups) + 1)
     values = [g.finite_values for g in groups.values()]
     ax.boxplot(values, positions=positions, widths=0.5, showfliers=False, zorder=1)
     for pos, (label, group) in zip(positions, groups.items(), strict=True):
         v = group.finite_values
-        v_plot = v[v > 0] if log else v
+        v_plot = v[v > 0] if log_y else v
         ax.plot(
             pos + rng.uniform(-0.15, 0.15, v_plot.size),
             v_plot,
@@ -104,7 +123,7 @@ def plot_parameters(
                 if np.isfinite(s.ci_low)
                 else None
             )
-            ax.errorbar(
+            container = ax.errorbar(
                 [pos + 0.3],
                 [center],
                 yerr=err,
@@ -113,12 +132,17 @@ def plot_parameters(
                 capsize=3,
                 linestyle="none",
                 zorder=3,
+                label=summary_label if summary_handle is None else None,
             )
+            if summary_handle is None:
+                summary_handle = container
+    if summary_handle is not None:
+        # only the statistic is named: the groups are the ticks of the x axis
+        ax.legend(handles=[summary_handle], fontsize="small")
     ax.set_xticks(positions, list(groups))
-    ax.set_ylabel(f"{name} [{sample.unit}]")
+    ax.set_ylabel(axis_label(name, unit_label(sample.unit)))
     if by is not None:
         ax.set_xlabel(by)
-    if log:
-        ax.set_yscale("log")
-        _plain_log_ticks(ax.yaxis)
+    if log_y:
+        log_scale(ax, "y")
     return fig

@@ -6,16 +6,31 @@ end of every row by `pack_valid`, so that the segments between consecutive
 valid points are the columns of the arrays `segment_areas` returns.
 
 The trapezoid rules are the ones of Gabrielsson & Weiner (2016, ch. 2.8) and
-of the Phoenix WinNonlin NCA: on a segment from `(t1, c1)` to `(t2, c2)` with
-`dt = t2 - t1` the linear rule gives the area `dt (c1 + c2) / 2` and the first
-moment `dt (t1 c1 + t2 c2) / 2`; the logarithmic rule, exact for a
-mono-exponential decline, gives the area `dt (c1 - c2) / L` and the moment
+of the Phoenix WinNonlin NCA, compared against alternative numerical
+integration schemes by Yeh & Kwan (1978), Chiou (1978) and Purves (1992): on
+a segment from `(t1, c1)` to `(t2, c2)` with `dt = t2 - t1` the linear rule
+gives the area `dt (c1 + c2) / 2` and the first moment
+`dt (t1 c1 + t2 c2) / 2`; the logarithmic rule, exact for a mono-exponential
+decline, gives the area `dt (c1 - c2) / L` and the moment
 `dt (t1 c1 - t2 c2) / L + dt² (c1 - c2) / L²` with `L = ln(c1 / c2)`.
 """
 
 import numpy as np
 
 from pkpdutils.nca.options import AUCMethod
+
+
+def take_rows(a: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """Element `idx[i]` of row `i`.
+
+    Args:
+        a: array `(N, n)`
+        idx: one column index per row `(N,)`
+
+    Returns:
+        The selected elements `(N,)`.
+    """
+    return np.take_along_axis(a, idx[:, None], axis=1)[:, 0]
 
 
 def pack_valid(
@@ -121,6 +136,36 @@ def auc_aumc(
     return area.sum(axis=1), moment.sum(axis=1)
 
 
+def time_above_threshold(
+    tp: np.ndarray, cp: np.ndarray, n_valid: np.ndarray, threshold: float
+) -> np.ndarray:
+    """Total time the linearly interpolated curve is above a threshold, per row.
+
+    Args:
+        tp: packed times `(N, n)`
+        cp: packed values `(N, n)`
+        n_valid: valid points per row
+        threshold: the threshold
+
+    Returns:
+        The total time above the threshold `(N,)`.
+    """
+    t1, t2 = tp[:, :-1], tp[:, 1:]
+    c1, c2 = cp[:, :-1], cp[:, 1:]
+    in_curve = np.arange(tp.shape[1] - 1)[None, :] < (n_valid - 1)[:, None]
+    dt = t2 - t1
+    with np.errstate(invalid="ignore"):
+        a1 = c1 > threshold
+        a2 = c2 > threshold
+    with np.errstate(divide="ignore", invalid="ignore"):
+        frac = (threshold - c1) / (c2 - c1)  # position of the crossing in the segment
+    both = np.where(a1 & a2, dt, 0.0)
+    rising = np.where(~a1 & a2, dt * (1.0 - frac), 0.0)
+    falling = np.where(a1 & ~a2, dt * frac, 0.0)
+    total = np.where(in_curve, both + rising + falling, 0.0)
+    return np.nansum(total, axis=1)
+
+
 def interpolate_at(
     tp: np.ndarray,
     cp: np.ndarray,
@@ -154,17 +199,17 @@ def interpolate_at(
     with np.errstate(invalid="ignore"):
         # exactly on the last point
         last_idx = np.clip(n_valid - 1, 0, n - 1)
-        t_last = np.take_along_axis(tp, last_idx[:, None], axis=1)[:, 0]
-        c_last = np.take_along_axis(cp, last_idx[:, None], axis=1)[:, 0]
+        t_last = take_rows(tp, last_idx)
+        c_last = take_rows(cp, last_idx)
         on_last = (n_valid > 0) & (t_query == t_last)
         out = np.where(on_last, c_last, out)
         inside = (count >= 1) & (count < n_valid)
         i2 = np.clip(count, 1, n - 1)
         i1 = i2 - 1
-        t1 = np.take_along_axis(tp, i1[:, None], axis=1)[:, 0]
-        t2 = np.take_along_axis(tp, i2[:, None], axis=1)[:, 0]
-        c1 = np.take_along_axis(cp, i1[:, None], axis=1)[:, 0]
-        c2 = np.take_along_axis(cp, i2[:, None], axis=1)[:, 0]
+        t1 = take_rows(tp, i1)
+        t2 = take_rows(tp, i2)
+        c1 = take_rows(cp, i1)
+        c2 = take_rows(cp, i2)
         frac = (t_query - t1) / (t2 - t1)
         lin = c1 + frac * (c2 - c1)
         positive = (c1 > 0) & (c2 > 0) & (c1 != c2)

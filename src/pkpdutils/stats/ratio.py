@@ -1,18 +1,31 @@
-r"""Geometric mean ratio of a parameter between a test and a reference sample."""
+"""Geometric mean ratio of a parameter between a test and a reference sample, and its publication table."""
 
+import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.stats import t as student_t
+import pandas as pd
 
+from pkpdutils.result import format_number
 from pkpdutils.stats.sample import (
     ParameterSample,
     Scale,
-    _log_positive,
+    exp_t_interval,
+    labels_match,
+    log_positive,
     paired_values,
+    welch_df,
+    welch_se,
 )
-from pkpdutils.stats.tests import _welch_df
+
+if TYPE_CHECKING:
+    # only for the annotation of `ratio_table`: `bioequivalence` builds on the
+    # ratio, so importing its result at runtime would be a cycle
+    from pkpdutils.stats.bioequivalence import BEResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,47 +82,6 @@ class RatioResult:
         }
 
 
-def _pair(
-    test: ParameterSample, reference: ParameterSample
-) -> tuple[np.ndarray, np.ndarray]:
-    """The log values of two paired samples, matched by `paired_values`.
-
-    Args:
-        test: the test sample.
-        reference: the reference sample.
-
-    Returns:
-        The logarithms of the test and the reference values in matching order.
-
-    Raises:
-        ValueError: for summary data, unequal sizes, labels which do not
-            match, no pair of finite values, or a non-positive value.
-    """
-    x, y = paired_values(test, reference)
-    return _log_positive(x, test.name), _log_positive(y, reference.name)
-
-
-def _labels_match(test: ParameterSample, reference: ParameterSample) -> bool:
-    """Whether both samples are individual, labelled and share an individual.
-
-    Which values are finite does not enter, so a missing value does not turn
-    a paired design into an unpaired one.
-
-    Args:
-        test: the test sample.
-        reference: the reference sample.
-
-    Returns:
-        `True` if the samples can be paired by label.
-    """
-    if not (test.is_individual and reference.is_individual):
-        return False
-    lx, ly = test.labels, reference.labels
-    if lx is None or ly is None:
-        return False
-    return bool(set(lx.tolist()) & set(ly.tolist()))
-
-
 def ratio(
     test: ParameterSample,
     reference: ParameterSample,
@@ -127,7 +99,9 @@ def ratio(
     Paired samples are matched with `paired_values`, by label when both
     samples carry labels and by position otherwise; a pair with a missing
     value is dropped. A sample of one value or two samples without variance
-    give `NaN` for `se_log`, `df` and the interval, the `gmr` stays finite.
+    give `NaN` for `se_log`, `df` and the interval, the `gmr` stays finite;
+    an unpaired sample without a finite value gives `NaN` throughout, a
+    paired one raises, as no pair remains.
 
     Args:
         test: the test sample.
@@ -143,10 +117,11 @@ def ratio(
         ValueError: for a paired ratio on summary data, unequal sizes,
             labels which do not match, or no pair of finite values.
     """
-    is_paired = _labels_match(test, reference) if paired is None else paired
-    alpha = 1.0 - ci_level
+    is_paired = labels_match(test, reference) if paired is None else paired
     if is_paired:
-        x, y = _pair(test, reference)
+        raw_test, raw_reference = paired_values(test, reference)
+        x = log_positive(raw_test, test.name)
+        y = log_positive(raw_reference, reference.name)
         d = x - y
         n = d.size
         center = float(d.mean())
@@ -157,13 +132,19 @@ def ratio(
         mu_t, s_t, n_test = test.moments(Scale.LOG)
         mu_r, s_r, n_reference = reference.moments(Scale.LOG)
         center = mu_t - mu_r
-        se = float(np.sqrt(s_t**2 / n_test + s_r**2 / n_reference))
-        df = _welch_df(s_t**2, n_test, s_r**2, n_reference)
-    tq = float(student_t.ppf(1.0 - alpha / 2.0, df)) if df > 0 else float("nan")
+        if n_test < 1 or n_reference < 1:
+            logger.debug(
+                "'%s' or '%s' has no finite value, the ratio is NaN",
+                test.name,
+                reference.name,
+            )
+        se = welch_se(s_t**2, n_test, s_r**2, n_reference)
+        df = welch_df(s_t**2, n_test, s_r**2, n_reference)
+    ci = exp_t_interval(center, se, df, ci_level)
     return RatioResult(
         gmr=float(np.exp(center)),
-        ci_low=float(np.exp(center - tq * se)),
-        ci_high=float(np.exp(center + tq * se)),
+        ci_low=ci[0],
+        ci_high=ci[1],
         ci_level=ci_level,
         log_ratio=center,
         se_log=se,
@@ -174,3 +155,94 @@ def ratio(
         name=test.name,
         unit=test.unit,
     )
+
+
+def _aligned(low: float, high: float, digits: int) -> tuple[str, str]:
+    """Two numbers of one cell, written with the same number of decimals.
+
+    The bounds of an interval belong together, so `(0.8, 1.25)` in percent is
+    written `80.0 - 125.0` and not `80.0 - 125`: both are rounded to `digits`
+    significant digits and then printed with the decimals of the one which
+    needs more.
+
+    Args:
+        low: the lower number.
+        high: the upper number.
+        digits: significant digits.
+
+    Returns:
+        The two formatted numbers; a number which needs the scientific
+        notation or is missing keeps the formatting of `format_number`.
+    """
+    cells = (format_number(low, digits), format_number(high, digits))
+    if any("e" in cell or not cell for cell in cells):
+        return cells
+    decimals = max(len(cell.partition(".")[2]) for cell in cells)
+    return (f"{float(cells[0]):.{decimals}f}", f"{float(cells[1]):.{decimals}f}")
+
+
+def ratio_table(
+    ratios: "Mapping[str, RatioResult] | BEResult",
+    *,
+    digits: int = 3,
+    percent: bool = True,
+) -> pd.DataFrame:
+    """The ratio table of a publication: one row per parameter, formatted.
+
+    The table a bioequivalence, food effect or special population study
+    reports: the geometric mean ratio of every parameter with its confidence
+    interval, as percentages of the reference (`percent`, the convention of
+    the regulatory guidances: 93.1 % rather than 0.931) or as plain ratios.
+    A `pkpdutils.stats.BEResult` adds the within-subject coefficient of
+    variation and the verdict of the acceptance limits.
+
+    Args:
+        ratios: parameter name to its `RatioResult`, or the result of
+            `pkpdutils.stats.bioequivalence`.
+        digits: significant digits of the numbers.
+        percent: report the ratio and its interval in percent.
+
+    Returns:
+        The table with the columns `parameter`, `unit`, `n_test`,
+        `n_reference`, `gmr`, `ci_low`, `ci_high`, `ci_level` and, for a
+        bioequivalence result, `cv_intra`, `limits` and `bioequivalent`; every
+        cell is a string.
+    """
+    # the local import keeps the cycle out of the module: `bioequivalence`
+    # builds on the ratio, the table only has to recognize its parameter
+    from pkpdutils.stats.bioequivalence import BEParameter
+
+    entries = ratios if isinstance(ratios, Mapping) else ratios.parameters
+    scale = 100.0 if percent else 1.0
+    suffix = " %" if percent else ""
+
+    def value(number: float, factor: float = 1.0) -> str:
+        """The number on the reported scale, formatted with its suffix."""
+        cell = format_number(number * factor, digits)
+        return f"{cell}{suffix}" if cell else ""
+
+    records: list[dict[str, Any]] = []
+    for name, result in entries.items():
+        row: dict[str, Any] = {
+            "parameter": name,
+            "unit": result.unit,
+            "n_test": str(result.n_test),
+            "n_reference": str(result.n_reference),
+            "gmr": value(result.gmr, scale),
+            "ci_low": value(result.ci_low, scale),
+            "ci_high": value(result.ci_high, scale),
+            # the level is a property of the interval and not a measurement,
+            # it is written without trailing zeros ("90 %", not "90.0 %")
+            "ci_level": f"{result.ci_level * 100.0:g} %",
+        }
+        if isinstance(result, BEParameter):
+            # a bioequivalence parameter adds the acceptance limits and the verdict
+            cv_intra = format_number(result.cv_intra * 100.0, digits)
+            row["cv_intra"] = f"{cv_intra} %" if cv_intra else ""
+            low, high = _aligned(
+                result.limits[0] * scale, result.limits[1] * scale, digits
+            )
+            row["limits"] = f"{low} - {high}{suffix}"
+            row["bioequivalent"] = str(bool(result.bioequivalent))
+        records.append(row)
+    return pd.DataFrame.from_records(records)

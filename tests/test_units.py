@@ -24,7 +24,17 @@ def test_parse_unit() -> None:
         parse_unit("not_a_unit")
 
 
-@pytest.mark.parametrize("unit", ["mg", "mmol", "mg/kg", "µmol/kg", "g"])
+@pytest.mark.parametrize("unit", ["", "   "])
+def test_parse_unit_rejects_the_empty_unit(unit: str) -> None:
+    # B4: '' parses as `dimensionless` and then breaks the derived units of the
+    # analyses; the spelling of a dimensionless quantity is 'dimensionless'
+    with pytest.raises(ValueError, match="dimensionless"):
+        parse_unit(unit)
+
+
+@pytest.mark.parametrize(
+    "unit", ["mg", "mmol", "mg/kg", "µmol/kg", "g", "IU", "IU/kg", "kIU"]
+)
 def test_check_dose_unit_valid(unit: str) -> None:
     check_dose_unit(unit)
 
@@ -37,7 +47,9 @@ def test_check_dose_unit_invalid(unit: str) -> None:
 
 def test_is_per_bodyweight() -> None:
     assert is_per_bodyweight("mg/kg")
+    assert is_per_bodyweight("IU/kg")
     assert not is_per_bodyweight("mg")
+    assert not is_per_bodyweight("IU")
 
 
 def test_normalize_volume() -> None:
@@ -62,3 +74,26 @@ def test_normalize_clearance() -> None:
 def test_unit_str() -> None:
     assert unit_str("ng/ml") == "nanogram / milliliter"
     assert unit_str(parse_unit("hr")) == "hour"
+
+
+def test_unit_helpers_are_cached() -> None:
+    # B1: the pint calls are the cost of every timecourse, dose and parameter;
+    # the same string must give the same (immutable) object without parsing again
+    assert parse_unit("ng/ml") is parse_unit("ng/ml")
+    hits = parse_unit.cache_info().hits
+    assert parse_unit("ng/ml") == ureg.Unit("nanogram / milliliter")
+    assert parse_unit.cache_info().hits == hits + 1
+    assert check_dose_unit("mg") is None
+    assert check_dose_unit("mg") is None
+    assert check_dose_unit.cache_info().currsize >= 1
+    assert is_per_bodyweight("mg/kg") is is_per_bodyweight("mg/kg") is True
+    assert is_per_bodyweight.cache_info().currsize >= 1
+
+
+def test_cached_unit_helpers_keep_raising() -> None:
+    # an exception is not cached, so a wrong unit is rejected every time
+    for _ in range(2):
+        with pytest.raises(ValueError, match="not_a_unit"):
+            parse_unit("not_a_unit")
+        with pytest.raises(ValueError, match="A dose must be in"):
+            check_dose_unit("liter")

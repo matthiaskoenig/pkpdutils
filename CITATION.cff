@@ -8,9 +8,9 @@ authors:
     given-names: "Matthias"
     orcid: "https://orcid.org/0000-0003-1725-179X"
     affiliation: "Humboldt-University Berlin, Faculty of Life Science, Institute for Biology, Berlin; University Lübeck; University Hospital Schleswig-Holstein, Campus Lübeck, First Department of Medicine, Germany"
-version: "1.0.0"
-date-released: "2020-08-24"
-doi: "10.5281/zenodo.3997539"
+version: "1.2.0.dev0"
+date-released: "2026-09-16"
+doi: "10.5281/zenodo.22792388"
 license: MIT
 repository-code: "https://github.com/matthiaskoenig/pkpdutils"
 url: "https://matthiaskoenig.github.io/pkpdutils"

@@ -15,7 +15,9 @@ class FitResult(ParameterResult):
     """Parameters of a fit as an `xarray.Dataset` over the sample dimensions.
 
     Variables: every parameter `p` with `p_se`, `p_ci_low`, `p_ci_high`,
-    `p_cv`; the derived parameters likewise; the statistics `cost`, `r2`,
+    `p_cv` (the relative standard error as a fraction, as every coefficient
+    of variation of the package); the derived parameters likewise; the
+    statistics `cost`, `r2`,
     `rmse`, `aic`, `aicc`, `bic`, `n_points`, `n_parameters`,
     `n_starts_converged`, `n_bootstrap` (number of successful residual
     bootstrap replicates, 0 without bootstrap; `attrs["bootstrap"]` holds the

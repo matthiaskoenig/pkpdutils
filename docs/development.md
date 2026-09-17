@@ -11,6 +11,8 @@ Two branches are permanent:
 
 Work happens on short lived branches off `develop`, which GitHub deletes after the merge. Releases are tagged on `develop`, see [Release](#release).
 
+`main` was reset once to the 1.0.0 release commit, because the history of the `pkdb-analysis` releases was not an ancestor of the rewritten `develop`, and the classic branch protection of `main` from that time (which required the codecov checks) was removed in favour of the rulesets; since then every release fast-forwards it.
+
 ## Pull requests
 
 Neither branch accepts a direct push, every change goes through a pull request against `develop`. This includes the maintainer, there is no bypass.
@@ -148,6 +150,32 @@ uvx ty check
 
 The configuration lives in `[tool.ty]` in `pyproject.toml`. Warnings are treated as errors, so the codebase is kept free of diagnostics. Suppress an unavoidable diagnostic with a rule specific `# ty: ignore[rule-name]` rather than a blanket comment.
 
+## Benchmarks
+
+`scripts/benchmark.py` times the hot paths of the package: the analysis of a small, a large and a multiple dose batch, the bootstrap and the delta method, a batch fit, the construction of timecourses and the iteration over a batch.
+
+```bash
+uv run python scripts/benchmark.py all                        # every case, about 15 s
+uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
+```
+
+The cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `fit`, `constructors`, `iterate` and `all`; `--repeat` (3 by default) is the number of timed runs after one warm-up run. The script prints a markdown table with the size of the case, the median wall time and the peak resident set size. Every case runs in a fresh interpreter, so the memory and the caches (`pkpdutils.units`) of one case do not carry into the next.
+
+The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
+
+## Parallelism
+
+`src/pkpdutils/parallel.py` holds the worker pools of the package. `executor(kind, n_workers)` returns one lazily created executor per kind and size, shared by every call of the process and closed by an `atexit` handler, so that the start-up of a process pool - about 0.7 s with the `forkserver` and `spawn` start methods, which import `pkpdutils`, numpy, scipy, xarray and pint in every worker - is paid once and not once per analysis. `resolve_workers(n_workers, n_rows, threshold=..., max_workers=8)` turns the option into a worker count (`None` automatic and serial below the threshold, `1` serial, anything else taken as given) and `split_rows(n_rows, n_workers, min_rows=1000, max_rows=None)` cuts the rows into about one contiguous slice per worker, never shorter than `min_rows` while there is more than one and never longer than `max_rows`.
+
+The two analyses use different workers, because their rows cost different things:
+
+| analysis | workers | automatic from | why |
+|---|---|---|---|
+| `nca` (`run_rows`) | threads | 20 000 rows (`NCA_WORKER_THRESHOLD`) | the core is vectorized numpy and releases the GIL; no pickling and no copy of the batch, and the pool starts in half a millisecond |
+| `fit` (`fit_rows`) | processes | 2 000 rows (`FIT_WORKER_THRESHOLD`) | a row is a python-heavy `scipy.optimize.least_squares` search, which only a process escapes the GIL for; the threshold is the measured break-even of the first pooled call, whose workers import the package, against the serial run |
+
+A pooled fit needs the `if __name__ == "__main__":` guard of `multiprocessing`; the threads of the NCA do not. Neither pool is used when the caller asks for `n_workers=1`. A pool that broke - a worker process killed by the operating system - is dropped and replaced by the next `executor` call, and `fit_rows` retries the batch once in the fresh pool; the pools are not re-entrant, so work running in a worker must never submit to the pool it runs in.
+
 ## Examples
 
 The examples are runnable scripts in `examples/`, they are not part of the package. They are run as modules from the root of the repository:
@@ -156,7 +184,7 @@ The examples are runnable scripts in `examples/`, they are not part of the packa
 python -m examples.timecourses
 ```
 
-An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_example_scripts.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md`.
+An example writes what it creates into the current working directory and never opens a window: a plotting example saves its figure to a file. `tests/examples/test_examples.py` runs the example scripts in a temporary directory, so a broken example fails the test suite. See `examples/README.md` and the [Gallery](gallery.md), which shows the figure and the core snippet of every example.
 
 ## Documentation
 
@@ -185,6 +213,41 @@ The API reference is rendered from the docstrings by [mkdocstrings](https://mkdo
 ```
 
 Docstrings are therefore the place to document functions and classes, the markdown files provide the narrative around them. Adding a module to the reference means adding such a page and an entry to `nav` in `zensical.toml`.
+
+### Rendering the example figures
+
+The figures of the documentation are the figures of the examples, and they are committed to `docs/images/`, so that the build of the site stays a plain `zensical build` and does not run any analysis. `scripts/render_examples.py` refreshes them: it runs every example of `tests/examples/test_examples.py` as a module in a temporary directory, with the `Agg` backend and warnings as errors, and copies every PNG the example wrote into `docs/images/` under its own name. It prints the files it wrote and fails when an example fails or writes no figure at all.
+
+```bash
+uv run python scripts/render_examples.py                  # every example
+uv run python scripts/render_examples.py nca_single emax  # a selection
+```
+
+Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.png)`.
+
+A page only embeds a figure an example writes, so the committed images and the pages cannot drift apart: a snippet of the documentation which draws the same figure as an example builds the same data, and a figure nothing produces is described in a sentence instead.
+
+### Snippets of the documentation
+
+Every ` ```python ` block of the user guide and of [Workflows](workflows.md) follows two rules:
+
+- **It runs.** The first block of the usage section of a page is self-contained (its imports, its data, the call and the output it prints) and runs from the root of the repository with warnings as errors:
+
+    ```bash
+    uv run python -W error snippet.py
+    ```
+
+    A later block of the same page may be a fragment, but then it names in a comment or in the sentence before it where every object it uses comes from ("the `batch` of the snippet above"). The output a snippet prints is shown below it, as a `text` block or as a markdown table, and is pasted from a run, never written by hand.
+
+    `tests/docs/test_snippets.py` keeps this honest: it runs the blocks of every page in the order they appear and in one namespace per page, in a temporary working directory with the files of `docs/data/` next to them, in a subprocess with `-W error`. A fragment which names objects the page cannot build (the result of another page, a simulation, a study a reader brings) carries the comment `# not executed` as its first line and is skipped; every other block has to run.
+
+- **It is formatted.** `ruff format` formats the code blocks of the markdown files as well, so `ruff format --check` covers the documentation and a snippet is written the way ruff would write it:
+
+    ```bash
+    uv run ruff format docs/
+    ```
+
+The walk-throughs of [Workflows](workflows.md) are the longest of these snippets: they simulate their study in the first lines so that a reader can paste them anywhere, and the figures they save are the figures of the examples of the same data.
 
 ### Files for agents { #files-for-agents }
 

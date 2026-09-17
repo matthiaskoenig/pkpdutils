@@ -12,7 +12,7 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 
 **Residual bootstrap.** `FitOptions(bootstrap=B)` replaces the Jacobian uncertainties by the empirical ones of \(B\) refits [^efron]: the weighted residuals of the fit are centered and inflated so that their variance matches the residual variance of the fit, resampled with replacement, added back to the fitted curve, and the model is refitted from the fitted parameters. The standard errors are the standard deviations of the replicates, the intervals their percentiles at `ci_level` and the correlation matrix is theirs as well; no local linear approximation is involved, and the intervals of the derived parameters are free to be asymmetric. A replicate whose refit does not converge is skipped, so `n_bootstrap`, the number of converged replicates, is the honest sample size and a value far below the requested `attrs["bootstrap"]` signals an unstable fit. Fewer than two converged replicates cannot estimate anything: the Jacobian uncertainties are reported instead and `FitFlag.BOOTSTRAP_FALLBACK` is set.
 
-**Multi-start.** Nonlinear least squares finds a local optimum. `FitOptions(n_starts=m)` starts from the initial guess and \(m - 1\) Latin hypercube points of a box around it (`start_spread`) and keeps the best solution, a converged one before a non-converged one and the smaller cost among equals; `n_starts_converged` says how many of them converged. `n_workers` spreads the rows of a batch over a process pool (never the starts of a single row); a pooled call needs an `if __name__ == "__main__":` guard, like every other use of `multiprocessing`.
+**Multi-start.** Nonlinear least squares finds a local optimum. `FitOptions(n_starts=m)` starts from the initial guess and \(m - 1\) Latin hypercube points of a box around it (`start_spread`) and keeps the best solution, a converged one before a non-converged one and the smaller cost among equals; `n_starts_converged` says how many of them converged. `n_workers` spreads the rows of a batch over a process pool (never the starts of a single row): a row is a python-heavy `least_squares` search, so the workers are processes, unlike the threads of the [NCA](nca.md). The default `n_workers=None` decides by size, the calling process up to 2 000 rows and one worker per core, at most 8, above it; `n_workers=1` forces the serial run and `n_workers=n` uses that many workers. The threshold is high because the workers of a process pool import `pkpdutils` and its dependencies when the pool starts, about a second, which only a large batch earns back on its own; a smaller batch of expensive rows - several starts, a residual bootstrap, a sum of exponentials - is worth an explicit `n_workers`. The pool is created once per process and shared with every later fit, so only the first pooled call pays the start-up of the workers; a pooled call needs an `if __name__ == "__main__":` guard, like every other use of `multiprocessing`.
 
 **Model comparison.** `compare_models` fits every model to the same data and ranks them per sample by the corrected Akaike information criterion; the Akaike weight is the probability that a model is the best of the candidate set [^burnham]. AICc penalizes parameters, so a bi-exponential only wins over a mono-exponential when the second phase is supported by the data, and with few points the penalty can also favour a fixed exponent over a free one. The information criteria count the residual variance as an estimated parameter, \(K = k + 1\) [^burnham]; the reported `n_parameters` stays \(k\), the free parameters of the model.
 
@@ -23,6 +23,32 @@ Non-compartmental analysis reads parameters from the observed points; some quest
 **Flags.** `NOT_CONVERGED` (1, no start converged), `AT_BOUND` (2, a parameter rests on a finite bound, measured relative to the bound and to the start value), `TOO_FEW_POINTS` (4, fewer points than parameters + 1), `FLIP_FLOP` (8, a Bateman fit with \(k_a < k_e\), where the terminal phase reflects absorption), `SINGULAR` (16, the Jacobian gives no usable covariance, so no standard errors), `NO_DATA` (32, fewer than two finite points), `BOOTSTRAP_FALLBACK` (64, see above).
 
 **Units.** The parameters are reported in the raw units of the data: `k` in `1/[x]`, `a` in `[y]`, `auc` in `[y]·[x]`, `slope` in `[y]/[x]`. Nothing is normalized to liter or liter per hour as in the NCA, so the parameters, the data and the predicted curve always live on the same scale.
+
+What one row of a fit does, from the data and the model to the result:
+
+```mermaid
+flowchart TD
+  D["x, y (+ sd)"] --> W["Weighting<br/>NONE | INV_Y | INV_Y2 | INV_SD"]
+  M["Model<br/>predict, derived, initial_guess"] --> G["the initial guess<br/>(log-linear regression,<br/>curve stripping, half-way crossing)"]
+  W --> R["weighted residuals r_i"]
+  G --> SC["search space q<br/>log10 for the positive parameters"]
+  SC --> MS["n_starts Latin hypercube starts<br/>around the guess"]
+  MS --> LS["scipy.optimize.least_squares<br/>keep the best converged solution"]
+  R --> LS
+  LS --> COV["covariance from the Jacobian<br/>cov(q) = s^2 (J'J)^-1"]
+  COV --> SE["p_se, t intervals,<br/>transformed back to the linear scale"]
+  COV --> DEL["derived parameters<br/>delta method, numerical gradient"]
+  LS --> BS{"FitOptions.bootstrap?"}
+  BS -->|"B > 0"| RB["residual bootstrap<br/>percentile intervals<br/>flag BOOTSTRAP_FALLBACK below 2"]
+  BS -->|"0"| SE
+  LS --> GOF["r2, rmse, aic, aicc, bic<br/>K = k + 1"]
+  SE --> OUT["FitResult"]
+  DEL --> OUT
+  RB --> OUT
+  GOF --> OUT
+  OUT --> CM["compare_models<br/>AICc, Akaike weights"]
+  OUT --> PT["proportionality_test<br/>the criterion of Smith et al."]
+```
 
 ## Math
 
@@ -103,7 +129,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `p` | \(\hat p\) | unit of the parameter | the estimate |
 | `p_se` | \(\mathrm{se}(\hat p)\) | unit of `p` | standard error, from the Jacobian or from the bootstrap replicates |
 | `p_ci_low`, `p_ci_high` | \(p(q \pm t\,\mathrm{se}(q))\) | unit of `p` | confidence interval at `ci_level` (percentiles of the replicates with a bootstrap) |
-| `p_cv` | \(100\,\mathrm{se}(\hat p) / \lvert \hat p \rvert\) | % | relative standard error |
+| `p_cv` | \(\mathrm{se}(\hat p) / \lvert \hat p \rvert\) | 1 | relative standard error, a fraction |
 | `cost` | \(\tfrac12\sum_i \rho(r_i^2)\) | - | the objective at the optimum |
 | `r2` | see Math | - | coefficient of determination of the unweighted residuals |
 | `rmse` | see Math | unit of `y` | root mean squared error of the unweighted residuals |
@@ -117,7 +143,7 @@ A `FitResult` is an `xarray.Dataset` over the sample dimensions of the input, wi
 | `correlation` | \(\mathrm{cov}(q)_{ij} / (\mathrm{se}(q_i)\mathrm{se}(q_j))\) | - | correlation matrix over `(parameter, parameter_)` |
 | `flags` | | - | `FitFlag` bits, see above |
 
-Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. Four kinds of variable carry `attrs["units"] = "dimensionless"` without being dimensionless: `rmse` carries the unit of `y`, a weighted residual is dimensionless only under `INV_SD` (it is the residual divided by the square root of the variance model otherwise), `cost` is the sum of the squared weighted residuals and carries \([y]^2\) under `NONE`, and the `_cv` variables are percentages. `proportionality_test` returns `b`, `b_ci_low`, `b_ci_high`, `bound_low`, `bound_high`, `proportional` and `inconclusive`.
+Discrete indicators (`flip_flop`) and the counts carry no uncertainty variables. The `_cv` variables are fractions (`0.12` is a relative standard error of 12 %, the convention of the whole package, which a table formats as a percentage where it prints). Three kinds of variable carry `attrs["units"] = "dimensionless"` without being dimensionless: `rmse` carries the unit of `y`, a weighted residual is dimensionless only under `INV_SD` (it is the residual divided by the square root of the variance model otherwise), and `cost` is the sum of the squared weighted residuals and carries \([y]^2\) under `NONE`. `proportionality_test` returns a `ProportionalityResult` with `slope`, `ci_low`, `ci_high`, `bounds`, `proportional`, `inconclusive`, `dose_range` and `criterion`, and `to_dict`.
 
 ## API
 
@@ -125,9 +151,15 @@ One curve:
 
 ```python
 import numpy as np
-from pkpdutils import FitOptions, fit
-from pkpdutils.fit import Weighting
-from pkpdutils.fit.models import Bateman
+
+from pkpdutils import Bateman, FitOptions, Weighting, fit
+
+# an oral curve with 5 % noise and the standard deviations of the group
+rng = np.random.default_rng(0)
+t = np.array([0.25, 0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 24])
+c = 5.0 * 1.2 / (1.2 - 0.15) * (np.exp(-0.15 * t) - np.exp(-1.2 * t))
+sd = 0.05 * c
+c = c * rng.lognormal(0, 0.05, t.size)
 
 result = fit(
     Bateman(),
@@ -139,30 +171,52 @@ result = fit(
     options=FitOptions(weighting=Weighting.INV_SD, n_starts=5, seed=0),
 )
 q = result.to_quantities()
-q["ka"], q["ka_ci_low"], q["tmax"]  # parameters and derived, as pint quantities
-result.predict(np.linspace(0, 24, 100))  # the fitted curve
-result.correlation()  # correlation matrix of the parameters
-result.flags()  # e.g. ['AT_BOUND']
+for name in ("a", "ka", "ke", "tmax", "cmax", "thalf", "auc"):
+    print(f"{name:<6} {q[name]:~P}")
+print(f"ka 95 % interval {q['ka_ci_low']:~P} - {q['ka_ci_high']:~P}")
+print("r2", round(float(result["r2"]), 4), "| flags", result.flags())
+print(result.predict(np.array([0.0, 1.0, 4.0])).round(3))  # the fitted curve
 ```
+
+```text
+a      5.1233145604293835 mg/l
+ka     1.1679414997936728 1/h
+ke     0.15360699594336222 1/h
+tmax   1.9999326676335676 h
+cmax   3.7682019656913637 mg/l
+thalf  4.512471429462247 h
+auc    33.3533933722553 h⋅mg/l
+ka 95 % interval 1.0663803842676483 1/h - 1.2791752052688965 1/h
+r2 0.9953 | flags []
+[0.    3.225 3.136]
+```
+
+The rate constants come back where the curve was built (1.2 and 0.15 per hour), the parameters carry the raw units of the data, and the derived `tmax`, `cmax`, `thalf` and `auc` come with their own standard errors and intervals. `result.correlation()` is the correlation matrix of the parameters, which says how much the fit could trade one against another.
 
 `FitOptions` also carries `fixed`, `bounds` and `initial` per parameter name, `loss`, `ci_level`, `bootstrap`, `n_workers` and the scipy tolerances.
 
 A single `Timecourse` is fitted by `fit_timecourse`, which takes the times relative to the dose and the units from the curve and returns a result without a sample dimension, so nothing has to be indexed:
 
 ```python
-from pkpdutils import fit_timecourse
-from pkpdutils.fit.models import Bateman
+# not executed
+from pkpdutils import Bateman, FitOptions, fit_timecourse
 
+# `timecourse`: one oral curve, e.g. the `tc` of the Timecourses page
 result = fit_timecourse(Bateman(), timecourse, options=FitOptions(n_starts=5, seed=1))
 result.to_quantities()["ka"]  # no indexer, the result is one sample
 ```
 
+![A Bateman curve fitted to an oral timecourse with its weighted residuals below](images/fitting_exponential.png)
+
+![Predicted against observed concentrations with the identity line](images/fitting_gof.png)
+
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
 ```python
-from pkpdutils import fit_timecourses
-from pkpdutils.fit.models import BiExp
+# not executed
+from pkpdutils import BiExp, FitOptions, fit_timecourses
 
+# `batch`: a Timecourses over "individual", e.g. the one of the NCA page
 fits = fit_timecourses(BiExp(), batch, options=FitOptions(n_starts=10, seed=1))
 fits["k1"]  # DataArray over the sample dims of the batch
 fits.to_dataframe()  # one row per sample, flags decoded
@@ -176,19 +230,88 @@ fits.summarize("individual")  # mean, sd, se, interval over the individuals
 A parameter against a dose or a covariate is fitted along one dimension of any dataset, the result of another analysis included:
 
 ```python
-from pkpdutils import compare_models, fit_table, proportionality_test
-from pkpdutils.fit.models import Allometric, BiExp, MonoExp, Power
+import numpy as np
 
-power = fit_table(Power(), nca_result.ds, "dose", "auc_inf_obs", dim="dose")
-test = proportionality_test(power, dose_range=(25, 400))
-bool(test["proportional"]), bool(test["inconclusive"])
+from pkpdutils import Power, Route, Timecourses, fit_table, nca, proportionality_test
+from pkpdutils.fit import proportionality_table
 
-allometric = fit_table(Allometric(exponent=0.75), ds, "weight", "cl", dim="individual")
+# the exposure of a dose escalation, five dose groups
+time = np.array([0.5, 1, 2, 4, 6, 8, 12, 24])
+doses = np.array([25.0, 50.0, 100.0, 200.0, 400.0])
+rng = np.random.default_rng(4)
+values = np.stack(
+    [
+        d**1.15 / 10 * np.exp(-0.25 * time) * rng.lognormal(0, 0.04, time.size)
+        for d in doses
+    ]
+)
+batch = Timecourses.from_arrays(
+    time,
+    values,
+    time_unit="hr",
+    unit="mg/l",
+    dims=("dose",),
+    coords={"dose": doses},
+    dose={"amount": doses, "unit": "mg"},
+    route=Route.IV_BOLUS,
+    substance="drug",
+)
+result = nca(batch)
+
+# the dose coordinate of an NCAResult carries no unit, the fit needs one
+ds = result.ds.assign_coords(dose=("dose", doses, {"units": "mg"}))
+power = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
+print(
+    power.to_dataframe()
+    .T.loc[["a", "b", "b_se", "b_ci_low", "b_ci_high", "r2"]]
+    .to_string(header=False)
+)
+
+test = proportionality_test(power, dose_range=(25.0, 400.0))
+print(test.to_dict())  # the verdict as plain python values
+print(proportionality_table(test).to_string(index=False))
+```
+
+```text
+a          0.384314
+b           1.15642
+b_se       0.005503
+b_ci_low   1.138906
+b_ci_high  1.173933
+r2         0.999973
+{'slope': 1.15641953119868, 'ci_low': 1.138906039242174, 'ci_high': 1.173933023155186, 'bounds': [0.9195179762781595, 1.0804820237218407], 'proportional': False, 'inconclusive': False, 'dose_range': [25.0, 400.0], 'criterion': [0.8, 1.25]}
+slope ci_low ci_high bound_low bound_high dose_low dose_high          verdict
+ 1.16   1.14    1.17     0.920       1.08     25.0       400 not proportional
+```
+
+`proportionality_table` is the table a dose escalation reports: the exponent with its interval, the acceptance bounds the criterion derives from the dose range and the verdict, one row per sample and every number formatted with `digits` significant digits.
+
+| slope | ci_low | ci_high | bound_low | bound_high | dose_low | dose_high | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.16 | 1.14 | 1.17 | 0.920 | 1.08 | 25.0 | 400 | not proportional |
+
+The other two front ends of `fit_table` and the model comparison, with the `t` and `c` of the first snippet of this section and a dataset `weights_ds` of a clearance per individual with a `weight` coordinate:
+
+```python
+# not executed
+from pkpdutils import Allometric, BiExp, MonoExp, compare_models, fit_table
+
+# `weights_ds`: a dataset of a clearance per individual with a `weight`
+# coordinate; `t` and `c` are the arrays of the first snippet of this section
+allometric = fit_table(
+    Allometric(exponent=0.75), weights_ds, "weight", "cl", dim="individual"
+)
 
 comparison = compare_models([MonoExp(), BiExp()], t, c, x_unit="hr", y_unit="mg/l")
 comparison.table  # one row per sample and model, with delta_aicc and akaike_weight
 comparison.best  # name of the best model per sample
 ```
+
+The power model of the dose escalation above (`examples/dose_proportionality.py`) and the allometric model of a clearance against the body weight (`examples/covariate.py`):
+
+![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
+
+![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
 
 The units of `fit_table` come from `attrs["units"]` of the `x` and `y` variables and fall back to `dimensionless`, so a coordinate without units (the `dose` of an `NCAResult`) is best given one before the fit. A sample dimension must not share its name with a variable of the result (a dimension `k` with a model that has a rate constant `k` raises a `ValueError`), and the candidate models of `compare_models` need distinct names, which `Allometric(exponent=0.75)` gets as `allometric_0.75`.
 

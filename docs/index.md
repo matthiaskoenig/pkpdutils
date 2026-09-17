@@ -5,41 +5,84 @@
 
 ## Background
 
-A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug–drug interactions and meta-analysis.
+A pharmacokinetic study measures the concentration of a substance over time; the parameters which describe such a curve, the exposure `AUC`, the peak `Cmax`, the half-life, the clearance and the volume of distribution, are what studies report, compare and pool. `pkpdutils` computes these parameters from timecourses without a model of the body (non-compartmental analysis), fits the curves and the parameters which need a model of the curve (exponentials, Emax, dose proportionality, covariates), propagates the uncertainty of group data, and provides the statistics used on the parameters: significance tests, bioequivalence, the classification of drug-drug interactions and meta-analysis.
 
 All data structures are [xarray](https://xarray.dev) datasets with [pint](https://pint.readthedocs.io) units, so many timecourses, e.g. all individuals of a study or all runs of a simulation scan, are analysed in one vectorized call.
 
 ## Features
 
-- **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with doses, routes, uncertainties and metadata.
-- **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
-- **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and steady state, vectorized over a batch, with flags and units.
+- **[Timecourses](timecourses.md)** - `Timecourse` for one curve, `Timecourses` for many, with dosing protocols, routes, uncertainties and metadata.
+- **[Data formats](formats.md)** - read the event records of NONMEM and Monolix, the two tables of PKNCA and the CDISC ADaM ADNCA dataset, and write event records back.
+- **[Non-compartmental analysis](nca.md)** - exposure, peak, terminal phase, clearance and volume parameters of concentration curves, single dose and multiple dosing (every dosing interval, steady state, accumulation), vectorized over a batch, with flags and units.
 - **[Uncertainty](uncertainty.md)** - bootstrap and delta method for group timecourses, summaries over individuals, partial areas.
 - **[Curve fitting](fitting.md)** - exponential, Bateman, Emax, power and covariate models with standard errors, confidence intervals, bootstrap, model comparison and dose proportionality.
 - **[Pharmacodynamics](pd.md)** - effect timecourses in the NCA and concentration-effect relationships with the Emax family.
 - **[Statistics](statistics.md)** - significance tests, geometric mean ratios, bioequivalence, drug-drug interaction classification and meta-analysis on the parameters of groups and studies.
+- **[Bioequivalence](bioequivalence.md)** - the average bioequivalence of two formulations, crossover and parallel designs, the ratio table and figure of the report.
+- **[Drug-drug interactions](ddi.md)** - exposure ratios with and without a perpetrator, the FDA and EMA classes, substrate sensitivity, the class figure.
 - **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures, parameter distributions, ratio and forest plots.
+- **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 
 The methods behind the package are cited in [References](references.md).
 
 ## Quickstart
 
-```python
-from pkpdutils import Dose, Route, Timecourse, nca_single
+A study of twelve subjects in three dose groups, from the event table it arrives in to the parameter table and the figure of the report. The table is [study.csv](data/study.csv), which the first walk-through of [Workflows](workflows.md) builds:
 
-tc = Timecourse(
-    time=[0.5, 1, 2, 4, 8, 12, 24],
-    value=[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.03],
+```python
+import pandas as pd
+
+from pkpdutils import Route, Timecourses, nca, summary_table
+from pkpdutils.console import print_table
+from pkpdutils.plot import plot_mean_timecourse
+
+# [study.csv](data/study.csv): ID, TIME, DV, AMT, EVID and the dose group
+events = pd.read_csv("study.csv")
+batch = Timecourses.from_events(
+    events,
     time_unit="hr",
     unit="mg/l",
-    dose=Dose(amount=100, unit="mg", route=Route.ORAL),
-    substance="caffeine",
+    dose_unit="mg",
+    route=Route.ORAL,
+    covariates=["dose"],
 )
-result = nca_single(tc)
-print(result.to_dataframe().T)
+result = nca(batch)
+table = summary_table(
+    result,
+    "individual",
+    by="dose",
+    parameters=["auc_inf_obs", "cmax", "thalf", "cl_f"],
+    stats=("n", "geomean", "geocv", "median", "range"),
+    unit_style="short",
+)
+print_table(table, title="Pharmacokinetic parameters by dose group")
+plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
 ```
 
-Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md).
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
+
+The table the snippet prints, the geometric mean with its coefficient of variation per dose group:
+
+```text
+Pharmacokinetic parameters by dose group
+
+  parameter     unit     dose   n   geomean   geocv    median   range
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  auc_inf_obs   h⋅mg/l     50   4   5.07      28.0 %   4.76     4.08 - 7.29
+  cmax          mg/l       50   4   0.925     14.9 %   0.883    0.818 - 1.15
+  thalf         h          50   4   2.86      23.5 %   2.72     2.37 - 3.89
+  cl_f          l/h        50   4   9.86      28.0 %   10.7     6.86 - 12.3
+  auc_inf_obs   h⋅mg/l    100   4   10.2      27.1 %   9.58     8.22 - 14.4
+  cmax          mg/l      100   4   1.87      10.6 %   1.79     1.75 - 2.19
+  thalf         h         100   4   2.87      24.2 %   2.73     2.35 - 3.91
+  cl_f          l/h       100   4   9.84      27.1 %   10.6     6.94 - 12.2
+  auc_inf_obs   h⋅mg/l    200   4   20.4      26.0 %   19.3     16.6 - 28.6
+  cmax          mg/l      200   4   3.69      6.82 %   3.70     3.38 - 3.99
+  thalf         h         200   4   2.89      25.9 %   2.75     2.33 - 4.05
+  cl_f          l/h       200   4   9.79      26.0 %   10.5     6.98 - 12.0
+```
+
+The same steps with the table built in place, the parameters printed and four more walk-throughs (bioequivalence, drug-drug interaction, steady state, dose proportionality) are in [Workflows](workflows.md). Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md), or browse the [Gallery](gallery.md), a figure and a snippet for every example of the repository.
 
 ## How to cite
 
@@ -47,7 +90,7 @@ Continue with [Installation](installation.md), [Timecourses](timecourses.md) and
 
 If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi.org/10.5281/zenodo.3997539):
 
-> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.3997539
+> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* (Version 1.1.0) \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.22792388
 
 ## License
 

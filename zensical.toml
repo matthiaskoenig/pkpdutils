@@ -10,6 +10,11 @@ repo_url = "https://github.com/matthiaskoenig/pkpdutils"
 repo_name = "matthiaskoenig/pkpdutils"
 edit_uri = "edit/develop/docs/"
 
+# the card grid of the gallery, see `docs/stylesheets/extra.css`
+extra_css = [
+  "stylesheets/extra.css",
+]
+
 # MathJax for the formulas of the user guide (pymdownx.arithmatex)
 extra_javascript = [
   "javascripts/mathjax.js",
@@ -19,16 +24,25 @@ extra_javascript = [
 nav = [
   { "Home" = "index.md" },
   { "Installation" = "installation.md" },
+  { "Workflows" = "workflows.md" },
   { "User guide" = [
-    { "Units" = "units.md" },
     { "Timecourses" = "timecourses.md" },
+    { "Data formats" = "formats.md" },
     { "Non-compartmental analysis" = "nca.md" },
     { "Uncertainty" = "uncertainty.md" },
+    { "Urinary excretion" = "urine.md" },
+    { "Sparse sampling" = "sparse.md" },
     { "Curve fitting" = "fitting.md" },
     { "Pharmacodynamics" = "pd.md" },
     { "Statistics" = "statistics.md" },
+    { "Bioequivalence" = "bioequivalence.md" },
+    { "Drug-drug interactions" = "ddi.md" },
+    { "Reporting" = "reporting.md" },
     { "Plotting" = "plotting.md" },
+    { "Units" = "units.md" },
+    { "Gallery" = "gallery.md" },
     { "Glossary" = "glossary.md" },
+    { "Validation" = "validation.md" },
   ] },
   { "References" = "references.md" },
   { "API reference" = [
@@ -37,6 +51,10 @@ nav = [
       { "units" = "api/units.md" },
       { "timecourse" = "api/timecourse.md" },
       { "result" = "api/result.md" },
+      { "report" = "api/report.md" },
+      { "io" = "api/io.md" },
+      { "cdisc" = "api/cdisc.md" },
+      { "parallel" = "api/parallel.md" },
       { "console" = "api/console.md" },
       { "log" = "api/log.md" },
     ] },
@@ -46,8 +64,15 @@ nav = [
       { "result" = "api/nca.result.md" },
       { "auc" = "api/nca.auc.md" },
       { "terminal" = "api/nca.terminal.md" },
+      { "intervals" = "api/nca.intervals.md" },
       { "steady_state" = "api/nca.steady_state.md" },
       { "uncertainty" = "api/nca.uncertainty.md" },
+      { "report" = "api/nca.report.md" },
+      { "urine" = "api/nca.urine.md" },
+      { "sparse" = "api/nca.sparse.md" },
+      { "tss" = "api/nca.tss.md" },
+      { "bioavailability" = "api/nca.bioavailability.md" },
+      { "analytes" = "api/nca.analytes.md" },
     ] },
     { "pkpdutils.fit" = [
       { "fit" = "api/fit.md" },
@@ -58,6 +83,7 @@ nav = [
     { "pkpdutils.stats" = [
       { "stats" = "api/stats.md" },
       { "bioequivalence" = "api/stats.bioequivalence.md" },
+      { "power" = "api/stats.power.md" },
       { "ddi" = "api/stats.ddi.md" },
       { "meta" = "api/stats.meta.md" },
     ] },
@@ -161,7 +187,10 @@ pymdownx.keys = {}
 pymdownx.magiclink = {}
 pymdownx.mark = {}
 pymdownx.smartsymbols = {}
-pymdownx.superfences = {}
+# the ```mermaid fences of the diagrams of the user guide, rendered in the browser
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
 pymdownx.tabbed.alternate_style = true
 pymdownx.tasklist.custom_checkbox = true
 pymdownx.tilde = {}

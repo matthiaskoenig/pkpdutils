@@ -170,3 +170,67 @@ def test_batch_rows_are_independent() -> None:
     tp, cp, n_valid = pack_valid(t, c)
     fit = terminal_fit(tp, cp, n_valid, np.zeros(3, dtype=int), TerminalPhase())
     np.testing.assert_allclose(fit.slope, -ks)
+
+
+def test_last_n_honours_exclude_cmax() -> None:
+    # B18: `LAST_N` regressed the whole absorption phase when `n_points` reached
+    # beyond the maximum
+    t = np.array([[0.5, 1, 2, 4, 8, 12, 24.0]])
+    c = np.array([[1.2, 2.5, 2.1, 1.3, 0.5, 0.2, 0.05]])
+    tp, cp, n_valid = pack_valid(t, c)
+    tmax_idx = np.array([1])
+    excluded = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        tmax_idx,
+        TerminalPhase(method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=True),
+    )
+    assert excluded.n_points[0] == 5
+    assert excluded.t_first[0] == pytest.approx(2.0)
+    included = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        tmax_idx,
+        TerminalPhase(method=TerminalMethod.LAST_N, n_points=7, exclude_cmax=False),
+    )
+    assert included.n_points[0] == 7
+    assert included.t_first[0] == pytest.approx(0.5)
+
+
+def test_t_last_is_the_last_regressed_point() -> None:
+    # the window ends at the last regressable point, not at the padded end
+    t = np.array([[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]])
+    c = np.array([[8.0, 4.0, 2.0, 1.0, 0.5, np.nan]])
+    tp, cp, n_valid = pack_valid(t, c)
+    fit = terminal_fit(tp, cp, n_valid, np.array([0]), TerminalPhase())
+    assert fit.t_first[0] == pytest.approx(1.0)
+    assert fit.t_last[0] == pytest.approx(4.0)
+
+
+def test_t_last_of_a_manual_window() -> None:
+    t = np.array([[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]])
+    c = np.array([[8.0, 4.0, 2.0, 1.0, 0.5, 0.25]])
+    tp, cp, n_valid = pack_valid(t, c)
+    mask = np.zeros_like(c, dtype=bool)
+    mask[0, 1:4] = True
+    fit = terminal_fit(
+        tp,
+        cp,
+        n_valid,
+        np.array([0]),
+        TerminalPhase(method=TerminalMethod.MANUAL, points=(1, 2, 3)),
+        manual_mask=mask,
+    )
+    assert fit.n_points[0] == 3
+    assert fit.t_first[0] == pytest.approx(1.0)
+    assert fit.t_last[0] == pytest.approx(3.0)
+
+
+def test_t_last_is_nan_without_a_fit() -> None:
+    t = np.array([[0.0, 1.0]])
+    c = np.array([[1.0, 2.0]])
+    tp, cp, n_valid = pack_valid(t, c)
+    fit = terminal_fit(tp, cp, n_valid, np.array([1]), TerminalPhase())
+    assert np.isnan(fit.t_last[0])

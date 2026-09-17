@@ -7,14 +7,18 @@ The API reference is generated from the docstrings of the package.
 | module | description |
 | --- | --- |
 | [units](units.md) | the unit registry of the package and unit helpers |
-| [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Route` and `DosingRegimen`, the data model |
-| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample` |
-| [console](console.md) | shared rich console |
+| [timecourse](timecourse.md) | `Timecourse`, `Timecourses`, `Dose`, `Dosing`, `Route` and `DosingRegimen`, the data model |
+| [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample`, `summary_table` the parameter table of a publication |
+| [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`/`write_pknca`, `read_adnca`/`write_adnca` |
+| [cdisc](cdisc.md) | the CDISC map, see [Data formats](../formats.md): `PKPARMCD`, `pkunit`, `to_pp`, `write_pp` |
+| [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
+| [report](report.md) | `Report` and `study_report`, see [Reporting](../reporting.md): the tables and the figures of a study in one HTML or markdown document |
+| [console](console.md) | shared rich console, `rich_table` and `print_table` for the tables of the package |
 | [log](log.md) | logging of the package |
 
 ## pkpdutils.nca
 
-Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
+Non-compartmental analysis, see [Non-compartmental analysis](../nca.md), [Urinary excretion](../urine.md) and [Sparse sampling](../sparse.md).
 
 | module | description |
 | --- | --- |
@@ -23,8 +27,15 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md).
 | [nca.result](nca.result.md) | `NCAResult` and the units of the parameters |
 | [nca.auc](nca.auc.md) | vectorized trapezoid areas, interpolation |
 | [nca.terminal](nca.terminal.md) | vectorized terminal phase regression |
-| [nca.steady_state](nca.steady_state.md) | steady state parameters, accumulation ratio, superposition |
+| [nca.intervals](nca.intervals.md) | parameters of every dosing interval of a multiple dose curve |
+| [nca.steady_state](nca.steady_state.md) | steady state parameters of the last interval, accumulation ratio, superposition |
 | [nca.uncertainty](nca.uncertainty.md) | bootstrap and delta method of the parameters of group timecourses |
+| [nca.report](nca.report.md) | `M13A_STATISTICS`, `acceptability_table`, `methods_line`: the tables of a regulatory report |
+| [nca.urine](nca.urine.md) | `Excretion`, `nca_urine`: the excretion rate curve, the amount recovered and the renal clearance of a urine study |
+| [nca.sparse](nca.sparse.md) | `nca_sparse`, `sparse_mean`, `bailer_variance`: the area of a sparse or destructive design with its standard error |
+| [nca.tss](nca.tss.md) | `time_to_steady_state`, `TSSResult`: the time to steady state from the troughs of the dosing intervals |
+| [nca.bioavailability](nca.bioavailability.md) | `bioavailability`: the absolute and the relative bioavailability of two analyses |
+| [nca.analytes](nca.analytes.md) | `metabolite_ratio`: the metabolite to parent ratio of a batch of several analytes |
 
 ## pkpdutils.fit
 
@@ -35,7 +46,7 @@ Curve fitting, see [Curve fitting](../fitting.md) and [Pharmacodynamics](../pd.m
 | [fit](fit.md) | `fit`, `fit_timecourse`, `fit_timecourses`, `fit_table`, `FitOptions`, `FitResult`, `Model`: the engine, the result, the front ends and the options |
 | [fit.models](fit.models.md) | the model library: exponentials, the Emax family, linear, power and allometric models |
 | [fit.compare](fit.compare.md) | `compare_models` and `ModelComparison`: the ranking by AICc and the Akaike weights |
-| [fit.proportionality](fit.proportionality.md) | `proportionality_test`: the confidence interval criterion of dose proportionality |
+| [fit.proportionality](fit.proportionality.md) | `proportionality_test` and `proportionality_table`: the confidence interval criterion of dose proportionality |
 
 ## pkpdutils.stats
 
@@ -43,9 +54,10 @@ Statistics on parameters, see [Statistics](../statistics.md).
 
 | module | description |
 | --- | --- |
-| [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`: samples, tests and the geometric mean ratio |
-| [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, paired, parallel and 2x2 crossover designs |
-| [stats.ddi](stats.ddi.md) | `ddi_classification`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
+| [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`, `ratio_table`: samples, tests and the geometric mean ratio |
+| [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, the paired, parallel, 2x2 crossover and replicate designs and the reference-scaled limits |
+| [stats.power](stats.power.md) | `power_tost`, `sample_size_tost`, `owens_q`: the power and the sample size of a study |
+| [stats.ddi](stats.ddi.md) | `ddi_classification`, `ddi_table`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
 | [stats.meta](stats.meta.md) | `effect_size`, `fixed_effect`, `random_effects`, `heterogeneity`, `meta_analysis`: the meta-analysis |
 
 ## pkpdutils.plot
@@ -54,4 +66,4 @@ Figures, see [Plotting](../plotting.md).
 
 | module | description |
 | --- | --- |
-| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality`, `plot_parameters`, `plot_ratio`, `plot_forest`, `plot_bland_altman` |
+| [plot](plot.md) | `PlotStyle`, `plot_timecourse`, `plot_nca`, `plot_nca_grid`, `plot_intervals`, `plot_fit`, `plot_goodness_of_fit`, `plot_dose_proportionality`, `plot_parameters`, `plot_ratio`, `plot_forest`, `plot_bland_altman` |

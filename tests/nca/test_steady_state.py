@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pytest
 
-from pkpdutils import Dose, DosingRegimen, Route, Timecourse, Timecourses
+from pkpdutils import Dose, Dosing, DosingRegimen, Route, Timecourse, Timecourses
 from pkpdutils.nca import AUCMethod, NCAOptions, nca, nca_single
 from pkpdutils.nca.steady_state import accumulation_ratio, superposition
 
@@ -42,9 +42,8 @@ def steady_state_curve() -> Timecourse:
 
 
 def test_steady_state_parameters_analytic() -> None:
-    regimen = DosingRegimen(dose=DOSE, interval=TAU)
-    options = NCAOptions(regimen=regimen, auc_method=AUCMethod.LOG)
-    q = nca_single(steady_state_curve(), options).to_quantities()
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
+    q = nca_single(steady_state_curve(), options=options).to_quantities()
     accumulation = 1 / (1 - np.exp(-K * TAU))
     # auc over one interval at steady state equals the single dose auc(0-inf) = c0/k
     assert q["auc_tau"].magnitude == pytest.approx(C0 / K, rel=1e-6)
@@ -72,20 +71,14 @@ def test_steady_state_parameters_analytic() -> None:
 
 def test_steady_state_ctrough_interpolated_when_tau_between_points() -> None:
     tc = steady_state_curve()
-    regimen = DosingRegimen(dose=DOSE, interval=11.0)
     q = nca_single(
-        tc, NCAOptions(regimen=regimen, auc_method=AUCMethod.LOG)
+        tc, options=NCAOptions(tau=11.0, auc_method=AUCMethod.LOG)
     ).to_quantities()
     expected = C0 * np.exp(-K * 11.0) / (1 - np.exp(-K * TAU))
     assert q["ctrough"].magnitude == pytest.approx(expected, rel=1e-6)
     assert (
         q["auc_tau"].magnitude
-        < nca_single(
-            tc,
-            NCAOptions(
-                regimen=DosingRegimen(dose=DOSE, interval=TAU), auc_method=AUCMethod.LOG
-            ),
-        )
+        < nca_single(tc, options=NCAOptions(tau=TAU, auc_method=AUCMethod.LOG))
         .to_quantities()["auc_tau"]
         .magnitude
     )
@@ -108,10 +101,8 @@ def test_auc_tau_excludes_the_area_before_the_dose() -> None:
         dose=dose,
         substance="x",
     )
-    options = NCAOptions(
-        regimen=DosingRegimen(dose=dose, interval=TAU), auc_method=AUCMethod.LOG
-    )
-    q = nca_single(tc, options).to_quantities()
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
+    q = nca_single(tc, options=options).to_quantities()
     # the segment straddling the dose contributes only its part after the dose:
     # the value at the dose is the logarithmic interpolation of the segment
     frac = (0.0 - t_rel[0]) / (t_rel[1] - t_rel[0])
@@ -134,11 +125,9 @@ def test_fluctuation_uses_the_maximum_inside_the_interval() -> None:
             "value": np.append(tc.value, 100.0),
         }
     )
-    options = NCAOptions(
-        regimen=DosingRegimen(dose=DOSE, interval=TAU), auc_method=AUCMethod.LOG
-    )
-    a = nca_single(tc, options).to_quantities()
-    b = nca_single(beyond, options).to_quantities()
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
+    a = nca_single(tc, options=options).to_quantities()
+    b = nca_single(beyond, options=options).to_quantities()
     assert b["cmax"].magnitude == pytest.approx(100.0)
     assert b["cmax_ss"].magnitude == pytest.approx(a["cmax_ss"].magnitude)
     assert b["fluctuation"].magnitude == pytest.approx(a["fluctuation"].magnitude)
@@ -146,17 +135,17 @@ def test_fluctuation_uses_the_maximum_inside_the_interval() -> None:
 
 
 def test_steady_state_batch_workers_and_chunks_match_serial() -> None:
-    options = NCAOptions(
-        regimen=DosingRegimen(dose=DOSE, interval=TAU), auc_method=AUCMethod.LOG
-    )
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
     tc = steady_state_curve()
     curves = [
         tc.model_copy(update={"value": tc.value * scale})
         for scale in (0.5, 1.0, 1.5, 2.0, 2.5)
     ]
     batch = Timecourses.from_timecourses(curves, dim="individual")
-    serial = nca(batch, options)
-    parallel = nca(batch, options.model_copy(update={"n_workers": 2, "chunk_rows": 2}))
+    serial = nca(batch, options=options)
+    parallel = nca(
+        batch, options=options.model_copy(update={"n_workers": 2, "chunk_rows": 2})
+    )
     for name in serial.parameters:
         np.testing.assert_allclose(
             parallel[name].values, serial[name].values, equal_nan=True
@@ -165,25 +154,29 @@ def test_steady_state_batch_workers_and_chunks_match_serial() -> None:
 
 
 def test_steady_state_tau_beyond_last_point_is_nan() -> None:
-    regimen = DosingRegimen(dose=DOSE, interval=48.0)
-    q = nca_single(steady_state_curve(), NCAOptions(regimen=regimen)).to_quantities()
+    q = nca_single(steady_state_curve(), options=NCAOptions(tau=48.0)).to_quantities()
     assert np.isnan(q["auc_tau"].magnitude) and np.isnan(q["ctrough"].magnitude)
 
 
 def test_accumulation_ratio_observed() -> None:
-    regimen = DosingRegimen(dose=DOSE, interval=TAU)
-    options = NCAOptions(regimen=regimen, auc_method=AUCMethod.LOG)
-    ss = nca(Timecourses.from_timecourses([steady_state_curve()]), options)
-    sd = nca(Timecourses.from_timecourses([single_dose()]), options)
-    ratio = accumulation_ratio(ss, sd)
-    assert float(ratio.values[0]) == pytest.approx(1 / (1 - np.exp(-K * TAU)), rel=1e-3)
-    assert ratio.attrs["units"] == "dimensionless"
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
+    ss = nca(Timecourses.from_timecourses([steady_state_curve()]), options=options)
+    sd = nca(Timecourses.from_timecourses([single_dose()]), options=options)
+    ratios = accumulation_ratio(ss, sd)
+    assert float(ratios["accumulation_ratio"].values[0]) == pytest.approx(
+        1 / (1 - np.exp(-K * TAU)), rel=1e-3
+    )
+    assert ratios["accumulation_ratio"].attrs["units"] == "dimensionless"
+    # the stationarity ratio compares AUC(0-tau) at steady state with the
+    # total exposure of the single dose, which are equal for linear kinetics
+    assert float(ratios["stationarity_ratio"].values[0]) == pytest.approx(1.0, rel=1e-2)
+    assert ratios["stationarity_ratio"].attrs["units"] == "dimensionless"
 
 
 def test_superposition_reaches_analytic_steady_state() -> None:
     regimen = DosingRegimen(dose=DOSE, interval=TAU, n_doses=20)
     predicted = superposition(
-        single_dose(), regimen, NCAOptions(auc_method=AUCMethod.LOG)
+        single_dose(), regimen, options=NCAOptions(auc_method=AUCMethod.LOG)
     )
     assert predicted.dose is not None and predicted.dose.amount == 100
     assert predicted.unit == "mg/l" and predicted.time_unit == "hr"
@@ -207,7 +200,7 @@ def test_superposition_with_a_sample_at_the_dose_time() -> None:
         # the linear rise before the first sample must not divide by time 0
         warnings.simplefilter("error")
         predicted = superposition(
-            at_zero, regimen, NCAOptions(auc_method=AUCMethod.LOG)
+            at_zero, regimen, options=NCAOptions(auc_method=AUCMethod.LOG)
         )
     assert np.isfinite(predicted.value).all()
     assert predicted.time[0] == pytest.approx(0.0)
@@ -221,4 +214,168 @@ def test_superposition_needs_n_doses_and_terminal_phase() -> None:
         time=[1, 2, 3, 4], value=[1, 2, 3, 4], time_unit="hr", unit="mg/l", dose=DOSE
     )
     with pytest.raises(ValueError, match="lambda_z"):
-        superposition(rising, DosingRegimen(dose=DOSE, interval=TAU, n_doses=3))
+        superposition(rising, Dosing.regimen(DOSE, interval=TAU, n_doses=3))
+
+
+def test_protocol_analysis_uses_the_last_dose_at_steady_state() -> None:
+    # two doses, the last one at t = 2: the steady state parameters belong to
+    # the interval of the last dose, while the single dose analysis is relative
+    # to the first dose of the protocol
+    dose_time = 2.0
+    dose = DOSE.model_copy(update={"time": dose_time})
+    t_rel = np.array([-dose_time, 0.5, 1, 2, 4, 6, 8, 10, 12])
+    c = AMPLITUDE * np.exp(-K * np.abs(t_rel))
+    c[0] = AMPLITUDE * np.exp(-K * (TAU - dose_time))
+    protocol = Dosing(
+        amounts=[100, 100],
+        times=[dose_time - TAU, dose_time],
+        unit="mg",
+        route=Route.IV_BOLUS,
+    )
+
+    def curve(dosing: Dosing) -> Timecourse:
+        return Timecourse(
+            time=t_rel + dose_time,
+            value=c,
+            time_unit="hr",
+            unit="mg/l",
+            dosing=dosing,
+            substance="x",
+        )
+
+    options = NCAOptions(tau=TAU, auc_method=AUCMethod.LOG)
+    q = nca_single(curve(protocol), options=options).to_quantities()
+    expected = nca_single(curve(Dosing.single(dose)), options=options).to_quantities()
+    for name in ("auc_tau", "ctrough", "cmin_ss", "cmax_ss", "cavg", "cl_ss"):
+        assert q[name].magnitude == pytest.approx(expected[name].magnitude, rel=1e-9)
+    # without 'tau' the protocol gives the interval, and the point parameters
+    # are computed from the last dose on: tmax is relative to the last dose
+    plain = nca_single(
+        curve(protocol), options=NCAOptions(auc_method=AUCMethod.LOG)
+    ).to_quantities()
+    assert plain["tmax"].magnitude == pytest.approx(0.5)
+    assert plain["tau"].magnitude == pytest.approx(TAU)
+    assert plain["auc_tau"].magnitude == pytest.approx(q["auc_tau"].magnitude, rel=1e-9)
+
+
+def multiple_dose_curve(
+    n_doses: int, scale: float = 1.0, label: str = "multi"
+) -> Timecourse:
+    """A curve sampled over the last interval of a protocol of `n_doses` doses."""
+    start = (n_doses - 1) * TAU
+    t = start + np.array([0.5, 1, 2, 4, 6, 8, 10, 12])
+    return Timecourse(
+        time=t,
+        value=scale * AMPLITUDE * np.exp(-K * (t - start)),
+        time_unit="hr",
+        unit="mg/l",
+        dosing=Dosing(
+            amounts=[100.0] * n_doses,
+            times=[k * TAU for k in range(n_doses)],
+            unit="mg",
+            route=Route.IV_BOLUS,
+        ),
+        substance="x",
+        label=label,
+    )
+
+
+def mixed_curves() -> list[Timecourse]:
+    """One single dose subject and one subject with a protocol of five doses."""
+    return [
+        single_dose().model_copy(update={"label": "single"}),
+        multiple_dose_curve(5),
+    ]
+
+
+def test_mixed_single_and_multiple_dose_batch() -> None:
+    # B3: a batch mixing protocols reported no clearance at all; every row is
+    # analysed by its own protocol now
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    df = (
+        nca(Timecourses.from_timecourses(mixed_curves()), options=options)
+        .to_dataframe()
+        .set_index("individual")
+    )
+    # the single dose row keeps its single dose clearance, the multiple dose row
+    # reports the clearance of its dosing interval; both are Dose / (C0 / k)
+    assert df.loc["single", "cl"] == pytest.approx(100.0 / (C0 / K), rel=1e-4)
+    assert df.loc["multi", "cl_ss"] == pytest.approx(100.0 / (C0 / K), rel=1e-4)
+    assert np.isnan(df.loc["single", "cl_ss"])
+    assert np.isnan(df.loc["multi", "cl"])
+    assert np.isfinite(df.loc["single", "auc_inf_dn"])
+    assert np.isnan(df.loc["multi", "auc_inf_dn"])
+    # the steady state variables of the single dose row are NaN, its own are not
+    assert np.isnan(df.loc["single", "auc_tau"])
+    assert df.loc["multi", "auc_tau"] == pytest.approx(C0 / K, rel=1e-4)
+    assert df.loc["multi", "n_doses"] == 5
+    assert df.loc["single", "n_doses"] == 1
+    assert np.isfinite(df.loc["single", "auc_inf_obs"])
+
+
+def test_mixed_batch_rows_match_the_analyses_of_the_protocols_alone() -> None:
+    single, multi = mixed_curves()
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    mixed = nca(Timecourses.from_timecourses([single, multi]), options=options)
+    alone_single = nca_single(single, options=options)
+    alone_multi = nca_single(multi, options=options)
+    for name in alone_single.parameters:
+        assert float(mixed[name].sel(individual="single")) == pytest.approx(
+            float(alone_single[name]), nan_ok=True
+        )
+    for name in alone_multi.parameters:
+        assert float(mixed[name].sel(individual="multi")) == pytest.approx(
+            float(alone_multi[name]), nan_ok=True
+        )
+
+
+def test_mixed_batch_chunks_and_workers_match_one_chunk() -> None:
+    # the rows of a chunk take different paths, so a chunk boundary must not
+    # change a single variable of the result
+    single, multi = mixed_curves()
+    curves = [
+        multi,
+        single,
+        multiple_dose_curve(2, scale=1.5, label="multi2"),
+        single_dose().model_copy(update={"label": "single2"}),
+    ]
+    batch = Timecourses.from_timecourses(curves)
+    options = NCAOptions(auc_method=AUCMethod.LOG)
+    whole = nca(batch, options=options)
+    assert whole["n_doses"].to_numpy().tolist() == [5.0, 1.0, 2.0, 1.0]
+    for update in ({"chunk_rows": 1}, {"chunk_rows": 1, "n_workers": 2}):
+        split = nca(batch, options=options.model_copy(update=update))
+        assert set(split.ds.data_vars) == set(whole.ds.data_vars)
+        for variable in whole.ds.data_vars:
+            name = str(variable)
+            np.testing.assert_allclose(
+                split[name].to_numpy(),
+                whole[name].to_numpy(),
+                equal_nan=True,
+                err_msg=name,
+            )
+
+
+def test_superposition_carries_the_trough_before_every_dose() -> None:
+    regimen = DosingRegimen(dose=DOSE, interval=TAU, n_doses=3)
+    predicted = superposition(
+        single_dose(), regimen, options=NCAOptions(auc_method=AUCMethod.LOG)
+    )
+    ahead = 1e-3 * TAU
+    for k in (1, 2):
+        before = np.isclose(predicted.time, k * TAU - ahead)
+        at = np.isclose(predicted.time, k * TAU)
+        assert before.sum() == 1 and at.sum() == 1
+        # the pre-dose sample is the trough, the sample at the dose the peak
+        assert predicted.value[before][0] < predicted.value[at][0]
+        assert predicted.value[at][0] > C0
+    # a grid of the caller is used, the pre-dose samples added to it
+    grid = np.arange(0.0, 3 * TAU + 24.0, 0.5)
+    fine = superposition(
+        single_dose(),
+        regimen,
+        options=NCAOptions(auc_method=AUCMethod.LOG),
+        grid=grid,
+    )
+    assert fine.time.size == grid[grid <= 2 * TAU + single_dose().time[-1]].size + 2
+    assert np.isclose(fine.time, TAU - ahead).sum() == 1

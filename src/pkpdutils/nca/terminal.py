@@ -15,11 +15,19 @@ end, so `window_statistics` returns `(N, n)` arrays without a loop over rows
 or windows.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
+import pandas as pd
 
+from pkpdutils.nca.auc import take_rows
 from pkpdutils.nca.options import NCAFlag, TerminalMethod, TerminalPhase
+
+#: dimension the candidate windows of the terminal regression live on
+CANDIDATE_DIM: str = "candidate"
+
+#: prefix of the variables which describe the candidate windows of a result
+CANDIDATE_PREFIX: str = "candidate_"
 
 
 @dataclass(frozen=True)
@@ -34,8 +42,13 @@ class TerminalFit:
         se_slope: standard error of the slope
         n_points: number of points of the regression
         t_first: time of the first point of the regression
+        t_last: time of the last point of the regression
         start: packed index of the first point of the window
         flags: `NCAFlag` bits `POSITIVE_SLOPE` and `TOO_FEW_POINTS`
+        candidates: every candidate window of every row with the columns `row`
+            (the index of the row), `start_time`, `n`, `r2_adj` and `slope`,
+            `None` unless `TerminalPhase.keep_candidates` asked for it
+            (`candidate_table`)
     """
 
     slope: np.ndarray
@@ -45,8 +58,10 @@ class TerminalFit:
     se_slope: np.ndarray
     n_points: np.ndarray
     t_first: np.ndarray
+    t_last: np.ndarray
     start: np.ndarray
     flags: np.ndarray
+    candidates: pd.DataFrame | None = None
 
 
 def _suffix_sum(a: np.ndarray) -> np.ndarray:
@@ -106,12 +121,195 @@ def terminal_fit(
     tmax_idx: np.ndarray,
     phase: TerminalPhase,
     manual_mask: np.ndarray | None = None,
+    exclude: np.ndarray | None = None,
+    windows: np.ndarray | None = None,
 ) -> TerminalFit:
     """Terminal log-linear regression of every row.
 
     Args:
         tp: packed times `(N, n)`
         cp: packed values `(N, n)`
+        n_valid: valid points per row
+        tmax_idx: packed index of the maximum per row
+        phase: the selection rule and its parameters
+        manual_mask: packed points of the regression for `TerminalMethod.MANUAL`
+        exclude: packed points which may not enter the regression `(N, n)`,
+            the values below the limit of quantification a BLQ rule kept or
+            imputed (`pkpdutils.nca.options.BLQRules`)
+        windows: the terminal window of single rows `(N, 2)`, `NaN` for a row
+            without one (`TerminalPhase.windows`). A row with a window
+            regresses the points whose time lies in `[t_first, t_last]`, every
+            other row follows `phase.method`.
+
+    Returns:
+        The fit per row, with the table of every candidate window
+        (`candidate_table`) when `phase.keep_candidates` is set.
+
+    Raises:
+        ValueError: `phase.method` is `TerminalMethod.MANUAL` and `manual_mask` is `None`.
+    """
+    n_rows, n = tp.shape
+    idx = np.arange(n)[None, :]
+    in_row = idx < n_valid[:, None]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        y = np.where(in_row & (cp > 0), np.log(cp), np.nan)
+    regressable = in_row & np.isfinite(y)
+    if exclude is not None:
+        regressable = regressable & ~exclude
+    flags = np.zeros(n_rows, dtype=np.int64)
+
+    given = (
+        np.zeros(n_rows, dtype=bool)
+        if windows is None
+        else np.isfinite(windows).all(axis=1)
+    )
+    if not given.any():
+        fit = _fit_by_method(tp, y, regressable, n_valid, tmax_idx, phase, manual_mask)
+    else:
+        assert windows is not None
+        with np.errstate(invalid="ignore"):
+            inside = regressable & (tp >= windows[:, :1]) & (tp <= windows[:, 1:2])
+        windowed = _fit_selected(tp, y, inside, phase, flags)
+        fit = (
+            # every row carries a window, the rule of the batch decides nothing
+            windowed
+            if given.all()
+            else _merge_fits(
+                _fit_by_method(
+                    tp, y, regressable, n_valid, tmax_idx, phase, manual_mask
+                ),
+                windowed,
+                given,
+            )
+        )
+    if not phase.keep_candidates:
+        return fit
+    return replace(fit, candidates=candidate_table(tp, y, regressable, tmax_idx, phase))
+
+
+def candidate_table(
+    tp: np.ndarray,
+    y: np.ndarray,
+    regressable: np.ndarray,
+    tmax_idx: np.ndarray,
+    phase: TerminalPhase,
+) -> pd.DataFrame:
+    """Every window the selection of the terminal phase may choose from.
+
+    A candidate is a window which starts at a point of the regression, holds at
+    least `phase.min_points` regressable points and, with
+    `phase.exclude_cmax`, starts after the maximum: the windows `BEST_FIT`
+    ranks by the adjusted R², and the same set for the other rules, which pick
+    one of them by a different criterion. A window whose first point cannot be
+    regressed is left out, since its statistics are those of the window
+    starting at the next regressable point (`_collect`). The slope is reported
+    as it is, so a window of a still rising curve is in the table with a
+    positive slope, which `BEST_FIT` never chooses.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`, `NaN` where there is none
+        regressable: the points which may enter a regression `(N, n)`
+        tmax_idx: packed index of the maximum per row
+        phase: the selection rule and its parameters
+
+    Returns:
+        One row per candidate window with the columns `row` (the index of the
+        row of the batch), `start_time` (the time of the first point of the
+        window), `n` (points of the window), `r2_adj` and `slope`; the rows
+        are ordered by row and by the start time within a row.
+    """
+    stats = window_statistics(tp, y, regressable)
+    first_allowed = (
+        tmax_idx + 1 if phase.exclude_cmax else np.zeros_like(tmax_idx)
+    ).astype(np.int64)
+    index = np.arange(tp.shape[1])[None, :]
+    with np.errstate(invalid="ignore"):
+        candidate = (
+            regressable
+            & (index >= first_allowed[:, None])
+            & (stats["n"] >= phase.min_points)
+            & np.isfinite(stats["r2_adj"])
+        )
+    rows, columns = np.nonzero(candidate)
+    return pd.DataFrame(
+        {
+            "row": rows.astype(np.int64),
+            "start_time": tp[rows, columns],
+            "n": stats["n"][rows, columns].astype(np.int64),
+            "r2_adj": stats["r2_adj"][rows, columns],
+            "slope": stats["slope"][rows, columns],
+        }
+    )
+
+
+def _merge_fits(base: TerminalFit, other: TerminalFit, use: np.ndarray) -> TerminalFit:
+    """Take the fit of `other` in the rows of `use` and the fit of `base` elsewhere.
+
+    Args:
+        base: the fit of the batch rule (`TerminalPhase.method`)
+        other: the fit of the rows with a window of their own
+        use: the rows which take the fit of `other` `(N,)`
+
+    Returns:
+        The combined fit.
+    """
+    return TerminalFit(
+        slope=np.where(use, other.slope, base.slope),
+        intercept=np.where(use, other.intercept, base.intercept),
+        r2=np.where(use, other.r2, base.r2),
+        r2_adj=np.where(use, other.r2_adj, base.r2_adj),
+        se_slope=np.where(use, other.se_slope, base.se_slope),
+        n_points=np.where(use, other.n_points, base.n_points),
+        t_first=np.where(use, other.t_first, base.t_first),
+        t_last=np.where(use, other.t_last, base.t_last),
+        start=np.where(use, other.start, base.start).astype(np.int64),
+        flags=np.where(use, other.flags, base.flags).astype(np.int64),
+    )
+
+
+def _fit_selected(
+    tp: np.ndarray,
+    y: np.ndarray,
+    selected: np.ndarray,
+    phase: TerminalPhase,
+    flags: np.ndarray,
+) -> TerminalFit:
+    """Regress exactly the selected points of every row.
+
+    A single window per row: the selected points, with the statistics of the
+    suffix sums and everything before the first selected point excluded.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`
+        selected: the points of the regression `(N, n)`
+        phase: the selection rule, for `min_points` and `min_adj_r2`
+        flags: the flags of every row so far `(N,)`
+
+    Returns:
+        The fit per row.
+    """
+    stats = window_statistics(tp, np.where(selected, y, 0.0), selected)
+    start = np.where(selected.any(axis=1), selected.argmax(axis=1), 0)
+    return _collect(tp, stats, start, selected.any(axis=1), phase, flags, selected)
+
+
+def _fit_by_method(
+    tp: np.ndarray,
+    y: np.ndarray,
+    regressable: np.ndarray,
+    n_valid: np.ndarray,
+    tmax_idx: np.ndarray,
+    phase: TerminalPhase,
+    manual_mask: np.ndarray | None,
+) -> TerminalFit:
+    """The regression of every row under the rule of `phase.method`.
+
+    Args:
+        tp: packed times `(N, n)`
+        y: the logarithms of the values `(N, n)`, `NaN` where there is none
+        regressable: the points which may enter a regression `(N, n)`
         n_valid: valid points per row
         tmax_idx: packed index of the maximum per row
         phase: the selection rule and its parameters
@@ -125,21 +323,12 @@ def terminal_fit(
     """
     n_rows, n = tp.shape
     idx = np.arange(n)[None, :]
-    in_row = idx < n_valid[:, None]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        y = np.where(in_row & (cp > 0), np.log(cp), np.nan)
-    regressable = in_row & np.isfinite(y)
     flags = np.zeros(n_rows, dtype=np.int64)
 
     if phase.method is TerminalMethod.MANUAL:
         if manual_mask is None:
             raise ValueError("TerminalMethod.MANUAL needs 'manual_mask'")
-        selected = regressable & manual_mask
-        # a single window per row: the selected points, statistics via the
-        # suffix sums with everything before the first selected point excluded
-        stats = window_statistics(tp, np.where(selected, y, 0.0), selected)
-        start = np.where(selected.any(axis=1), selected.argmax(axis=1), 0)
-        return _collect(tp, stats, start, selected.any(axis=1), phase, flags, selected)
+        return _fit_selected(tp, y, regressable & manual_mask, phase, flags)
 
     # with `exclude_cmax` a window may only start after the point of the maximum,
     # otherwise it may start anywhere in the row, also before the maximum
@@ -169,13 +358,16 @@ def terminal_fit(
         start = np.where(
             enough_n.any(axis=1), n - 1 - enough_n[:, ::-1].argmax(axis=1), 0
         )
+        # with `exclude_cmax` the window may not reach into the absorption phase:
+        # it then holds the points after the maximum, fewer than `n_points`
+        start = np.clip(np.maximum(start, first_allowed), 0, n - 1)
         has_fit = enough_n.any(axis=1)
     else:  # ALL_AFTER_TMAX
         start = tmax_idx + 1
         has_fit = start < n_valid
         start = np.clip(start, 0, n - 1)
-    n_at_start = np.take_along_axis(stats["n"], start[:, None], axis=1)[:, 0]
-    slope_at_start = np.take_along_axis(stats["slope"], start[:, None], axis=1)[:, 0]
+    n_at_start = take_rows(stats["n"], start)
+    slope_at_start = take_rows(stats["slope"], start)
     with np.errstate(invalid="ignore"):
         enough = has_fit & (n_at_start >= phase.min_points)
         positive = enough & ~(slope_at_start < 0)
@@ -197,15 +389,23 @@ def _collect(
     The statistics of a window starting at a point that cannot be regressed
     (`NaN`, zero or negative) are those of the window starting at the next
     regressable point, so the start is snapped forward to that point before the
-    times are read: `t_first` always names a point of the regression.
+    times are read: `t_first` always names a point of the regression, and
+    `t_last` the last regressable point at or after it, the point every window
+    ends at.
     """
     # snap the start of every row forward to the first regressable point
-    at_or_after = regressable & (np.arange(tp.shape[1])[None, :] >= start[:, None])
+    n_columns = tp.shape[1]
+    at_or_after = regressable & (np.arange(n_columns)[None, :] >= start[:, None])
     start = np.where(at_or_after.any(axis=1), at_or_after.argmax(axis=1), start)
+    end = np.where(
+        at_or_after.any(axis=1),
+        n_columns - 1 - at_or_after[:, ::-1].argmax(axis=1),
+        start,
+    )
 
     def take(a: np.ndarray) -> np.ndarray:
         """Value of `a` at the chosen `start` index of every row."""
-        return np.take_along_axis(a, start[:, None], axis=1)[:, 0]
+        return take_rows(a, start)
 
     n_points = take(stats["n"])
     with np.errstate(invalid="ignore"):
@@ -228,6 +428,7 @@ def _collect(
         se_slope=pick(stats["se_slope"]),
         n_points=pick(stats["n"]),
         t_first=pick(tp),
+        t_last=np.where(has_fit, take_rows(tp, end), nan),
         start=np.where(has_fit, start, -1),
         flags=flags,
     )
