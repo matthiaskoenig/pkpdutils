@@ -30,7 +30,8 @@ def figure_of(
     figure's layout engine or size; only a figure created here gets the
     constrained layout engine, so a caller-supplied `ax` keeps its figure's
     own layout, meaning long tick labels can clip unless the caller sets one
-    (`fig.set_layout_engine("constrained")`).
+    (`fig.set_layout_engine("constrained")`). The figure of an `ax` inside a
+    subfigure is the figure holding the subfigure, the one a caller saves.
 
     Args:
         ax: axes to draw on, `None` for a new figure.
@@ -43,7 +44,7 @@ def figure_of(
         fig, ax = plt.subplots(figsize=figsize)
         fig.set_layout_engine("constrained")
         return fig, ax
-    fig = ax.get_figure()
+    fig = ax.get_figure(root=True)
     assert isinstance(fig, Figure)
     return fig, ax
 
@@ -59,7 +60,8 @@ def axes_of(
     """The grid of axes to draw on and its figure, a new figure without `axes`.
 
     Mirrors `figure_of` for a multi-panel figure: a function drawing into
-    caller-supplied axes never touches their figure's layout engine.
+    caller-supplied axes never touches their figure's layout engine, and the
+    figure of axes inside a subfigure is the figure holding the subfigure.
 
     Args:
         axes: existing axes to draw the grid into, `nrows * ncols` of them
@@ -92,7 +94,7 @@ def axes_of(
             f"{nrows * ncols} axes are needed for a {nrows}x{ncols} grid, got {flat.size}"
         )
     grid = flat.reshape(nrows, ncols)
-    fig = flat[0].get_figure()
+    fig = flat[0].get_figure(root=True)
     assert isinstance(fig, Figure)
     return fig, grid
 
@@ -364,7 +366,7 @@ def annotation_room(ax: Axes, texts: Sequence[str]) -> float:
         return 0.0
     size = FontProperties(size=ANNOTATION_FONTSIZE).get_size_in_points()
     needed = max(len(text) for text in texts) * _CHARACTER_WIDTH * size
-    figure = ax.get_figure()
+    figure = ax.get_figure(root=True)
     assert isinstance(figure, Figure)
     figure.canvas.draw()
     available = ax.get_window_extent().width * 72.0 / figure.dpi

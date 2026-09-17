@@ -68,6 +68,22 @@ def test_axes_of_never_touches_the_layout_engine_of_passed_axes() -> None:
     matplotlib.pyplot.close(fig)
 
 
+def test_figure_of_and_axes_of_return_the_figure_of_axes_in_a_subfigure() -> None:
+    fig = matplotlib.pyplot.figure(layout="constrained")
+    grid_spec = fig.add_gridspec(1, 2)
+    left, right = fig.add_subfigure(grid_spec[0]), fig.add_subfigure(grid_spec[1])
+    ax = left.subplots()
+    fig2, ax2 = figure_of(ax)
+    assert fig2 is fig and ax2 is ax
+    axes = right.subplots(1, 2)
+    fig3, grid = axes_of(axes, nrows=1, ncols=2, figsize=(6, 4))
+    assert fig3 is fig
+    assert grid.shape == (1, 2)
+    ax.plot([1.0, 2.0], [1.0, 2.0])
+    assert 0.0 < annotation_room(ax, ["1.00 [0.90, 1.10]"]) <= 1.5
+    matplotlib.pyplot.close(fig)
+
+
 def test_axes_of_raises_for_a_mismatched_number_of_axes() -> None:
     _fig, axes = matplotlib.pyplot.subplots(nrows=1, ncols=2)
     with pytest.raises(ValueError):

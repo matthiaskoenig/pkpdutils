@@ -34,6 +34,16 @@ def test_plot_ratio_of_ratio_results() -> None:
     matplotlib.pyplot.close("all")
 
 
+def test_plot_ratio_draws_into_the_axes_of_a_subfigure() -> None:
+    fig = matplotlib.pyplot.figure(layout="constrained")
+    left = fig.add_subfigure(fig.add_gridspec(1, 2)[0])
+    ax = left.subplots()
+    ratios = {"auc": ratio(ParameterSample(values=TEST), ParameterSample(values=REF))}
+    assert plot_ratio(ratios, ax=ax) is fig
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["auc"]
+    matplotlib.pyplot.close(fig)
+
+
 def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     be = BEResult(
         parameters={
