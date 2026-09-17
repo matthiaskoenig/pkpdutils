@@ -88,7 +88,7 @@ The same steps with the table built in place, the parameters printed and four mo
 
 If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi.org/10.5281/zenodo.3997539):
 
-> König, M. & Grzegorzewski, J. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* (Version 1.1.0) \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.22792388
+> König, M. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* (Version 1.1.0) \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.22792388
 
 ## Installation
 
@@ -117,4 +117,4 @@ Matthias König is supported by the German Research Foundation (DFG) within the 
 
 Matthias König was supported by the Federal Ministry of Education and Research (BMBF, Germany) within the research network Systems Medicine of the Liver (**LiSyM**, grant number 031L0054).
 
-© 2018-2026 Matthias König & Jan Grzegorzewski.
+© 2018-2026 Matthias König.
