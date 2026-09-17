@@ -922,9 +922,11 @@ def abel_limits(cv_intra_r: float) -> tuple[float, float]:
         return POINT_ESTIMATE_LIMITS
     s_wr = float(np.sqrt(np.log1p(min(cv_intra_r, EMA_SCALING_CV_CAP) ** 2)))
     upper = float(np.exp(EMA_SCALING_K * s_wr))
+    # the widened limits are never narrower than the unscaled ones: just above
+    # the switching condition the formula still lies inside 80.00-125.00 %
     return (
-        max(1.0 / upper, EMA_ABEL_LIMITS[0]),
-        min(upper, EMA_ABEL_LIMITS[1]),
+        min(max(1.0 / upper, EMA_ABEL_LIMITS[0]), POINT_ESTIMATE_LIMITS[0]),
+        max(min(upper, EMA_ABEL_LIMITS[1]), POINT_ESTIMATE_LIMITS[1]),
     )
 
 

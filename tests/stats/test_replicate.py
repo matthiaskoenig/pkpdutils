@@ -399,6 +399,14 @@ def test_the_fda_rule_takes_its_point_estimate_from_the_subject_differences() ->
     assert result.bioequivalent is False
 
 
+def test_the_widened_limits_are_never_narrower_than_the_unscaled_ones() -> None:
+    from pkpdutils.stats.bioequivalence import abel_limits
+
+    for cv in (0.3000001, 0.30003, 0.30005):
+        low, high = abel_limits(cv)
+        assert low <= 0.8 and high >= 1.25
+
+
 def test_the_limits_at_the_switching_condition_are_the_unscaled_ones() -> None:
     """At a CV of exactly 30 % the EMA does not widen (PowerTOST `CVswitch`)."""
     assert abel_limits(0.30) == (0.8, 1.25)
