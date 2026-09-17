@@ -292,6 +292,21 @@ def _array(value: Any, name: str) -> np.ndarray:
     return arr
 
 
+def _quoted(names: list[str]) -> str:
+    """Field names quoted and joined for an error message.
+
+    Args:
+        names: the names, at least one.
+
+    Returns:
+        `'a'`, `'a' and 'b'` or `'a', 'b' and 'c'`.
+    """
+    quoted = [f"'{name}'" for name in names]
+    if len(quoted) == 1:
+        return quoted[0]
+    return f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+
+
 @dataclass(frozen=True)
 class Summary:
     r"""Summary statistics of a parameter sample.
@@ -374,15 +389,21 @@ class ParameterSample:
     crossover study). Summary data: `n` with `mean` and `sd` and/or `geomean`
     and `geocv`, as reported in a publication.
 
+    The two kinds do not mix: every statistic of individual data is computed
+    from its values, so a summary field given next to `values` would be kept
+    without ever being used, and `labels` and `coords` describe individuals,
+    which summary data does not have. Either combination raises `ValueError`.
+
     Attributes:
         values: individual values, `None` for summary data
-        labels: label per value, `None` without labels
-        coords: name to array with one entry per value
-        mean: arithmetic mean of summary data
-        sd: standard deviation of summary data
-        n: number of individuals of summary data
-        geomean: geometric mean of summary data
-        geocv: geometric coefficient of variation of summary data
+        labels: label per value, `None` without labels and for summary data
+        coords: name to array with one entry per value, empty for summary data
+        mean: arithmetic mean of summary data, `None` for individual data
+        sd: standard deviation of summary data, `None` for individual data
+        n: number of individuals of summary data, `None` for individual data
+        geomean: geometric mean of summary data, `None` for individual data
+        geocv: geometric coefficient of variation of summary data, `None` for
+            individual data
         name: name of the parameter
         unit: unit of the parameter
     """
@@ -402,12 +423,39 @@ class ParameterSample:
         """Convert the arrays and validate the combination of fields.
 
         Raises:
-            ValueError: for neither values nor summary data, summary data
-                without `n` or without a pair of moments, an `n` which is
-                not a whole number of at least 1, a negative `sd` or
-                `geocv`, a non-positive `geomean`, an array which is not
-                1-D, or labels or coordinates of another length.
+            ValueError: for neither values nor summary data, values together
+                with a field of summary data (naming the fields), summary
+                data with labels or coordinates, summary data without `n` or
+                without a pair of moments, an `n` which is not a whole number
+                of at least 1, a negative `sd` or `geocv`, a non-positive
+                `geomean`, an array which is not 1-D, or labels or
+                coordinates of another length.
         """
+        if self.values is not None:
+            summary = [
+                name
+                for name in ("mean", "sd", "n", "geomean", "geocv")
+                if getattr(self, name) is not None
+            ]
+            if summary:
+                raise ValueError(
+                    "'values' are individual data and take no summary statistics, "
+                    f"got {_quoted(summary)}; give either 'values' or the summary"
+                )
+        else:
+            individual = [
+                name
+                for name, given in (
+                    ("labels", self.labels is not None),
+                    ("coords", bool(self.coords)),
+                )
+                if given
+            ]
+            if individual:
+                raise ValueError(
+                    f"{_quoted(individual)} need individual values, "
+                    "summary data has no individuals"
+                )
         if self.sd is not None and self.sd < 0:
             raise ValueError(f"'sd' must not be negative, got {self.sd}")
         if self.geocv is not None and self.geocv < 0:
