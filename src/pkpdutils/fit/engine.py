@@ -1079,8 +1079,8 @@ def fit(
 
     Raises:
         ValueError: for 2-D data with more than one sample dimension, or if
-            the sample dimension name collides with a variable the result
-            writes or a reserved dimension (see `build_result`).
+            the sample dimension or a coordinate collides with a variable or
+            a dimension of the result (see `build_result`).
     """
     options = options or FitOptions()
     x_arr, y_arr, sd_arr, single = _as_rows(x, y, sd)
@@ -1123,11 +1123,6 @@ def _cv(se: float, value: float) -> float:
         return float(np.float64(se) / np.abs(np.float64(value)))
 
 
-#: dimension names `build_result` reserves for the parameter and point axes,
-#: regardless of the model
-_RESERVED_DIMS: frozenset[str] = frozenset({"point", "parameter", "parameter_"})
-
-
 def _check_no_reserved_suffix(model: Model) -> None:
     """Reject a model whose parameter or derived name ends in a suffix of the result variables.
 
@@ -1153,60 +1148,6 @@ def _check_no_reserved_suffix(model: Model) -> None:
                 f"'{name}' of {model.name} ends in the reserved suffix "
                 f"'{name[len(stem) :]}', which the result uses for the "
                 f"derived variables of a parameter; rename the parameter"
-            )
-
-
-def _check_no_dimension_collision(model: Model, dims: tuple[str, ...]) -> None:
-    """Reject a sample dimension whose name collides with a variable `build_result` writes.
-
-    A sample dimension cannot share its name with a data variable of the
-    result (e.g. a scan dimension "k" fitted with a model that also has a
-    rate constant "k") or with one of the reserved dimensions `parameter`,
-    `parameter_` and `point`: xarray cannot hold two different variables
-    under the same name, so the name must be one or the other.
-
-    Args:
-        model: the model, for its parameter and derived names.
-        dims: the sample dimension names.
-
-    Raises:
-        ValueError: if a name in `dims` collides with a written variable or a reserved dimension.
-    """
-    written = set(FitResult.statistic_variables) | {
-        "x_data",
-        "y_data",
-        "y_pred",
-        "sd_data",
-        "residuals",
-        "correlation",
-        "flags",
-    }
-    for parameter in model.parameters:
-        written.update(
-            {
-                parameter.name,
-                f"{parameter.name}_se",
-                f"{parameter.name}_ci_low",
-                f"{parameter.name}_ci_high",
-                f"{parameter.name}_cv",
-            }
-        )
-    for derived_name in model.derived_units:
-        written.add(derived_name)
-        if derived_name not in FitResult.discrete_parameters:
-            written.update(
-                {
-                    f"{derived_name}_se",
-                    f"{derived_name}_ci_low",
-                    f"{derived_name}_ci_high",
-                    f"{derived_name}_cv",
-                }
-            )
-    for d in dims:
-        if d in written or d in _RESERVED_DIMS:
-            raise ValueError(
-                f"the sample dimension '{d}' collides with the result variable "
-                f"'{d}'; rename the dimension"
             )
 
 
@@ -1257,11 +1198,11 @@ def build_result(
 
     Raises:
         ValueError: if a parameter or derived name of the model ends in a
-            reserved suffix (`_check_no_reserved_suffix`), if a name in
-            `dims` collides with a variable the result writes or a reserved
-            dimension (`_check_no_dimension_collision`), or if a name in
-            `coords` collides with a data variable of the result
-            (`check_coordinate_collision`).
+            reserved suffix (`_check_no_reserved_suffix`), or if a name in
+            `dims` or in `coords` collides with a data variable of the result
+            or with one of the dimensions `point`, `parameter` and
+            `parameter_` it adds (`check_coordinate_collision`, which reads
+            the variables and the dimensions from the assembled layout).
     """
     n_rows, n_points = y.shape
     sample_shape: tuple[int, ...] = (
@@ -1270,7 +1211,6 @@ def build_result(
     names = model.parameter_names
     k = len(names)
     _check_no_reserved_suffix(model)
-    _check_no_dimension_collision(model, dims)
 
     def units_of(expr: str) -> str:
         """The unit of a unit expression in the units of the data."""
@@ -1355,7 +1295,11 @@ def build_result(
         np.array([r.flags for r in rows], dtype=np.int64).reshape(sample_shape),
         {"units": "dimensionless"},
     )
-    check_coordinate_collision(coords, data_vars)
+    # the names of the batch against the variables and the dimensions of the
+    # layout above, before xarray sees them
+    check_coordinate_collision(
+        coords, {name: spec[0] for name, spec in data_vars.items()}, dims
+    )
     all_coords: dict[str, Any] = {
         **coords,
         "parameter": list(names),

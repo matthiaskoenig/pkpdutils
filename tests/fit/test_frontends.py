@@ -288,6 +288,43 @@ def test_fit_timecourses_rejects_coordinate_named_like_a_parameter() -> None:
         fit_timecourses(MonoExp(), batch)
 
 
+def test_fit_rejects_a_name_of_the_batch_that_is_a_dimension_of_the_result() -> None:
+    """A coordinate or a sample dimension named like `point` or `parameter` is rejected (#72).
+
+    The extra dimensions are read from a result, so the test covers every
+    dimension the fit adds besides the sample dimensions.
+    """
+    batch = curves()
+    reference = fit_timecourses(MonoExp(), batch)
+    extra = {str(d) for d in reference.ds.dims} - set(reference.sample_dims)
+    assert extra == {"point", "parameter", "parameter_"}
+    for name in sorted(extra):
+        labelled = Timecourses(
+            batch.ds.assign_coords({name: ("individual", [1.0, 2.0, 3.0])})
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"coordinate \['{name}'\] of the batch collides with a dimension",
+        ):
+            fit_timecourses(MonoExp(), labelled)
+        renamed = Timecourses(batch.ds.rename({"individual": name}))
+        with pytest.raises(
+            ValueError,
+            match=rf"sample dimension \['{name}'\] collides with a dimension",
+        ):
+            fit_timecourses(MonoExp(), renamed)
+        doses = np.array([1.0, 2.0, 4.0])
+        table = xr.Dataset(
+            {"y": ((name, "dose"), np.outer([1.0, 2.0], doses))},
+            coords={"dose": doses},
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"sample dimension \['{name}'\] collides with a dimension",
+        ):
+            fit_table(Power(), table, "dose", "y", dim="dose")
+
+
 def test_fit_timecourses_names_the_axes_in_attrs() -> None:
     result = fit_timecourses(MonoExp(), curves())
     assert result.ds.attrs["x_name"] == "time"

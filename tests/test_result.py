@@ -279,9 +279,42 @@ def test_sample_summary_data() -> None:
 def test_check_coordinate_collision() -> None:
     from pkpdutils.result import check_coordinate_collision
 
-    check_coordinate_collision({"period": [1, 2]}, {"a", "flags"})
-    with pytest.raises(ValueError, match="collides"):
-        check_coordinate_collision({"n": [1, 2]}, {"a", "n", "flags"})
+    layout = {
+        "a": ("s",),
+        "flags": ("s",),
+        "y_pred": ("s", "point"),
+        "interval_auc": ("s", "interval"),
+    }
+    check_coordinate_collision({"s": [1, 2], "period": ("s", [1, 2])}, layout, ("s",))
+    with pytest.raises(ValueError, match=r"coordinate \['n'\] of the batch collides"):
+        check_coordinate_collision({"n": [1, 2]}, {**layout, "n": ("s",)}, ("s",))
+    # the extra dimensions are read from the layout (#72)
+    for name in ("point", "interval"):
+        with pytest.raises(
+            ValueError,
+            match=rf"coordinate \['{name}'\] of the batch collides with a dimension",
+        ):
+            check_coordinate_collision({name: ("s", [1, 2])}, layout, ("s",))
+    with pytest.raises(ValueError, match=r"sample dimension \['a'\] collides with a"):
+        check_coordinate_collision({}, {"a": ("a",)}, ("a",))
+    # a sample dimension named like an extra dimension repeats it in the layout
+    with pytest.raises(
+        ValueError, match=r"sample dimension \['point'\] collides with a dimension"
+    ):
+        check_coordinate_collision({}, {"y_pred": ("point", "point")}, ("point",))
+    with pytest.raises(
+        ValueError, match=r"result variable \['interval'\] collides with a dimension"
+    ):
+        check_coordinate_collision({}, {**layout, "interval": ("s",)}, ("s",))
+
+
+def test_result_dimensions() -> None:
+    from pkpdutils.result import result_dimensions
+
+    layout = {"a": ("s", "t"), "b": ("s", "t", "point"), "c": ("t", "p", "p_")}
+    assert result_dimensions(layout, ("s", "t")) == {"point", "p", "p_"}
+    assert result_dimensions(layout, ()) == {"s", "t", "point", "p", "p_"}
+    assert result_dimensions({"x": ("i", "i")}, ("i",)) == {"i"}
 
 
 def test_decode_flags_of_a_flag_type() -> None:

@@ -3,7 +3,7 @@
 import itertools
 import reprlib
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
@@ -113,33 +113,115 @@ def nan_percentile(
     return out[0] if single else out
 
 
-def check_coordinate_collision(
-    coords: Mapping[str, Any], variables: Iterable[str]
-) -> None:
-    """Raise if a coordinate of the batch shares its name with a result variable.
+def result_dimensions(
+    variables: Mapping[str, Sequence[str]], sample_dims: Sequence[str]
+) -> set[str]:
+    """The dimensions the variables of a result add to its sample dimensions.
 
-    `xr.Dataset` and `xr.DataArray` refuse a name that is both a coordinate
-    and a data variable (`ValueError: variables {...} are found in both
-    data_vars and coords`); a batch coordinate carried over by
-    `sample_coordinates` (e.g. an individual attribute happening to be named
-    `n` or after a parameter such as `cmax`) would otherwise only surface as
-    that opaque error deep inside the construction of the result. Calling
-    this first turns it into a clear message that names the batch coordinate
-    to rename.
+    Every variable of a result lives over the sample dimensions of the
+    analysed batch, and some of them over extra dimensions of their own: the
+    `point` of the data and the `parameter` and `parameter_` of the
+    correlation matrix of a fit, the `interval` of the dosing intervals and
+    the `candidate` of the terminal windows of an NCA. The extra dimensions
+    are read from the layout the result is about to be built from, every
+    dimension of a variable once its sample dimensions are taken out, so they
+    follow the code which creates them. A sample dimension is taken out once
+    per variable: a sample dimension named like an extra dimension (a batch
+    over `interval` whose variables are laid out over `(interval, interval)`)
+    leaves the second one behind, which is how such a collision shows.
 
     Args:
-        coords: the coordinates that are about to be attached to the result.
-        variables: the names of the data variables of the result.
+        variables: the dimensions of every data variable of the result, by name.
+        sample_dims: the sample dimensions of the result.
+
+    Returns:
+        The names of the extra dimensions.
+    """
+    extra: set[str] = set()
+    for dims in variables.values():
+        rest = list(dims)
+        for dim in sample_dims:
+            if dim in rest:
+                rest.remove(dim)
+        extra.update(rest)
+    return extra
+
+
+def check_coordinate_collision(
+    coords: Mapping[str, Any],
+    variables: Mapping[str, Sequence[str]],
+    sample_dims: Sequence[str] = (),
+) -> None:
+    """Raise if a name of the batch collides with a variable or a dimension of the result.
+
+    A result is built from the names of the batch, its sample dimensions and
+    its coordinates along them (`sample_coordinates`), and from the names of
+    the analysis, its data variables and the extra dimensions some of them
+    carry (`result_dimensions`). A name on both sides breaks the result:
+
+    - `xr.Dataset` and `xr.DataArray` refuse a name that is both a coordinate
+      and a data variable (`ValueError: variables {...} are found in both
+      data_vars and coords`), which a batch coordinate happening to be named
+      `n` or after a parameter such as `cmax` would otherwise only surface as,
+      deep inside the construction of the result;
+    - a coordinate named like an extra dimension (`parameter`, `point`,
+      `interval`) is silently replaced by the labels of that dimension, or
+      stays along the sample dimensions under the name of another dimension,
+      which xarray accepts and later operations trip over;
+    - a sample dimension named like an extra dimension repeats that dimension
+      in the variables which carry it, a result whose labels are silently
+      wrong or an opaque `conflicting sizes` error of xarray;
+    - a data variable named like an extra dimension is silently turned into a
+      coordinate of the dimension it is named after.
+
+    Calling this before the result is built turns every case into a clear
+    message which names what to rename. The extra dimensions are derived from
+    `variables`, so the check covers every dimension the result introduces
+    without a list of them to keep in step.
+
+    Args:
+        coords: the coordinates of the batch that are about to be attached to
+            the result, the coordinates of the sample dimensions included.
+        variables: the dimensions of every data variable of the result, by name.
+        sample_dims: the sample dimensions of the result.
 
     Raises:
-        ValueError: if a name is both a coordinate and a data variable.
+        ValueError: if a sample dimension, a coordinate of the batch or a
+            variable of the result shares its name with a variable or with an
+            extra dimension of the result.
     """
-    clash = set(coords) & set(variables)
-    if clash:
-        raise ValueError(
-            f"coordinate {sorted(clash)} of the batch collides with a result "
-            "variable; rename the coordinate"
-        )
+    names = set(variables)
+    extra = result_dimensions(variables, sample_dims)
+    dims = set(sample_dims)
+    for clash, message in (
+        (
+            dims & names,
+            "the sample dimension {} collides with a result variable; rename "
+            "the dimension",
+        ),
+        (
+            dims & extra,
+            "the sample dimension {} collides with a dimension of the result; "
+            "rename the dimension",
+        ),
+        (
+            set(coords) & names,
+            "coordinate {} of the batch collides with a result variable; rename "
+            "the coordinate",
+        ),
+        (
+            set(coords) & extra,
+            "coordinate {} of the batch collides with a dimension of the "
+            "result; rename the coordinate",
+        ),
+        (
+            names & extra,
+            "the result variable {} collides with a dimension of the result; "
+            "rename the variable",
+        ),
+    ):
+        if clash:
+            raise ValueError(message.format(sorted(clash)))
 
 
 def decode_flags(flag_type: type[IntFlag], value: int) -> list[str]:
