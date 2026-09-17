@@ -72,6 +72,70 @@ def test_exclude_needs_a_mask_or_indexers() -> None:
         plain.exclude(np.zeros(3, dtype=bool))
 
 
+def crossover() -> NCAResult:
+    """The curves of `batch` under a reference and a test treatment."""
+    reference = batch()
+    return nca(
+        Timecourses.from_arrays(
+            TIME,
+            np.stack([reference.values, 1.4 * reference.values]),
+            time_unit="hr",
+            unit="mg/l",
+            dims=("treatment", "individual"),
+            coords={"treatment": ["R", "T"], "individual": LABELS},
+            dose={"amount": np.full((2, 4), 100.0), "unit": "mg"},
+            route=Route.IV_BOLUS,
+            substance="drug",
+        ),
+        options=OPTIONS,
+    )
+
+
+def test_exclude_and_sample_by_the_labels_of_two_sample_dimensions() -> None:
+    marked = crossover().exclude(treatment="T", individual="s3")
+    assert marked["excluded"].to_numpy().tolist() == [
+        [False, False, False, False],
+        [False, False, True, False],
+    ]
+    test = marked.sample("cmax", "individual", treatment="T")
+    reference = marked.sample("cmax", "individual", treatment="R")
+    assert test.labels is not None and test.labels.tolist() == ["s1", "s2", "s4"]
+    assert reference.labels is not None and reference.labels.tolist() == LABELS
+    # a dimension without an indexer is excluded as a whole, a list of labels
+    # excludes each of them
+    both = crossover().exclude(individual=["s1", "s3"])
+    assert both["excluded"].to_numpy().tolist() == [[True, False, True, False]] * 2
+    plain = crossover()
+    by_coordinate = plain.exclude(individual=plain["cmax"]["individual"][[0, 2]])
+    assert (
+        by_coordinate["excluded"].to_numpy().tolist()
+        == [[True, False, True, False]] * 2
+    )
+
+
+def test_exclude_and_sample_reject_an_unknown_indexer_or_label() -> None:
+    """A misspelled dimension or label is a `ValueError` naming it (#70)."""
+    plain = crossover()
+    with pytest.raises(ValueError, match="'subject' is not a sample dimension"):
+        plain.exclude(subject="s1")
+    with pytest.raises(
+        ValueError, match="'s9' is not a label of the sample dimension 'individual'"
+    ):
+        plain.exclude(individual="s9")
+    with pytest.raises(ValueError, match="'s9' is not a label"):
+        plain.exclude(individual=["s1", "s9"])
+    with pytest.raises(ValueError, match="one label or a list of labels"):
+        plain.exclude(individual=slice("s1", "s2"))
+    with pytest.raises(ValueError, match="'foo' is not a sample dimension"):
+        plain.sample("auc_inf_obs", "individual", treatment="T", foo=1)
+    with pytest.raises(ValueError, match="takes no indexer"):
+        plain.sample("auc_inf_obs", "individual", treatment="T", individual="s1")
+    with pytest.raises(
+        ValueError, match="'X' is not a label of the sample dimension 'treatment'"
+    ):
+        plain.sample("auc_inf_obs", "individual", treatment="X")
+
+
 def test_to_dataframe_keeps_every_row_and_carries_the_excluded_column() -> None:
     marked = result().exclude(individual="s3", reason="outlier")
     frame = marked.to_dataframe()

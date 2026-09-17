@@ -30,6 +30,24 @@ from pkpdutils.fit.model import Model, ModelParameter
 LN2 = math.log(2.0)
 
 
+def _exp(value: float) -> float:
+    """`e^value`, `inf` beyond the range of double precision.
+
+    `math.exp` raises `OverflowError` above `709.78`, which the intercept of a
+    log-linear regression on data spanning many orders of magnitude reaches.
+
+    Args:
+        value: the exponent.
+
+    Returns:
+        The exponential, `inf` when it overflows.
+    """
+    try:
+        return math.exp(value)
+    except OverflowError:
+        return math.inf
+
+
 def log_linear_regression(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
     """Slope and intercept of `ln y` on `x` over the finite positive points.
 
@@ -58,7 +76,8 @@ def terminal_guess(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
 
     Returns:
         `(a, k)`, falling back to the maximum and `ln 2 / (range / 3)` when no
-        regression is possible.
+        regression is possible, or when the regression line at `x = 0` is
+        beyond the range of double precision.
     """
     ok = np.isfinite(x) & np.isfinite(y)
     x, y = x[ok], y[ok]
@@ -69,10 +88,11 @@ def terminal_guess(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
     if tail.sum() < 3:
         tail = np.arange(x.size) >= imax
     slope, intercept = log_linear_regression(x[tail], y[tail])
-    if not np.isfinite(slope) or slope >= 0:
+    a = _exp(intercept)
+    if not np.isfinite(slope) or slope >= 0 or not math.isfinite(a):
         k = LN2 / max((x.max() - x.min()) / 3.0, 1e-12)
         return float(y.max()), float(k)
-    return float(math.exp(intercept)), float(-slope)
+    return float(a), float(-slope)
 
 
 def _strip(x: np.ndarray, y: np.ndarray, phases: int) -> np.ndarray:
@@ -172,8 +192,9 @@ class MonoExp(Model):
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """From the log-linear regression of the positive points."""
         slope, intercept = log_linear_regression(x, y)
-        if np.isfinite(slope) and slope < 0:
-            return np.array([math.exp(intercept), -slope])
+        a = _exp(intercept)
+        if np.isfinite(slope) and slope < 0 and math.isfinite(a):
+            return np.array([a, -slope])
         a, k = terminal_guess(x, y)
         return np.array([a, k])
 
@@ -324,20 +345,27 @@ class Bateman(Model):
         return a * ka / (ka - ke) * (np.exp(-ke * t) - np.exp(-ka * t))
 
     def derived(self, p: np.ndarray) -> dict[str, float]:
-        """Time and value of the maximum, half-life, area and the flip-flop indicator."""
-        a, ka, ke = float(p[0]), float(p[1]), float(p[2])
-        tlag = float(p[3]) if self.lag else 0.0
-        tmax = (
-            math.log(ka / ke) / (ka - ke) if abs(ka - ke) >= 1e-9 else 1.0 / ke
-        ) + tlag
-        cmax = float(self.predict(np.array([tmax]), p)[0])
-        return {
-            "tmax": tmax,
-            "cmax": cmax,
-            "thalf": LN2 / ke,
-            "auc": a / ke,
-            "flip_flop": 1.0 if ka < ke else 0.0,
-        }
+        """Time and value of the maximum, half-life, area and the flip-flop indicator.
+
+        Computed with numpy under `numpy.errstate`, so a rate constant of zero,
+        which a degenerate fit can end at, gives an infinite or undefined value
+        instead of the `ZeroDivisionError` of python floats or the `ValueError`
+        of `math.log`.
+        """
+        a, ka, ke = np.float64(p[0]), np.float64(p[1]), np.float64(p[2])
+        tlag = p[3] if self.lag else 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tmax = (
+                np.log(ka / ke) / (ka - ke) if abs(ka - ke) >= 1e-9 else 1.0 / ke
+            ) + tlag
+            cmax = self.predict(np.array([tmax]), p)[0]
+            return {
+                "tmax": float(tmax),
+                "cmax": float(cmax),
+                "thalf": float(LN2 / ke),
+                "auc": float(a / ke),
+                "flip_flop": 1.0 if ka < ke else 0.0,
+            }
 
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """`ke` from the terminal phase, `ka` from the rise (or 5 ke), `a` from the maximum."""
@@ -353,9 +381,11 @@ class Bateman(Model):
             )
             if np.isfinite(slope) and slope < 0 and -slope > ke:
                 ka = -slope
-        tmax = xs[imax]
-        denominator = math.exp(-ke * tmax) - math.exp(-ka * tmax)
+        tmax = float(xs[imax])
+        denominator = _exp(-ke * tmax) - _exp(-ka * tmax)
         a = ys[imax] * (ka - ke) / ka / denominator if denominator > 0 else ys[imax]
+        if not np.isfinite(a):
+            a = ys[imax]
         guess = [a, ka, ke]
         if self.lag:
             guess.append(0.0)

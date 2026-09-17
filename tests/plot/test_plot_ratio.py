@@ -34,6 +34,16 @@ def test_plot_ratio_of_ratio_results() -> None:
     matplotlib.pyplot.close("all")
 
 
+def test_plot_ratio_draws_into_the_axes_of_a_subfigure() -> None:
+    fig = matplotlib.pyplot.figure(layout="constrained")
+    left = fig.add_subfigure(fig.add_gridspec(1, 2)[0])
+    ax = left.subplots()
+    ratios = {"auc": ratio(ParameterSample(values=TEST), ParameterSample(values=REF))}
+    assert plot_ratio(ratios, ax=ax) is fig
+    assert [t.get_text() for t in ax.get_yticklabels()] == ["auc"]
+    matplotlib.pyplot.close(fig)
+
+
 def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     be = BEResult(
         parameters={
@@ -51,9 +61,18 @@ def test_plot_ratio_of_bioequivalence_and_thresholds() -> None:
     matplotlib.pyplot.close("all")
 
 
-def test_plot_ratio_raises_for_an_empty_mapping() -> None:
-    with pytest.raises(ValueError):
-        plot_ratio({})
+def test_plot_ratio_raises_without_a_ratio() -> None:
+    # without a row the figure was an empty log axis with an inverted y range
+    # of 0.2 and the title "geometric mean ratios with  % intervals"; the
+    # empty input raises before a figure is created
+    figures = matplotlib.pyplot.get_fignums()
+    empty = BEResult(
+        parameters={}, bioequivalent=False, limits=(0.8, 1.25), ci_level=0.90
+    )
+    for ratios in ({}, empty):
+        with pytest.raises(ValueError, match="at least one ratio"):
+            plot_ratio(ratios)
+    assert matplotlib.pyplot.get_fignums() == figures
 
 
 def test_plot_ratio_annotates_the_estimates_and_renames_the_rows() -> None:

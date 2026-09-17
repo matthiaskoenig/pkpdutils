@@ -55,6 +55,11 @@ class FitFlag(IntFlag):
     #: fewer than two bootstrap replicates converged; the reported
     #: uncertainties are the Jacobian ones
     BOOTSTRAP_FALLBACK = 64
+    #: a quantity of the fit is beyond the range of double precision, as the
+    #: data span too many orders of magnitude for the weighting: the sum of
+    #: squares of every start (no fit, with `NOT_CONVERGED`), the covariance
+    #: (no standard errors) or a goodness of fit statistic (`NaN`)
+    OVERFLOW = 128
 
 
 def decode_fit_flags(value: int) -> list[str]:
@@ -87,12 +92,13 @@ class FitOptions(BaseModel):
             the workers, and one worker per core, at most 8, above it; `1` is
             always serial and `n > 1` uses that many workers, which is how a
             smaller batch of expensive rows (several starts, a residual
-            bootstrap) asks for the pool. A pooled call must run under an
-            `if __name__ == "__main__":` guard, since python's `spawn` and
-            `forkserver` process start methods (the default on macOS and
-            Windows, and on Linux from python 3.14) re-import the module
-            without re-running it; the NCA (`NCAOptions.n_workers`) runs in
-            threads and needs no guard
+            bootstrap) asks for the pool. The workers start with `forkserver`
+            or `spawn` on every python version
+            (`pkpdutils.parallel.PROCESS_START_METHOD`), which re-import the
+            main module without re-running it, so a pooled call must run
+            under an `if __name__ == "__main__":` guard and its model must be
+            importable, not defined in an interactive session; the NCA
+            (`NCAOptions.n_workers`) runs in threads and needs no guard
         ci_level: level of the confidence intervals
         bootstrap: number of residual bootstrap replicates, 0 for none
         max_nfev: maximal function evaluations per start, `None` for the scipy default

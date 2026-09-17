@@ -92,6 +92,34 @@ def test_sample_validation() -> None:
         ParameterSample(mean=1.0, sd=0.1, n=3).select(np.array([True]))
 
 
+def test_values_reject_the_fields_of_summary_data() -> None:
+    # a summary given next to the values was kept but never used: the
+    # statistics came from the values, so `mean=100, n=40` read as 11 and 3
+    values = np.array([10.0, 12.0, 11.0])
+    with pytest.raises(ValueError, match="got 'mean', 'sd' and 'n'"):
+        ParameterSample(values=values, mean=100.0, sd=5.0, n=40)
+    with pytest.raises(ValueError, match="got 'geomean' and 'geocv'"):
+        ParameterSample(values=values, geomean=96.0, geocv=0.28)
+    with pytest.raises(ValueError, match="got 'n';"):
+        ParameterSample(values=values, n=3)
+
+
+def test_summary_data_rejects_labels_and_coordinates() -> None:
+    # labels and coordinates describe individuals, which a summary does not have
+    with pytest.raises(ValueError, match="'labels' need individual values"):
+        ParameterSample(mean=1.0, sd=0.1, n=3, labels=np.array(["a", "b", "c"]))
+    with pytest.raises(ValueError, match="'coords' need individual values"):
+        ParameterSample(geomean=1.0, geocv=0.1, n=3, coords={"period": np.array([1])})
+    with pytest.raises(ValueError, match="'labels' and 'coords' need"):
+        ParameterSample(
+            mean=1.0,
+            sd=0.1,
+            n=1,
+            labels=np.array(["a"]),
+            coords={"period": np.array([1])},
+        )
+
+
 def test_summarize_individual_log_scale() -> None:
     summary = summarize(VALUES, scale=Scale.LOG, name="cl", unit="l/hr")
     assert isinstance(summary, Summary)

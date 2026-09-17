@@ -232,3 +232,31 @@ def test_the_requested_level_is_reported_above_the_exact_limit() -> None:
         sample(reference + 0.4, labels=labels), sample(reference, labels=labels)
     )
     assert result.ci_level == 0.90
+
+
+def test_a_missing_value_leaves_out_its_pair_from_every_field() -> None:
+    """The estimate, the interval, the effect sizes and the counts use the same pairs."""
+    rng = np.random.default_rng(11)
+    labels = np.array([f"s{i:02d}" for i in range(10)])
+    reference = rng.uniform(1.0, 3.0, 10)
+    test = reference + rng.normal(0.5, 0.3, 10)
+    kept = np.array([0, 2, 3, 5, 6, 7, 8])
+    with_missing = test.copy()
+    with_missing[[1, 4]] = np.nan
+    # s09 has no reference value and the reference is held in reverse order
+    order = np.arange(8, -1, -1)
+    reference_missing = reference.copy()
+    reference_missing[4] = 50.0
+    result = hodges_lehmann(
+        sample(with_missing, labels=labels),
+        sample(reference_missing[order], labels=labels[order]),
+    )
+    complete = hodges_lehmann(
+        sample(test[kept], labels=labels[kept]),
+        sample(reference[kept], labels=labels[kept]),
+    )
+    assert result.n_a == result.n_b == kept.size
+    np.testing.assert_equal(result.to_dict(), complete.to_dict())
+    unpaired = hodges_lehmann(sample(with_missing), sample(reference))
+    finite = hodges_lehmann(sample(test[np.isfinite(with_missing)]), sample(reference))
+    np.testing.assert_equal(unpaired.to_dict(), finite.to_dict())

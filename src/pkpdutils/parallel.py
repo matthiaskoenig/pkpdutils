@@ -2,13 +2,13 @@
 
 The non-compartmental analysis and the fit both spread their rows over
 workers, and both used to create a fresh `concurrent.futures.Executor` per
-call. With python's `forkserver` and `spawn` start methods (the default on
-macOS and Windows, and on Linux from python 3.14) every worker of a new
-process pool imports `pkpdutils`, `numpy`, `scipy`, `xarray` and `pint` from
-scratch, about 0.7 s per pool, so a one-shot analysis was slower with workers
-than without them. This module therefore keeps one executor per kind and
-size, created on first use and closed at interpreter exit, so that the
-start-up is paid once per process instead of once per call.
+call. A process pool starts its workers with `forkserver` or `spawn`
+(`PROCESS_START_METHOD`), so every worker of a new pool imports `pkpdutils`,
+`numpy`, `scipy`, `xarray` and `pint` from scratch, about 0.7 s per pool, and
+a one-shot analysis was slower with workers than without them. This module
+therefore keeps one executor per kind and size, created on first use and
+closed at interpreter exit, so that the start-up is paid once per process
+instead of once per call.
 
 The two analyses use different kinds of workers:
 
@@ -25,19 +25,27 @@ per worker, bounded from below so that a worker gets enough work to pay for
 itself and from above so that the memory of the vectorized core stays bounded
 (`NCAOptions.chunk_rows`).
 
-The two pools live side by side in one process, which is safe between calls
-but not while both run: with the `fork` start method (the default of python
-3.13 on Linux, not of 3.14) the worker of a process pool is forked from a
-parent whose NCA threads may hold a lock at that moment, and the child then
-inherits the locked lock and can block forever. A script that fits in
-processes while another thread analyses in threads should therefore run on a
-`forkserver` or `spawn` start method, which is the default everywhere else,
-or serialize the two phases.
+The two pools live side by side in one process, so the process pool never
+forks. With the `fork` start method, the default of python 3.13 on Linux, a
+worker would be forked from a parent whose NCA threads may hold a lock at
+that moment, and the child would inherit the locked lock and could block
+forever; python 3.13 warns about it (`DeprecationWarning: This process is
+multi-threaded, use of fork() may lead to deadlocks in the child`), and python
+3.14 no longer forks by default. The process pool therefore starts its
+workers with `PROCESS_START_METHOD` on every python version, the default of
+python 3.14: `forkserver` on Linux and the other POSIX platforms which offer
+it, `spawn` on macOS and Windows, whatever `multiprocessing.set_start_method`
+chose for the rest of the program. Both start a fresh interpreter which
+imports the main module without running it, so a pooled call needs an
+`if __name__ == "__main__":` guard, and what it sends to the workers (a model
+of the fit) must be importable, not defined in an interactive session.
 """
 
 import atexit
 import logging
+import multiprocessing
 import os
+import sys
 import threading
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Literal
@@ -46,6 +54,34 @@ logger = logging.getLogger(__name__)
 
 #: the kinds of executor this module hands out
 ExecutorKind = Literal["thread", "process"]
+
+#: the start methods the process pool uses, the ones which do not fork the caller
+StartMethod = Literal["forkserver", "spawn"]
+
+
+def _process_start_method() -> StartMethod:
+    """The start method of the workers of the process pool.
+
+    The default start method of python 3.14 on the platform, which is never
+    `fork`: `spawn` on macOS, whose system libraries may start threads of
+    their own, and wherever `forkserver` is not offered (Windows), and
+    `forkserver` on the other platforms.
+
+    Returns:
+        `"forkserver"` or `"spawn"`.
+    """
+    if sys.platform == "darwin":
+        return "spawn"
+    if "forkserver" in multiprocessing.get_all_start_methods():
+        return "forkserver"
+    return "spawn"
+
+
+#: start method of the workers of the process pool on every python version,
+#: the default of python 3.14 (`forkserver` on Linux, `spawn` on macOS and
+#: Windows) instead of the `fork` of python 3.13 on Linux, which may deadlock
+#: next to the threads of the NCA
+PROCESS_START_METHOD: StartMethod = _process_start_method()
 
 #: rows from which the automatic `n_workers` of the NCA uses the thread pool,
 #: the measured break-even of the vectorized core against the pool
@@ -87,9 +123,11 @@ def executor(kind: ExecutorKind, n_workers: int) -> Executor:
     by an `atexit` handler (`shutdown_executors`), so the start-up of a
     process pool is paid once and not once per call. A cached pool that is
     broken or shut down is dropped and replaced, so that one dead worker does
-    not fail every later call of the process. A process executor uses the
-    default start method of the platform; with `forkserver` or `spawn` the
-    caller must run under an `if __name__ == "__main__":` guard.
+    not fail every later call of the process. A process executor starts its
+    workers with `PROCESS_START_METHOD` (`forkserver` or `spawn`, never
+    `fork`, whatever the default of the platform or
+    `multiprocessing.set_start_method` says), so the caller must run under an
+    `if __name__ == "__main__":` guard.
 
     The pools are not re-entrant: work running in a worker of a pool must not
     submit to that same pool and wait for the result, which deadlocks once
@@ -118,7 +156,10 @@ def executor(kind: ExecutorKind, n_workers: int) -> Executor:
             pool = (
                 ThreadPoolExecutor(max_workers=size, thread_name_prefix="pkpdutils")
                 if kind == "thread"
-                else ProcessPoolExecutor(max_workers=size)
+                else ProcessPoolExecutor(
+                    max_workers=size,
+                    mp_context=multiprocessing.get_context(PROCESS_START_METHOD),
+                )
             )
             logger.debug("created the shared %s executor of %d workers", kind, size)
         _EXECUTORS[key] = pool

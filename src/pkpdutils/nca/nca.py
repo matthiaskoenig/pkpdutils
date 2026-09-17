@@ -895,6 +895,22 @@ def candidate_variables(
     }
 
 
+def extra_dimension(name: str) -> str:
+    """The extra dimension of a variable with one column per interval or per candidate.
+
+    The per-interval parameters (`interval_*`) carry the extra dimension
+    `interval`, the candidate windows of the terminal regression
+    (`candidate_*`) the extra dimension `candidate`.
+
+    Args:
+        name: the name of a two dimensional variable of the analysis.
+
+    Returns:
+        `CANDIDATE_DIM` for a candidate variable, else `INTERVAL_DIM`.
+    """
+    return CANDIDATE_DIM if name.startswith(CANDIDATE_PREFIX) else INTERVAL_DIM
+
+
 def reserved_variables(values: dict[str, np.ndarray]) -> set[str]:
     """Every name the result of an analysis can carry, for the name of a partial area.
 
@@ -903,22 +919,30 @@ def reserved_variables(values: dict[str, np.ndarray]) -> set[str]:
     where the areas are computed the parameters are known, while `flags`, `n`,
     the status variables, the uncertainty variables of a group batch and the
     summary variables of `pkpdutils.result.ParameterResult.summarize` are
-    written afterwards, so their names are derived here.
+    written afterwards, so their names are derived here. The extra dimensions
+    of the result (`interval`, `candidate`, `extra_dimension`) are reserved as
+    well, a variable cannot share its name with a dimension.
 
     Args:
         values: the parameters of the rows so far
 
     Returns:
         The names of the parameters, of `flags` and `n`, of the boolean and
-        text variables and of every derived variable of a parameter
-        (`pkpdutils.result.UNCERTAINTY_SUFFIXES` and `SUMMARY_SUFFIXES`).
+        text variables, of every derived variable of a parameter
+        (`pkpdutils.result.UNCERTAINTY_SUFFIXES` and `SUMMARY_SUFFIXES`) and
+        of the extra dimensions of the parameters.
     """
     names = set(values) | {"flags", "n"} | BOOLEAN_VARIABLES | TEXT_VARIABLES
-    return names | {
-        f"{name}{suffix}"
-        for name in names
-        for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES)
-    }
+    dims = {extra_dimension(name) for name, array in values.items() if array.ndim > 1}
+    return (
+        names
+        | dims
+        | {
+            f"{name}{suffix}"
+            for name in names
+            for suffix in (*UNCERTAINTY_SUFFIXES, *SUMMARY_SUFFIXES)
+        }
+    )
 
 
 def evaluate_acceptance(
@@ -1715,8 +1739,10 @@ def _to_result(
         The result.
 
     Raises:
-        ValueError: if a non-dimension coordinate of the batch collides with
-            a data variable of the result (`check_coordinate_collision`).
+        ValueError: if a sample dimension or a coordinate of the batch
+            collides with a data variable of the result or with one of the
+            dimensions it adds, `interval` and `candidate`
+            (`check_coordinate_collision`).
     """
     coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
     if dose is not None and DOSE_COORDINATE not in coords:
@@ -1743,20 +1769,14 @@ def _to_result(
                 {"units": unit},
             )
         elif array.ndim > 1:
-            # the per-interval parameters carry the extra dimension `interval`
-            # and the candidate windows of the terminal regression the extra
-            # dimension `candidate`
-            is_candidate = name.startswith(CANDIDATE_PREFIX)
+            extra = extra_dimension(name)
             width = array.shape[1]
-            if is_candidate:
+            if extra == CANDIDATE_DIM:
                 n_candidates = width
             else:
                 n_intervals = width
             data_vars[name] = (
-                (
-                    *timecourses.sample_dims,
-                    CANDIDATE_DIM if is_candidate else INTERVAL_DIM,
-                ),
+                (*timecourses.sample_dims, extra),
                 (array * factor).reshape((*shape, width)),
                 {"units": unit},
             )
@@ -1772,6 +1792,13 @@ def _to_result(
                 (array * factor).reshape(shape),
                 {"units": unit},
             )
+    # the names of the batch against the variables and the extra dimensions of
+    # the layout above, before the labels of those dimensions are added
+    check_coordinate_collision(
+        coords,
+        {name: spec[0] for name, spec in data_vars.items()},
+        timecourses.sample_dims,
+    )
     if n_intervals:
         coords[INTERVAL_DIM] = xr.DataArray(
             np.arange(1, n_intervals + 1), dims=INTERVAL_DIM
@@ -1780,7 +1807,6 @@ def _to_result(
         coords[CANDIDATE_DIM] = xr.DataArray(
             np.arange(1, n_candidates + 1), dims=CANDIDATE_DIM
         )
-    check_coordinate_collision(coords, data_vars)
     # a batch of several analytes or of several routes names them in the
     # coordinates `substance` and `route`, which travel into the result with
     # the other coordinates; a batch with one of each names it in `attrs`, so
@@ -2128,8 +2154,8 @@ def partial_auc(
         The areas over the sample dimensions, named `auc_partial`, with the unit of `auc_last`.
 
     Raises:
-        ValueError: if `t_end <= t_start`, or if a non-dimension coordinate
-            of the batch collides with `auc_partial`
+        ValueError: if `t_end <= t_start`, or if a sample dimension or a
+            coordinate of the batch collides with `auc_partial`
             (`check_coordinate_collision`).
     """
     if t_end <= t_start:
@@ -2162,7 +2188,9 @@ def partial_auc(
         dose_unit=timecourses.dose_unit,
     )
     coords = sample_coordinates(timecourses.ds, timecourses.sample_dims)
-    check_coordinate_collision(coords, {"auc_partial"})
+    check_coordinate_collision(
+        coords, {"auc_partial": timecourses.sample_dims}, timecourses.sample_dims
+    )
     return xr.DataArray(
         (area * factor).reshape(timecourses.sample_shape),
         dims=timecourses.sample_dims,

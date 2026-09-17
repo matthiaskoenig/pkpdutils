@@ -127,6 +127,129 @@ def test_sample_two_dims_needs_indexers() -> None:
         r.sample("a", dim="s")
 
 
+def two_dims() -> MyResult:
+    """A result over a group and a subject dimension, the period along the subjects."""
+    ds = xr.Dataset(
+        {
+            "a": (
+                ("g", "s"),
+                np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+                {"units": "mg"},
+            ),
+            "flags": (
+                ("g", "s"),
+                np.array([[0, 0, 0], [0, 1, 0]]),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={"g": ["c", "t"], "s": ["x", "y", "z"], "period": ("s", [1, 2, 1])},
+    )
+    return MyResult(ds)
+
+
+def test_sample_rejects_an_indexer_which_is_not_a_sample_dimension() -> None:
+    """An unknown name, a coordinate and `dim` itself are no indexers (#70)."""
+    r = two_dims()
+    with pytest.raises(
+        ValueError, match=r"'foo' is not a sample dimension \('g', 's'\)"
+    ):
+        r.sample("a", "s", g="t", foo=1)
+    with pytest.raises(
+        ValueError,
+        match="'period' is a coordinate of the result, not a sample dimension",
+    ):
+        r.sample("a", "s", g="t", period=1)
+    with pytest.raises(
+        ValueError, match="'s' is the dimension of the values and takes no indexer"
+    ):
+        r.sample("a", "s", g="t", s="x")
+    with pytest.raises(ValueError, match="takes no indexer"):
+        r.sample("a", "s", g="t", s=["x", "y"])
+    # the dimension of the values is checked before the indexers
+    with pytest.raises(ValueError, match="'q' is not a sample dimension"):
+        r.sample("a", "q", foo=1)
+
+
+def test_sample_rejects_a_label_which_is_not_on_its_dimension() -> None:
+    """An indexer is one label of its dimension, the error names the labels (#70)."""
+    r = two_dims()
+    sample = r.sample("a", "s", g="t")
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+    with pytest.raises(
+        ValueError, match=r"'q' is not a label of the sample dimension 'g' \['c', 't'\]"
+    ):
+        r.sample("a", "s", g="q")
+    with pytest.raises(ValueError, match=r"'g' is one label, got \['t'\]"):
+        r.sample("a", "s", g=["t"])
+    with pytest.raises(ValueError, match="'g' is one label, got slice"):
+        r.sample("a", "s", g=slice("c", "t"))
+    with pytest.raises(
+        ValueError, match="1 is not a label of the sample dimension 'g'"
+    ):
+        r.sample("a", "s", g=1)
+    # a dimension without labels is indexed by the position
+    unlabelled = MyResult(r.ds.drop_vars("g"))
+    sample = unlabelled.sample("a", "s", g=1)
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+    with pytest.raises(
+        ValueError, match=r"2 is not a label of the sample dimension 'g' \[0, 1\]"
+    ):
+        unlabelled.sample("a", "s", g=2)
+    with pytest.raises(ValueError, match="'t' is not a label"):
+        unlabelled.sample("a", "s", g="t")
+    # a long dimension names its first labels and how many there are
+    many = xr.Dataset(
+        {
+            "a": (("g", "s"), np.ones((30, 2)), {"units": "mg"}),
+            "flags": (("g", "s"), np.zeros((30, 2), dtype=int), {"units": "-"}),
+        },
+        coords={"g": [f"g{i}" for i in range(30)]},
+    )
+    with pytest.raises(
+        ValueError, match=r"\['g0', 'g1', .*'g9', \.\.\.\] \(30 labels\)"
+    ):
+        MyResult(many).sample("a", "s", g="q")
+    # a label which several samples carry does not pick one of them
+    duplicated = MyResult(r.ds.assign_coords(g=["c", "c"]))
+    with pytest.raises(
+        ValueError, match="'c' labels 2 samples of the sample dimension 'g'"
+    ):
+        duplicated.sample("a", "s", g="c")
+
+
+def test_one_sample_rejects_an_unknown_indexer_or_label() -> None:
+    """`to_quantities` and `flags` select one sample the same way (#70)."""
+    r = two_dims()
+    assert r.flags(g="t", s="y") == ["BAD"]
+    assert r.to_quantities(s="y", g="c")["a"].magnitude == 2.0
+    with pytest.raises(ValueError, match="'foo' is not a sample dimension"):
+        r.to_quantities(g="t", s="y", foo=1)
+    with pytest.raises(
+        ValueError, match="'q' is not a label of the sample dimension 's'"
+    ):
+        r.flags(g="t", s="q")
+    with pytest.raises(ValueError, match=r"missing \['s'\]"):
+        r.to_quantities(g="t")
+
+
+def test_sample_takes_the_labels_as_iterating_a_coordinate_yields_them() -> None:
+    """A 0-d array of a coordinate and a numpy scalar are labels as well."""
+    r = two_dims()
+    values = {
+        str(group.item()): r.sample("a", "s", g=group).values for group in r.ds["g"]
+    }
+    assert {key: v.tolist() for key, v in values.items() if v is not None} == {
+        "c": [1.0, 2.0, 3.0],
+        "t": [4.0, 5.0, 6.0],
+    }
+    assert r.flags(g=np.str_("t"), s=np.array("y")) == ["BAD"]
+    days = MyResult(
+        r.ds.assign_coords(g=np.array(["2026-01-01", "2026-01-02"], "M8[ns]"))
+    )
+    sample = days.sample("a", "s", g=days.ds["g"][1])
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+
+
 def test_sample_summary_data() -> None:
     ds = xr.Dataset(
         {
@@ -156,9 +279,42 @@ def test_sample_summary_data() -> None:
 def test_check_coordinate_collision() -> None:
     from pkpdutils.result import check_coordinate_collision
 
-    check_coordinate_collision({"period": [1, 2]}, {"a", "flags"})
-    with pytest.raises(ValueError, match="collides"):
-        check_coordinate_collision({"n": [1, 2]}, {"a", "n", "flags"})
+    layout = {
+        "a": ("s",),
+        "flags": ("s",),
+        "y_pred": ("s", "point"),
+        "interval_auc": ("s", "interval"),
+    }
+    check_coordinate_collision({"s": [1, 2], "period": ("s", [1, 2])}, layout, ("s",))
+    with pytest.raises(ValueError, match=r"coordinate \['n'\] of the batch collides"):
+        check_coordinate_collision({"n": [1, 2]}, {**layout, "n": ("s",)}, ("s",))
+    # the extra dimensions are read from the layout (#72)
+    for name in ("point", "interval"):
+        with pytest.raises(
+            ValueError,
+            match=rf"coordinate \['{name}'\] of the batch collides with a dimension",
+        ):
+            check_coordinate_collision({name: ("s", [1, 2])}, layout, ("s",))
+    with pytest.raises(ValueError, match=r"sample dimension \['a'\] collides with a"):
+        check_coordinate_collision({}, {"a": ("a",)}, ("a",))
+    # a sample dimension named like an extra dimension repeats it in the layout
+    with pytest.raises(
+        ValueError, match=r"sample dimension \['point'\] collides with a dimension"
+    ):
+        check_coordinate_collision({}, {"y_pred": ("point", "point")}, ("point",))
+    with pytest.raises(
+        ValueError, match=r"result variable \['interval'\] collides with a dimension"
+    ):
+        check_coordinate_collision({}, {**layout, "interval": ("s",)}, ("s",))
+
+
+def test_result_dimensions() -> None:
+    from pkpdutils.result import result_dimensions
+
+    layout = {"a": ("s", "t"), "b": ("s", "t", "point"), "c": ("t", "p", "p_")}
+    assert result_dimensions(layout, ("s", "t")) == {"point", "p", "p_"}
+    assert result_dimensions(layout, ()) == {"s", "t", "point", "p", "p_"}
+    assert result_dimensions({"x": ("i", "i")}, ("i",)) == {"i"}
 
 
 def test_decode_flags_of_a_flag_type() -> None:
@@ -386,6 +542,46 @@ def test_summary_table_method_and_errors() -> None:
         r.summary_table("s", layout="wide")  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError, match="coordinate along"):
         r.summary_table("s", by="missing")
+
+
+@pytest.mark.parametrize(
+    ("name", "layout"),
+    [
+        ("parameter", "parameters_rows"),
+        ("unit", "parameters_rows"),
+        ("mean", "parameters_rows"),
+        ("statistic", "parameters_columns"),
+        ("statistic", "long"),
+        ("value", "long"),
+    ],
+)
+def test_summary_table_rejects_a_group_named_like_a_column_of_the_table(
+    name: str, layout: str
+) -> None:
+    """A group column named like a column of the table used to replace its values.
+
+    `by="parameter"` wrote the group label where the parameter name belongs,
+    `by="mean"` lost the groups under the statistic.
+    """
+    r = MyResult(make().ds.assign_coords({name: ("s", ["a", "b", "a"])}))
+    with pytest.raises(ValueError, match=rf"\['{name}'\] collides with a column"):
+        r.summary_table("s", by=name, stats=("n", "mean"), layout=layout)  # ty: ignore[invalid-argument-type]
+    # a sample dimension of that name is a column of the table as well
+    two = MyResult(make().ds.expand_dims({name: ["low"]}))
+    with pytest.raises(ValueError, match=rf"\['{name}'\] collides with a column"):
+        two.summary_table("s", stats=("n", "mean"), layout=layout)  # ty: ignore[invalid-argument-type]
+
+
+def test_summary_table_groups_by_a_name_the_layout_does_not_write() -> None:
+    """`unit` is no column with the units in the header, `statistic` and `value` only in other layouts."""
+    for name, options in (
+        ("unit", {"units": "header"}),
+        ("statistic", {}),
+        ("value", {"layout": "parameters_columns"}),
+    ):
+        r = MyResult(make().ds.assign_coords({name: ("s", ["a", "b", "a"])}))
+        table = r.summary_table("s", by=name, stats=("mean",), **options)  # ty: ignore[invalid-argument-type]
+        assert table[name].tolist() == ["a", "a", "b", "b"]
 
 
 def test_summary_table_by_another_sample_dimension_explains_itself() -> None:

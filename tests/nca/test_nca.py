@@ -493,6 +493,69 @@ def test_nca_rejects_coordinate_named_like_a_variable() -> None:
         nca(batch)
 
 
+def multiple_dose_batch() -> Timecourses:
+    """Two bolus curves of three doses every 12 h."""
+    t = np.arange(0.0, 36.5, 0.5)
+    c = sum(np.where(t >= s, C0 * np.exp(-K * (t - s)), 0.0) for s in (0.0, 12.0, 24.0))
+    protocol = Dosing.regimen(IV_DOSE, interval=12.0, n_doses=3)
+    return Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=t,
+                value=factor * c,
+                time_unit="hr",
+                unit="mg/l",
+                dosing=protocol,
+                label=label,
+            )
+            for label, factor in (("a", 1.0), ("b", 1.2))
+        ]
+    )
+
+
+@pytest.mark.parametrize("dim", ["interval", "candidate"])
+def test_nca_rejects_a_name_of_the_batch_that_is_a_dimension_of_the_result(
+    dim: str,
+) -> None:
+    """A coordinate or a sample dimension named like `interval` or `candidate` is rejected (#72).
+
+    Without the check the coordinate was silently replaced by the interval
+    numbers, and a sample dimension named `interval` silently lost its labels
+    and laid the per-interval variables out over `(interval, interval)`.
+    """
+    if dim == "interval":
+        batch, options = multiple_dose_batch(), NCAOptions()
+    else:
+        batch = iv_timecourse().to_batch(dim="individual", label="a")
+        options = NCAOptions(terminal=TerminalPhase(keep_candidates=True))
+    reference = nca(batch, options=options)
+    extra = {str(d) for d in reference.ds.dims} - set(reference.sample_dims)
+    assert extra == {dim}
+    labels = np.arange(batch.n_samples, dtype=np.float64)
+    labelled = Timecourses(batch.ds.assign_coords({dim: ("individual", labels)}))
+    with pytest.raises(
+        ValueError,
+        match=rf"coordinate \['{dim}'\] of the batch collides with a dimension",
+    ):
+        nca(labelled, options=options)
+    renamed = Timecourses(batch.ds.rename({"individual": dim}))
+    with pytest.raises(
+        ValueError, match=rf"sample dimension \['{dim}'\] collides with a dimension"
+    ):
+        nca(renamed, options=options)
+    # a batch whose result does not carry the dimension keeps the coordinate
+    single = iv_timecourse().to_batch(dim="individual", label="a")
+    kept = nca(Timecourses(single.ds.assign_coords({dim: ("individual", [7.0])})))
+    assert kept.ds[dim].dims == ("individual",)
+    assert float(kept.ds[dim].values[0]) == 7.0
+
+
+def test_a_partial_area_named_like_a_dimension_of_the_result_raises() -> None:
+    options = NCAOptions(partial_aucs={"interval": (0.0, 12.0)})
+    with pytest.raises(ValueError, match="carry the name of a variable"):
+        nca(multiple_dose_batch(), options=options)
+
+
 def test_last_n_after_the_maximum_end_to_end() -> None:
     # B18: the analysis of a curve whose maximum is not its first point
     t = np.array([0.5, 1, 2, 4, 8, 12, 24.0])

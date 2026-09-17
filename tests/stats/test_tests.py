@@ -98,6 +98,104 @@ def test_paired_drops_only_the_pair_with_a_missing_value() -> None:
     assert r.p_value == pytest.approx(ref.pvalue)
 
 
+def test_paired_rank_test_takes_the_effect_from_the_pairs() -> None:
+    # issue #69: the medians of the paired rank test were taken of every finite
+    # value, so the value of s0, whose partner is missing, entered the effect
+    # and turned it around although every subject has less of a than of b
+    labels = ["s0", "s1", "s2", "s3", "s4"]
+    a = sample(np.array([1000.0, 10.0, 20.0, 30.0, 40.0]), labels)
+    b = sample(np.array([np.nan, 11.0, 22.0, 33.0, 44.0]), labels)
+    pairs_a = np.array([10.0, 20.0, 30.0, 40.0])
+    pairs_b = np.array([11.0, 22.0, 33.0, 44.0])
+    log = compare(a, b, test=TestMethod.WILCOXON, paired=True)
+    assert log.n_a == log.n_b == 4
+    assert log.effect == pytest.approx(np.median(pairs_a) / np.median(pairs_b))
+    assert log.effect < 1.0
+    assert log.p_value == pytest.approx(
+        stats.wilcoxon(np.log(pairs_a), np.log(pairs_b)).pvalue
+    )
+    linear = compare(a, b, test=TestMethod.WILCOXON, paired=True, scale=Scale.LINEAR)
+    assert linear.effect == pytest.approx(np.median(pairs_a) - np.median(pairs_b))
+    assert linear.effect < 0.0
+    # a subject only one of the samples holds is left out the same way
+    unshared = compare(
+        a, sample(pairs_b, labels[1:]), test=TestMethod.WILCOXON, paired=True
+    )
+    assert unshared.effect == pytest.approx(log.effect)
+
+
+PAIRED_LABELS = [f"s{i}" for i in range(12)]
+#: s1 misses a value of `a`, s4 one of `b`, s11 has no value of `b` at all
+PAIRED_KEPT = [i for i in range(11) if i not in (1, 4)]
+
+
+def _incomplete_pairs() -> tuple[ParameterSample, ParameterSample]:
+    """`A_PAIRED` and `B_PAIRED` with two missing values and an unshared subject."""
+    values_a, values_b = A_PAIRED.copy(), B_PAIRED.copy()
+    values_a[1], values_b[4] = np.nan, np.nan
+    # a large outlier on the dropped subjects makes a mixed subject set visible
+    values_b[1] = values_a[4] = 1e4
+    # `b` lacks s11 and holds its subjects in the reverse order
+    order = list(range(10, -1, -1))
+    return (
+        sample(values_a, PAIRED_LABELS),
+        sample(values_b[order], [PAIRED_LABELS[i] for i in order]),
+    )
+
+
+@pytest.mark.parametrize("scale", [Scale.LOG, Scale.LINEAR])
+@pytest.mark.parametrize(
+    "test", [TestMethod.PAIRED_T, TestMethod.WILCOXON, TestMethod.PERMUTATION]
+)
+def test_every_paired_test_runs_on_the_complete_pairs_alone(
+    test: TestMethod, scale: Scale
+) -> None:
+    # every field of a paired comparison, the effect, its interval, the
+    # effect sizes and the counts, comes from the same pairs as the p value
+    a, b = _incomplete_pairs()
+    complete_a = sample(A_PAIRED[PAIRED_KEPT], [PAIRED_LABELS[i] for i in PAIRED_KEPT])
+    complete_b = sample(B_PAIRED[PAIRED_KEPT], [PAIRED_LABELS[i] for i in PAIRED_KEPT])
+
+    def run(x: ParameterSample, y: ParameterSample) -> TestResult:
+        return compare(x, y, test=test, scale=scale, paired=True, n_perm=199, seed=3)
+
+    result = run(a, b)
+    assert result.n_a == result.n_b == len(PAIRED_KEPT)
+    np.testing.assert_equal(result.to_dict(), run(complete_a, complete_b).to_dict())
+
+
+@pytest.mark.parametrize("scale", [Scale.LOG, Scale.LINEAR])
+@pytest.mark.parametrize(
+    "test",
+    [
+        TestMethod.WELCH_T,
+        TestMethod.STUDENT_T,
+        TestMethod.MANN_WHITNEY,
+        TestMethod.PERMUTATION,
+    ],
+)
+def test_every_unpaired_test_runs_on_the_finite_values_alone(
+    test: TestMethod, scale: Scale
+) -> None:
+    values_a = A.copy()
+    values_a[[2, 7]] = np.nan
+    finite = values_a[np.isfinite(values_a)]
+
+    def run(x: ParameterSample, y: ParameterSample) -> TestResult:
+        return compare(x, y, test=test, scale=scale, n_perm=199, seed=3)
+
+    result = run(sample(values_a), sample(B))
+    assert result.n_a == 10 and result.n_b == 10
+    np.testing.assert_equal(result.to_dict(), run(sample(finite), sample(B)).to_dict())
+    if test is TestMethod.WELCH_T:
+        # summary data of `b`: the moments of `a` come from its finite values
+        summary = ParameterSample(mean=130.0, sd=35.0, n=10)
+        np.testing.assert_equal(
+            run(sample(values_a), summary).to_dict(),
+            run(sample(finite), summary).to_dict(),
+        )
+
+
 def test_single_value_and_zero_variance_give_nan_statistics() -> None:
     nan_fields = ("statistic", "p_value", "df", "ci_low", "ci_high")
     one_value = compare(ParameterSample(values=np.array([1.0])), sample(B))

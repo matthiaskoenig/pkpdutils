@@ -71,6 +71,11 @@ def fit_timecourses(
 
     Returns:
         The result over the sample dimensions of the batch.
+
+    Raises:
+        ValueError: if a sample dimension or a coordinate of the batch
+            collides with a variable or a dimension (`point`, `parameter`,
+            `parameter_`) of the result.
     """
     options = options or FitOptions()
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
@@ -174,8 +179,10 @@ def fit_table(
         The result over the remaining dimensions of `y` (0-D when `y` has only `dim`).
 
     Raises:
-        ValueError: if `y` has no dimension `dim`, or if `x` (or `sd`) has a
-            dimension `y` does not have.
+        ValueError: if `y` has no dimension `dim`, if `x` (or `sd`) has a
+            dimension `y` does not have, or if a remaining dimension of `y`
+            collides with a variable or a dimension (`point`, `parameter`,
+            `parameter_`) of the result.
     """
     options = options or FitOptions()
     if dim not in ds[y].dims:

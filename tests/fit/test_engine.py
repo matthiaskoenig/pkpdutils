@@ -12,9 +12,9 @@ from pkpdutils.fit.engine import (
     fit_row,
     fit_rows,
     from_scale,
+    residual_sd,
     scale_derivative,
     to_scale,
-    variance_of,
 )
 from pkpdutils.fit.model import Model, ModelParameter
 from pkpdutils.fit.models import Bateman, BiExp, Emax, Linear, MonoExp
@@ -71,19 +71,32 @@ def test_scale_helpers() -> None:
     )
 
 
-def test_variance_of() -> None:
-    """The variance models of the weighting."""
+def test_residual_sd() -> None:
+    """The standard deviations `sqrt(var)` of the variance models of the weighting."""
     y = np.array([1.0, 4.0, 0.0])
-    np.testing.assert_allclose(variance_of(y, None, Weighting.NONE), [1.0, 1.0, 1.0])
+    np.testing.assert_allclose(residual_sd(y, None, Weighting.NONE), [1.0, 1.0, 1.0])
     np.testing.assert_allclose(
-        variance_of(y, None, Weighting.INV_Y2), [1.0, 16.0, 1.0]
+        residual_sd(y, None, Weighting.INV_Y2), [1.0, 4.0, 1.0]
     )  # y = 0 -> smallest positive
-    np.testing.assert_allclose(variance_of(y, None, Weighting.INV_Y), [1.0, 4.0, 1.0])
+    np.testing.assert_allclose(residual_sd(y, None, Weighting.INV_Y), [1.0, 2.0, 1.0])
     np.testing.assert_allclose(
-        variance_of(y, np.array([0.1, 0.2, 0.3]), Weighting.INV_SD), [0.01, 0.04, 0.09]
+        residual_sd(y, np.array([0.1, 0.2, 0.3]), Weighting.INV_SD), [0.1, 0.2, 0.3]
     )
     with pytest.raises(ValueError, match="sd"):
-        variance_of(y, None, Weighting.INV_SD)
+        residual_sd(y, None, Weighting.INV_SD)
+
+
+@pytest.mark.filterwarnings("error")
+def test_residual_sd_keeps_the_weight_of_values_whose_square_leaves_double_precision() -> (
+    None
+):
+    """`|y|` rather than `sqrt(y²)`: `1e300²` overflows, `1e-300²` underflows to zero (#73)."""
+    y = np.array([1e300, -1e-300, 2.0])
+    np.testing.assert_array_equal(residual_sd(y, None, Weighting.INV_Y2), np.abs(y))
+    np.testing.assert_array_equal(
+        residual_sd(y, None, Weighting.INV_Y), np.sqrt(np.abs(y))
+    )
+    np.testing.assert_array_equal(residual_sd(y, -y, Weighting.INV_SD), np.abs(y))
 
 
 def test_monoexp_recovery_and_statistics() -> None:
