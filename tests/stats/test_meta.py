@@ -1,12 +1,16 @@
+import inspect
 import json
 import warnings
+from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
+from numpy.typing import ArrayLike
 from scipy.stats import chi2, norm
 
-from pkpdutils.stats import ParameterSample
+from pkpdutils.stats import ParameterSample, meta
 from pkpdutils.stats.meta import (
     EffectKind,
     EffectSize,
@@ -165,6 +169,52 @@ def test_meta_analysis_result() -> None:
     assert set(by) == {"smokers", "contraceptives"} and by["smokers"].n_studies == 3
     with pytest.raises(ValueError, match="at least one"):
         meta_analysis([])
+
+
+def test_meta_analysis_computes_the_heterogeneity_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the effects are validated and their heterogeneity computed in one pass,
+    # which the random effects pooling reads its tau2 from; the result is the
+    # one of the separate functions
+    calls: Counter[str] = Counter()
+    for name in ("_arrays", "_heterogeneity"):
+        original = getattr(meta, name)
+
+        def counted(*args: Any, _name: str = name, _original: Any = original) -> Any:
+            calls[_name] += 1
+            return _original(*args)
+
+        monkeypatch.setattr(meta, name, counted)
+    studies = [
+        Study(
+            label=f"study {i}",
+            control=ParameterSample(mean=1.2, sd=0.4, n=10),
+            treatment=ParameterSample(mean=1.6 + 0.4 * i, sd=0.5, n=10),
+        )
+        for i in range(4)
+    ]
+    result = meta_analysis(studies)
+    assert calls == {"_arrays": 1, "_heterogeneity": 1}
+    effects = list(result.effects)
+    assert result.heterogeneity == heterogeneity(effects)
+    assert result.fixed == fixed_effect(effects)
+    assert result.random == random_effects(effects)
+    assert result.random.tau2 == result.heterogeneity.tau2 > 0.0
+
+
+def test_effects_from_arrays_takes_array_likes_and_keyword_options() -> None:
+    parameters = inspect.signature(effects_from_arrays).parameters
+    assert parameters["estimates"].annotation == ArrayLike
+    assert parameters["variances"].annotation == ArrayLike
+    keywords = [
+        name
+        for name, p in parameters.items()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY
+    ]
+    assert keywords == ["labels", "kind", "ci_level"]
+    with pytest.raises(TypeError, match="positional"):
+        effects_from_arrays([0.3], [0.02], None, "log_ratio")  # ty: ignore[too-many-positional-arguments]
 
 
 def test_single_subject_study_gives_nan_effect() -> None:
