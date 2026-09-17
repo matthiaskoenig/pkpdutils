@@ -33,6 +33,7 @@ SCRIPTS: list[str] = [
     "examples.formats",
     "examples.urine",
     "examples.sparse",
+    "examples.report",
 ]
 
 

@@ -89,6 +89,12 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_last_se`, `auc_last_df` | \(\nu\) | standard error of the area of a sparse design (Bailer; Nedelman and Jia, Holder for a batch design) and its Satterthwaite degrees of freedom (Nedelman, Gibiansky and Lau) | value·time, – | [Sparse sampling](sparse.md) |
 | `n_animals` | \(n_j\) | number of animals behind every nominal time of a sparse design, over the dimension `time` | – | [Sparse sampling](sparse.md) |
 | `candidate_t_first`, `candidate_n_points`, `candidate_r2_adj` | | the candidate windows of the terminal regression over the dimension `candidate`: the time of the first point, the number of points and the adjusted \(R^2\) of every window the selection could choose from, kept by `TerminalPhase(keep_candidates=True)` for a single curve and drawn by `plot_terminal_windows` | time, –, – | [Plotting](plotting.md) |
+| `cv_intra_r`, `cv_intra_t` | \(\mathrm{CV}_{wR}\), \(\mathrm{CV}_{wT}\) | within-subject CV of the reference and of the test formulation alone, from their replicates in a replicate design | % | [Bioequivalence](bioequivalence.md) |
+| `scaled`, `limits_scaled` | \(\theta_L\), \(\theta_U\) | whether the acceptance rule was derived from the variability of the reference or replaced by a narrow therapeutic index rule, and the derived limits | – | [Bioequivalence](bioequivalence.md) |
+| `criterion` | \(U\) | upper 95 % bound of the reference-scaled criterion of the FDA, at most zero for a bioequivalent formulation | – | [Bioequivalence](bioequivalence.md) |
+| `sd_ratio_upper` | \((s_{wT}/s_{wR})_\mathrm{upper}\) | upper 90 % bound of the ratio of the within-subject standard deviations, at most 2.500 for a narrow therapeutic index drug | – | [Bioequivalence](bioequivalence.md) |
+| `anova` | | the analysis of variance table of a replicate design: source, `df`, `sum_sq`, `mean_sq`, `f`, `p_value` | – | [Bioequivalence](bioequivalence.md) |
+| `power`, `n` | \(1-\beta\), \(n\) | power of the two one-sided tests and the total number of subjects of a design | –, – | [Bioequivalence](bioequivalence.md) |
 
 ## Statistics of the parameter tables
 

@@ -14,8 +14,10 @@ from pkpdutils.stats.bioequivalence import (
     BEParameter,
     BEResult,
     Design,
+    abel_limits,
     bioequivalence,
     carryover_table,
+    rsabe_criterion,
     tost,
 )
 from pkpdutils.stats.ddi import (
@@ -43,6 +45,7 @@ from pkpdutils.stats.meta import (
     meta_analysis_by,
     random_effects,
 )
+from pkpdutils.stats.power import power_tost, sample_size_tost
 from pkpdutils.stats.ratio import RatioResult, ratio, ratio_table
 from pkpdutils.stats.sample import (
     ParameterSample,
@@ -70,6 +73,7 @@ from pkpdutils.stats.tests import (
     TestMethod,
     TestResult,
     compare,
+    hodges_lehmann,
     multiple_comparison,
 )
 
@@ -96,6 +100,7 @@ __all__ = [
     "Summary",
     "TestMethod",
     "TestResult",
+    "abel_limits",
     "bioequivalence",
     "carryover_table",
     "coerce",
@@ -109,6 +114,7 @@ __all__ = [
     "fixed_effect",
     "hedges_correction",
     "heterogeneity",
+    "hodges_lehmann",
     "labels_match",
     "log_positive",
     "lognormal_from_geometric",
@@ -120,9 +126,12 @@ __all__ = [
     "paired_indices",
     "paired_values",
     "pooled_sd",
+    "power_tost",
     "random_effects",
     "ratio",
     "ratio_table",
+    "rsabe_criterion",
+    "sample_size_tost",
     "substrate_sensitivity",
     "summarize",
     "tost",

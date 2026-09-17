@@ -1,4 +1,4 @@
-"""Significance tests on parameter samples and the adjustment of p values.
+r"""Significance tests on parameter samples and the adjustment of p values.
 
 `compare` runs the t tests (Student, Welch, paired), the rank tests
 (Mann-Whitney U, Wilcoxon signed rank) and a permutation test of scipy on
@@ -7,9 +7,18 @@ t interval and the standardized effect sizes (Cohen's d, Hedges' g; Hedges
 1981). Summary data (`mean`, `sd`, `n`) is compared with the Welch t test
 from the moments (`scipy.stats.ttest_ind_from_stats`), on the log scale with
 the log-normal moments of `ParameterSample.log_moments`.
+
+`hodges_lehmann` is the distribution free companion of the rank tests: the
+median of the Walsh averages (paired) or of the pairwise differences
+(unpaired) with a confidence interval built from the order statistics of the
+same null distribution (Hodges & Lehmann 1963). It is the comparison the EMA
+asks for when \(t_\mathrm{max}\) matters, which is neither log-normal nor an
+acceptance parameter.
 """
 
 import logging
+import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -24,6 +33,7 @@ from pkpdutils.stats.sample import (
     Scale,
     coerce,
     cohen_d,
+    labels_match,
     log_positive,
     paired_values,
     welch_df,
@@ -522,6 +532,332 @@ def _welch_from_moments(
         alternative=alternative,
         paired=False,
         df=df,
+        cohen_d=d,
+        hedges_g=g,
+        n_a=n_a,
+        n_b=n_b,
+        name=a.name,
+        unit=a.unit,
+    )
+
+
+#: the largest sample for which the exact null distribution of a rank test is
+#: enumerated by `hodges_lehmann`; above it the quantile of the order
+#: statistic comes from the normal approximation
+EXACT_MAX_N: int = 50
+
+
+def _signed_rank_counts(n: int) -> np.ndarray:
+    r"""The exact null distribution of the Wilcoxon signed rank statistic.
+
+    The number of subsets of \(\{1, \dots, n\}\) which sum to \(w\), the
+    coefficients of \(\prod_{i=1}^{n} (1 + q^i)\), for every \(w\) from 0 to
+    \(n(n+1)/2\). The counts are exact integers below \(2^{53}\), which
+    covers every `n` up to `EXACT_MAX_N`.
+
+    Args:
+        n: the number of pairs.
+
+    Returns:
+        The counts, indexed by the value of the statistic.
+    """
+    counts = np.zeros(n * (n + 1) // 2 + 1)
+    counts[0] = 1.0
+    for i in range(1, n + 1):
+        counts[i:] = counts[i:] + counts[:-i]
+    return counts
+
+
+def _mann_whitney_counts(m: int, n: int) -> np.ndarray:
+    r"""The exact null distribution of the Mann-Whitney U statistic.
+
+    The number of partitions of \(u\) into at most \(m\) parts of at most
+    \(n\), the coefficients of the Gaussian binomial coefficient
+    \(\binom{m+n}{m}_q = \prod_{i=1}^{m} (1 - q^{n+i}) / (1 - q^i)\),
+    accumulated one factor at a time: the division by \(1 - q^i\) is a prefix
+    sum of stride \(i\), the multiplication by \(1 - q^{n+i}\) a subtraction
+    of stride \(n + i\), both exact in integers.
+
+    Args:
+        m: the size of the first sample.
+        n: the size of the second sample.
+
+    Returns:
+        The counts, indexed by the value of `U` from 0 to `m * n`.
+    """
+    size = m * n + 1
+    counts = np.zeros(size)
+    counts[0] = 1.0
+    for i in range(1, m + 1):
+        # dividing by `1 - q**i` is the prefix sum of every residue class of i
+        for offset in range(i):
+            counts[offset::i] = np.cumsum(counts[offset::i])
+        if n + i < size:
+            counts[n + i :] = counts[n + i :] - counts[: size - n - i]
+    return counts
+
+
+def _order_statistic(counts: np.ndarray, alpha: float) -> int:
+    """The rank of the order statistic which bounds a distribution free interval.
+
+    The smallest value `w` of the statistic whose cumulative null probability
+    reaches `alpha`, which is `qsignrank`/`qwilcox` of R; the interval is then
+    the `w`-th smallest and the `w`-th largest of the Walsh averages or of the
+    pairwise differences.
+
+    Args:
+        counts: the counts of the null distribution.
+        alpha: the tail probability, half of `1 - ci_level`.
+
+    Returns:
+        The rank, at least 1.
+    """
+    cdf = np.cumsum(counts) / counts.sum()
+    return int(np.searchsorted(cdf, alpha, side="left"))
+
+
+def _achieved_level(counts: np.ndarray, rank: int) -> float:
+    r"""The coverage of the interval of the `rank`-th order statistics.
+
+    The null distribution of a rank statistic is discrete, so an interval of
+    order statistics rarely has exactly the requested level: its coverage is
+    \(1 - 2 P(W \le w - 1)\), which R reports as the achieved
+    `conf.level` of `wilcox.test`.
+
+    Args:
+        counts: the counts of the null distribution.
+        rank: the rank of the order statistic, at least 1.
+
+    Returns:
+        The coverage of the interval.
+    """
+    cdf = np.cumsum(counts) / counts.sum()
+    return float(1.0 - 2.0 * cdf[rank - 1])
+
+
+def _normal_order_statistic(mean: float, sd: float, alpha: float) -> int:
+    """The same rank from the normal approximation of the null distribution.
+
+    Args:
+        mean: mean of the null distribution of the statistic.
+        sd: standard deviation of the null distribution.
+        alpha: the tail probability.
+
+    Returns:
+        The rank, never negative.
+    """
+    quantile = mean + float(stats.norm.ppf(alpha)) * sd
+    return max(0, int(np.round(quantile)))
+
+
+def _rank_test(
+    test: Callable[[np.ndarray, np.ndarray], Any], x: np.ndarray, y: np.ndarray
+) -> tuple[float, float]:
+    """Run a rank test of scipy and turn the warnings it raises into log lines.
+
+    A tie or a zero difference makes scipy fall back from the exact null
+    distribution to its normal approximation and say so with a warning; that
+    is the normal case for a parameter read from a sampling grid, so the
+    warning is logged at debug level instead of reaching the caller.
+
+    Args:
+        test: the function of `scipy.stats`.
+        x: the first sample.
+        y: the second sample.
+
+    Returns:
+        The statistic and the p value.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = test(x, y)
+    for entry in caught:
+        logger.debug("%s: %s", getattr(test, "__name__", test), entry.message)
+    return float(result.statistic), float(result.pvalue)
+
+
+def _walsh_averages(d: np.ndarray) -> np.ndarray:
+    r"""The Walsh averages \((d_i + d_j)/2\) of a sample, \(i \le j\).
+
+    Args:
+        d: the paired differences.
+
+    Returns:
+        The `n (n + 1) / 2` averages, sorted.
+    """
+    i, j = np.triu_indices(d.size)
+    return np.sort((d[i] + d[j]) / 2.0)
+
+
+def hodges_lehmann(
+    a: ParameterSample,
+    b: ParameterSample,
+    *,
+    paired: bool | None = None,
+    ci_level: float = 0.90,
+) -> TestResult:
+    r"""The Hodges-Lehmann estimate of the median difference with a distribution free interval.
+
+    The estimator of Hodges & Lehmann (1963) is the median of the Walsh
+    averages of the paired differences,
+
+    $$\hat\Delta = \mathrm{median}\left\{\frac{d_i + d_j}{2}
+    : 1 \le i \le j \le n\right\}, \qquad d_i = a_i - b_i,$$
+
+    for paired data and the median of the \(n_a n_b\) pairwise differences
+    \(a_i - b_j\) for two independent samples. Its confidence interval is a
+    pair of order statistics of the same quantities: with \(w\) the smallest
+    value of the null statistic whose cumulative probability reaches
+    \(\alpha/2\), the interval runs from the \(w\)-th smallest to the
+    \(w\)-th largest, which is the interval R reports for `wilcox.test`. The
+    null distribution is enumerated exactly up to `EXACT_MAX_N` values per
+    sample (the subsets of the signed ranks, the partitions of the Mann-Whitney
+    statistic) and approximated by the normal distribution of its mean and
+    variance above, where the exact enumeration no longer changes the answer.
+    The p value is the matching two-sided rank test of scipy, the Wilcoxon
+    signed rank test for paired and the Mann-Whitney U test for independent
+    samples.
+
+    The analysis runs on the values as they are, not on their logarithms: it
+    is the comparison of \(t_\mathrm{max}\) the EMA asks for when a rapid
+    onset is claimed to be clinically relevant ("no apparent difference in
+    median \(t_\mathrm{max}\) and its variability"), a parameter which is read
+    from the sampling grid, is not log-normal and is no acceptance parameter
+    of bioequivalence. Exposure parameters are analysed with `tost` instead,
+    which both the EMA and the FDA require for \(\mathrm{AUC}\) and
+    \(C_\mathrm{max}\).
+
+    Ties are kept as they are: the estimate and the interval are well defined,
+    while the exact null distribution assumes no ties, so the p value of a
+    sample with ties is scipy's tie-corrected one and the interval is
+    conservative.
+
+    The null distribution is discrete, so an interval of order statistics
+    rarely has exactly the requested coverage: the `ci_level` of the result is
+    the level the interval **achieves**, \(1 - 2 P(W \le w - 1)\), which is
+    what R reports as the `conf.level` of `wilcox.test`. A sample too small for
+    the requested level gets the two extreme order statistics, and `ci_level`
+    then says how little they cover (four pairs at a requested 0.90 achieve
+    0.875); above `EXACT_MAX_N`, where the exact distribution is not
+    enumerated, the requested level is reported as it is.
+
+    Args:
+        a: the first sample, individual values.
+        b: the second sample, individual values.
+
+    Keyword Args:
+        paired: whether the values belong to the same individuals; detected
+            from the labels of the samples by default (`labels_match`).
+        ci_level: the level asked for, 0.90 as for the bioequivalence
+            interval; the level the interval achieves is reported back in
+            `TestResult.ci_level`.
+
+    Returns:
+        The result, with the estimate in `effect`, the interval in `ci_low`
+        and `ci_high`, its achieved coverage in `ci_level`, the rank statistic
+        in `statistic` and the p value of the rank test in `p_value`; `df` is
+        `NaN`, the estimator has none. A single pair, or a pair of single
+        values, has an estimate but no interval (`NaN`).
+
+    Raises:
+        ValueError: for summary data, for a `ci_level` outside `(0, 1)`, or
+            as `paired_values` for an unpairable pair of samples.
+    """
+    if not 0 < ci_level < 1:
+        raise ValueError(f"'ci_level' must lie in (0, 1), got {ci_level}")
+    if not (a.is_individual and b.is_individual):
+        raise ValueError(
+            f"'{a.name}' or '{b.name}' has no individual values, the "
+            "Hodges-Lehmann estimator needs individual data"
+        )
+    is_paired = labels_match(a, b) if paired is None else bool(paired)
+    method = TestMethod.WILCOXON if is_paired else TestMethod.MANN_WHITNEY
+    alpha = (1.0 - ci_level) / 2.0
+    nan = float("nan")
+    if is_paired:
+        x, y = paired_values(a, b)
+        n_a = n_b = int(x.size)
+        differences = x - y
+        estimates = _walsh_averages(differences)
+        counts = _signed_rank_counts(n_a) if n_a <= EXACT_MAX_N else None
+        rank = (
+            _order_statistic(counts, alpha)
+            if counts is not None
+            else _normal_order_statistic(
+                n_a * (n_a + 1) / 4.0,
+                float(np.sqrt(n_a * (n_a + 1) * (2 * n_a + 1) / 24.0)),
+                alpha,
+            )
+        )
+        if np.all(differences == 0.0):
+            # every pair is identical: the rank test has nothing to rank
+            statistic, p_value = 0.0, 1.0
+        else:
+            statistic, p_value = _rank_test(stats.wilcoxon, x, y)
+    else:
+        x, y = a.finite_values, b.finite_values
+        n_a, n_b = int(x.size), int(y.size)
+        if n_a < 1 or n_b < 1:
+            logger.debug(
+                "'%s' or '%s' has no finite value, the estimate is NaN", a.name, b.name
+            )
+            return _nan_result(
+                method,
+                Scale.LINEAR,
+                Alternative.TWO_SIDED,
+                False,
+                ci_level,
+                n_a,
+                n_b,
+                a,
+            )
+        estimates = np.sort((x[:, None] - y[None, :]).ravel())
+        counts = (
+            _mann_whitney_counts(n_a, n_b) if max(n_a, n_b) <= EXACT_MAX_N else None
+        )
+        rank = (
+            _order_statistic(counts, alpha)
+            if counts is not None
+            else _normal_order_statistic(
+                n_a * n_b / 2.0,
+                float(np.sqrt(n_a * n_b * (n_a + n_b + 1) / 12.0)),
+                alpha,
+            )
+        )
+        statistic, p_value = _rank_test(stats.mannwhitneyu, x, y)
+    effect = float(np.median(estimates))
+    if rank < 1:
+        logger.debug(
+            "'%s' and '%s' are too small for a %.0f %% distribution free interval, "
+            "the extreme order statistics are reported instead",
+            a.name,
+            b.name,
+            ci_level * 100.0,
+        )
+        rank = 1
+    if rank <= estimates.size // 2:
+        ci = (float(estimates[rank - 1]), float(estimates[estimates.size - rank]))
+        # the null distribution is discrete: report the coverage the interval
+        # of these order statistics really has, as R does
+        achieved = ci_level if counts is None else _achieved_level(counts, rank)
+    else:
+        ci = (nan, nan)
+        achieved = ci_level
+    sd_a = float(x.std(ddof=1)) if n_a > 1 else nan
+    sd_b = float(y.std(ddof=1)) if n_b > 1 else nan
+    d, g = cohen_d(float(x.mean()), sd_a, n_a, float(y.mean()), sd_b, n_b)
+    return TestResult(
+        test=method,
+        statistic=statistic,
+        p_value=p_value,
+        effect=effect,
+        ci_low=ci[0],
+        ci_high=ci[1],
+        ci_level=achieved,
+        scale=Scale.LINEAR,
+        alternative=Alternative.TWO_SIDED,
+        paired=is_paired,
+        df=nan,
         cohen_d=d,
         hedges_g=g,
         n_a=n_a,

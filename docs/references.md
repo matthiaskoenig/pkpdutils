@@ -164,6 +164,20 @@
 > 2010.
 > [ema.europa.eu](https://www.ema.europa.eu/en/investigation-bioequivalence-scientific-guideline)
 
+**FDA reference-scaled average bioequivalence.** The product-specific guidance which defines the scaled criterion of a highly variable drug: the switching condition \(s_{wR} = 0.294\), the regulatory constant \(\sigma_{w0} = 0.25\), the upper 95 % bound of \((\mu_T - \mu_R)^2 - \theta\sigma_{wR}^2\) by Howe's approximation and the point estimate within 80.00-125.00 %.
+
+> U.S. Food and Drug Administration.
+> **Draft Guidance on Progesterone.**
+> 2011 (recommended Feb 2011, revised).
+> [accessdata.fda.gov](https://www.accessdata.fda.gov/scripts/cder/psg/index.cfm)
+
+**FDA narrow therapeutic index bioequivalence.** The product-specific guidance which defines the narrow therapeutic index approach: the fully replicate four period design, \(\sigma_{w0} = 0.10\), \(\Delta = 1/0.9\), the unscaled interval within 80.00-125.00 % and the upper 90 % bound of \(s_{wT}/s_{wR}\) at most 2.500.
+
+> U.S. Food and Drug Administration.
+> **Draft Guidance on Warfarin Sodium.**
+> 2012 (recommended Dec 2012).
+> [accessdata.fda.gov](https://www.accessdata.fda.gov/scripts/cder/psg/index.cfm)
+
 **ICH M13A.** The current harmonized (FDA/EMA/PMDA) bioequivalence design and analysis standard for immediate-release solid oral dosage forms.
 
 > International Council for Harmonisation.
@@ -213,6 +227,20 @@
 > **A comparison of the two one-sided tests procedure and the power approach for assessing the equivalence of average bioavailability.**
 > *Journal of Pharmacokinetics and Biopharmaceutics.* 1987;15(6):657-680.
 > [doi:10.1007/BF01068419](https://doi.org/10.1007/BF01068419)
+
+**Owen's Q function.** The bivariate non-central t probability the exact power of the two one-sided tests is computed from.
+
+> Owen DB.
+> **A special case of a bivariate non-central t-distribution.**
+> *Biometrika.* 1965;52(3-4):437-446.
+> [doi:10.2307/2333696](https://doi.org/10.2307/2333696)
+
+**Hodges-Lehmann estimator.** The median of the Walsh averages and the distribution free confidence interval of the \(t_\mathrm{max}\) comparison.
+
+> Hodges JL, Lehmann EL.
+> **Estimates of location based on rank tests.**
+> *The Annals of Mathematical Statistics.* 1963;34(2):598-611.
+> [doi:10.1214/aoms/1177704172](https://doi.org/10.1214/aoms/1177704172)
 
 **Dose proportionality.**
 
@@ -352,6 +380,13 @@ The exchange formats of `pkpdutils.io`: the event records of NONMEM and Monolix,
 > [cdisc.org/standards/foundational/adam](https://www.cdisc.org/standards/foundational/adam)
 
 ## Software
+
+**PowerTOST.** The reference implementation of the power and the sample size of the two one-sided tests, whose design constants, degrees of freedom and published examples `pkpdutils.stats.power` reproduces.
+
+> Labes D, Schütz H, Lang B.
+> **PowerTOST: Power and Sample Size for (Bio)Equivalence Studies.**
+> CRAN package.
+> [cran.r-project.org/package=PowerTOST](https://cran.r-project.org/package=PowerTOST)
 
 **pint, xarray, scipy.** The libraries the package is built on.
 

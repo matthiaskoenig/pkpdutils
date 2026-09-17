@@ -390,5 +390,21 @@ The snippet of a card is the core of its example. It runs from the root of a che
     ```
 
     [sparse.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/sparse.py) &middot; [Sparse sampling](sparse.md)
+-   __Study report__
+
+    ---
+
+    [![The mean curves of two arms with their standard deviation, linear and semi-logarithmic](images/report.png)](images/report.png)
+
+    The tables and the figures of a study assembled into one self-contained HTML document: the methods sentence, the summary statistics of ICH M13A, the acceptability of the extrapolation, the parameters of every subject and the two figures.
+
+    ```python
+    from pkpdutils import study_report
+
+    report = study_report(batch, result, dim="individual", by="arm")
+    report.write_html("report.html")
+    ```
+
+    [report.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/report.py) &middot; [Reporting](reporting.md)
 
 </div>

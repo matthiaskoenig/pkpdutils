@@ -11,6 +11,7 @@ The API reference is generated from the docstrings of the package.
 | [result](result.md) | `ParameterResult`, the shared container of `NCAResult` and `FitResult`; `sample` gives a `ParameterSample`, `summary_table` the parameter table of a publication |
 | [io](io.md) | exchange formats, see [Data formats](../formats.md): `read_events`/`write_events`, `read_pknca`, `read_adnca` |
 | [parallel](parallel.md) | the shared worker pools: `executor`, `resolve_workers`, `split_rows` |
+| [report](report.md) | `Report` and `study_report`, see [Reporting](../reporting.md): the tables and the figures of a study in one HTML or markdown document |
 | [console](console.md) | shared rich console, `rich_table` and `print_table` for the tables of the package |
 | [log](log.md) | logging of the package |
 
@@ -52,7 +53,8 @@ Statistics on parameters, see [Statistics](../statistics.md).
 | module | description |
 | --- | --- |
 | [stats](stats.md) | `ParameterSample`, `Scale`, `summarize`, `compare`, `multiple_comparison`, `ratio`, `ratio_table`: samples, tests and the geometric mean ratio |
-| [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, paired, parallel and 2x2 crossover designs |
+| [stats.bioequivalence](stats.bioequivalence.md) | `bioequivalence`, `tost`, `Design`: the two one-sided tests, the paired, parallel, 2x2 crossover and replicate designs and the reference-scaled limits |
+| [stats.power](stats.power.md) | `power_tost`, `sample_size_tost`, `owens_q`: the power and the sample size of a study |
 | [stats.ddi](stats.ddi.md) | `ddi_classification`, `ddi_table`, `substrate_sensitivity`, `DDIThresholds`: the FDA and EMA classification of interactions |
 | [stats.meta](stats.meta.md) | `effect_size`, `fixed_effect`, `random_effects`, `heterogeneity`, `meta_analysis`: the meta-analysis |
 

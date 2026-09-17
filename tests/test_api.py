@@ -149,6 +149,29 @@ def test_the_stats_helpers_are_exported() -> None:
         assert getattr(stats, name) is not None
 
 
+def test_the_report_and_the_power_are_exported() -> None:
+    """The study report and the sample size reach the namespace of a script."""
+    expected = {
+        "Report",
+        "study_report",
+        "power_tost",
+        "sample_size_tost",
+        "hodges_lehmann",
+    }
+    assert expected <= set(pkpdutils.__all__)
+    for name in expected:
+        assert getattr(pkpdutils, name) is not None
+    import pkpdutils.stats as stats
+
+    assert {
+        "abel_limits",
+        "hodges_lehmann",
+        "power_tost",
+        "rsabe_criterion",
+        "sample_size_tost",
+    } <= set(stats.__all__)
+
+
 def test_the_readers_take_column_keywords_and_covariates() -> None:
     """Every column name of a reader is a `*_col` keyword and takes `covariates`."""
     from pkpdutils import io
