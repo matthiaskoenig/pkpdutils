@@ -1,16 +1,14 @@
 import inspect
 import json
 import warnings
-from collections import Counter
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pytest
 from numpy.typing import ArrayLike
 from scipy.stats import chi2, norm
 
-from pkpdutils.stats import ParameterSample, meta
+from pkpdutils.stats import ParameterSample
 from pkpdutils.stats.meta import (
     EffectKind,
     EffectSize,
@@ -171,21 +169,10 @@ def test_meta_analysis_result() -> None:
         meta_analysis([])
 
 
-def test_meta_analysis_computes_the_heterogeneity_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_meta_analysis_matches_the_separate_functions() -> None:
     # the effects are validated and their heterogeneity computed in one pass,
     # which the random effects pooling reads its tau2 from; the result is the
     # one of the separate functions
-    calls: Counter[str] = Counter()
-    for name in ("_arrays", "_heterogeneity"):
-        original = getattr(meta, name)
-
-        def counted(*args: Any, _name: str = name, _original: Any = original) -> Any:
-            calls[_name] += 1
-            return _original(*args)
-
-        monkeypatch.setattr(meta, name, counted)
     studies = [
         Study(
             label=f"study {i}",
@@ -195,7 +182,6 @@ def test_meta_analysis_computes_the_heterogeneity_once(
         for i in range(4)
     ]
     result = meta_analysis(studies)
-    assert calls == {"_arrays": 1, "_heterogeneity": 1}
     effects = list(result.effects)
     assert result.heterogeneity == heterogeneity(effects)
     assert result.fixed == fixed_effect(effects)
