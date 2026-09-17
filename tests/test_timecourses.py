@@ -390,6 +390,7 @@ def test_from_timecourses_mixed_routes_build_the_coordinate() -> None:
         ]
     )
     assert list(batch.ds["route"].to_numpy()) == ["oral", "iv_bolus"]
+    assert "route" not in batch.ds.attrs
     routes = batch.routes
     assert routes is not None
     assert list(routes) == [Route.ORAL, Route.IV_BOLUS]
@@ -1672,6 +1673,8 @@ def test_from_timecourses_mixed_substances_build_the_coordinate() -> None:
         ]
     )
     assert list(batch.ds["substance"].to_numpy()) == ["parent", "metabolite"]
+    # the attribute would name the substance of the first curve for all of them
+    assert "substance" not in batch.ds.attrs
     substances = batch.substances
     assert substances is not None
     assert list(substances) == ["parent", "metabolite"]

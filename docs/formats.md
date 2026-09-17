@@ -117,7 +117,7 @@ The one dose record of the table became a protocol of two doses, the weight beca
 | `conc_col` | `conc` | concentrations | observed value | `0` codes below the limit of quantification, `NA` codes missing, both kept as given |
 | `dose_time_col` | `time` | doses | dose time | in `time_unit`, `0` when the column is absent |
 | `dose_col` | `dose` | doses | dose amount | in `dose_unit` |
-| `duration_col` | none | doses | infusion duration | optional, `None` without infusions |
+| `duration_col` | `duration` | doses | infusion duration | optional, absent allowed, `None` reads none; `write_pknca` writes it under this name, so an infusion batch round trips |
 | `covariates` | none | either | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
@@ -306,7 +306,7 @@ A dose which is not followed by an observation is not the reference dose of any 
 
 A submission reports the parameters in the `PP` domain of SDTM (or the `ADPP` dataset of ADaM derived from it), where every parameter is named by a code of the CDISC controlled terminology rather than by the name of an analysis package. `pkpdutils.cdisc` holds the crosswalk: `PKPARMCD` maps every variable of a result to its code, `pkunit` writes a unit as `PKUNIT` spells it and `to_pp`/`write_pp` lay a result out as the domain, one row per subject and parameter.
 
-The codes are read from `src/pkpdutils/data/pkparmcd.csv`, extracted from the NCI EVS package of the SDTM terminology (codelist `C85839`), whose version and checksum the header of the file names. A variable the terminology has no code for is left out with a warning: `clast_pred` has none (there is no `CLSTP`), and the steady state peak and trough are `CMAX` and `CMIN` with `PPSCAT = "STEADY STATE"`, since no `CMAXSS` and no `CMINSS` exist. The variables CDISC defines as a percentage while the package reports a fraction (`auc_extrap_fraction`, `fluctuation`) are written multiplied by 100 with the unit `%`, and `PPRFTDTC` is empty: the analysis works on elapsed times and never sees a date.
+The codes are read from `src/pkpdutils/data/pkparmcd.csv`, extracted from the NCI EVS package of the SDTM terminology (codelist `C85839`), whose version and checksum the header of the file names. A variable the terminology has no code for is left out with a warning: `clast_pred` has none (there is no `CLSTP`), and the steady state peak and trough are `CMAX` and `CMIN` with `PPSCAT = "STEADY STATE"`, since no `CMAXSS` and no `CMINSS` exist. `PPSCAT` comes from the analysis of the sample: every parameter of a subject which was analysed over its dosing intervals is `STEADY STATE`, because its peak, its exposure and its clearance are computed from the last dose on. A unit the terminology does not spell is written in the CDISC symbols and named in a warning. The variables CDISC defines as a percentage while the package reports a fraction (`auc_extrap_fraction`, `fluctuation`) are written multiplied by 100 with the unit `%`, and `PPRFTDTC` is empty: the analysis works on elapsed times and never sees a date.
 
 ```python
 from pkpdutils.cdisc import to_pp
@@ -332,7 +332,7 @@ USUBJID PPTESTCD                   PPTEST  PPCAT      PPSCAT PPORRES PPORRESU
 
 ## What is not read
 
-An `lloq` coordinate read from a table travels with the batch and is read by the analysis when the options name no limit, but `write_events` writes it back only as an ordinary covariate column.
+An `lloq` coordinate read from a table travels with the batch and is read by the analysis when the options name no limit, but `write_events` writes it back only as an ordinary covariate column. The variable `nominal_time` is written back by `write_adnca` only: `write_events` writes the observed times alone, and `Timecourses.mean` drops it with every other variable it does not reduce, so the nominal times of a group curve are given to the figure rather than read off the batch.
 
 Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments is filtered by the caller before reading. A record which resets the subject and doses (`EVID 4`) and a steady state code other than `SS 0`/`SS 1` describe a dosing history the protocol of a subject cannot hold, and raise rather than being read as an ordinary dose; the caller splits the periods into separate tables. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`, `duration_col`, `ADUR`) or as a positive rate. A reader reads one route: a table of several routes is read into one batch per route, which are then combined into a multi-route batch with `Timecourses.from_timecourses`. Reading SAS/XPT files directly is out of scope as well, the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`.
 

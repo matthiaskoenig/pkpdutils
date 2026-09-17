@@ -2559,7 +2559,7 @@ class Timecourses:
                 np.array([str(r) for r in sample_routes], dtype=object),
             )
 
-        return cls.from_arrays(
+        batch = cls.from_arrays(
             time,
             values,
             time_unit=first.time_unit,
@@ -2574,6 +2574,13 @@ class Timecourses:
             substance=first.substance,
             tissue=first.tissue,
         )
+        # a value which differs between the curves lives in its coordinate and
+        # nowhere else: the attribute of the first curve would describe the
+        # whole batch and is dropped
+        for attribute in (SUBSTANCE_VAR, ROUTE_VAR):
+            if attribute in coords:
+                batch.ds.attrs.pop(attribute, None)
+        return batch
 
     @classmethod
     def from_dataframe(

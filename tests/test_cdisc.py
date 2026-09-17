@@ -11,6 +11,7 @@ from pkpdutils.cdisc import (
     PKPARMCD,
     PKPARMCD_BY_ROUTE,
     PKPARMCD_NAMES,
+    PKUNIT,
     pkparmcd,
     pkunit,
     to_pp,
@@ -157,7 +158,7 @@ def test_to_pp_writes_one_row_per_subject_and_parameter() -> None:
 
 
 def test_to_pp_marks_the_steady_state_parameters() -> None:
-    """`PPSCAT` separates the steady state peak from the single dose one."""
+    """Every parameter of a multiple dose sample carries `PPSCAT = STEADY STATE`."""
     result = nca(steady_state_batch())
     pp = to_pp(result, subject_dim="individual")
     rows = {(row["PPTESTCD"], row["PPSCAT"]): row for _, row in pp.iterrows()}
@@ -165,7 +166,29 @@ def test_to_pp_marks_the_steady_state_parameters() -> None:
     assert ("AUCTAU", "STEADY STATE") in rows
     assert ("CTROUGH", "STEADY STATE") in rows
     assert rows[("AUCTAU", "STEADY STATE")]["PPTEST"] == "AUC Over Dosing Interval"
-    assert ("TMAX", "SINGLE DOSE") in rows
+    # the point parameters of such a sample are computed from the last dose on
+    assert ("TMAX", "STEADY STATE") in rows
+    assert set(pp["PPSCAT"]) == {"STEADY STATE"}
+    # a single dose sample keeps SINGLE DOSE, the steady state variables apart
+    single = to_pp(nca(oral_batch()), subject_dim="individual")
+    assert set(single["PPSCAT"]) == {"SINGLE DOSE"}
+
+
+def test_to_pp_marks_the_steady_state_samples_of_a_mixed_batch() -> None:
+    """`PPSCAT` follows the sample: a batch of a single and a multiple dose subject."""
+    from pkpdutils import Timecourses as Batch
+
+    batch = Batch.from_timecourses(
+        [
+            steady_state_batch().sel(individual="S1"),
+            oral_batch().sel(individual="S1"),
+        ],
+        labels=["multiple", "single"],
+    )
+    pp = to_pp(nca(batch), subject_dim="individual")
+    scat = {subject: set(rows["PPSCAT"]) for subject, rows in pp.groupby("USUBJID")}
+    assert scat["multiple"] == {"STEADY STATE"}
+    assert scat["single"] == {"SINGLE DOSE"}
 
 
 def test_to_pp_warns_about_a_variable_without_a_code(
@@ -235,3 +258,54 @@ def test_write_pp_writes_the_domain(tmp_path) -> None:  # type: ignore[no-untype
     assert len(written) == len(frame)
     assert list(written.columns) == list(frame.columns)
     assert set(written["PPTESTCD"]) == set(frame["PPTESTCD"])
+
+
+def test_every_pkunit_spelling_is_a_submission_value_of_the_codelist() -> None:
+    """The spellings of `PKUNIT` are values of `C85494`, not inventions."""
+    import csv
+    from pathlib import Path
+
+    path = Path(__file__).parent / "data" / "cdisc" / "pkunit_c85494.csv"
+    rows = csv.DictReader(
+        line for line in path.read_text().splitlines() if not line.startswith("#")
+    )
+    values = {row["value"] for row in rows}
+    assert len(values) == 608
+    assert not set(PKUNIT.values()) - values
+
+
+def test_a_unit_the_terminology_does_not_spell_is_named_in_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`to_pp` says which units it wrote itself and points at `to_units`."""
+    # a concentration per litre: CDISC spells mass concentrations per millilitre
+    result = nca(oral_batch()).to_units({"cmax": "mg/L"})
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.cdisc"):
+        pp = to_pp(result, subject_dim="individual")
+    assert "milligram / liter" in caplog.text
+    assert "to_units" in caplog.text
+    assert pp.loc[pp["PPTESTCD"] == "CMAX", "PPORRESU"].iloc[0] == "mg/L"
+    # the units of the table say nothing
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.cdisc"):
+        to_pp(nca(oral_batch()), subject_dim="individual")
+    assert "no PKUNIT value" not in caplog.text
+
+
+def test_to_pp_reads_a_transposed_variable_of_a_two_dimensional_result() -> None:
+    """A variable stored in another dimension order still lands on its subject."""
+    from tests.nca.test_analytes import two_analyte_batch
+
+    result = nca(two_analyte_batch())
+    transposed = type(result)(result.ds.transpose("individual", "analyte", ...))
+    straight = to_pp(result, subject_dim="individual").sort_values(
+        ["USUBJID", "PPCAT", "PPTESTCD"], ignore_index=True
+    )
+    other = to_pp(transposed, subject_dim="individual").sort_values(
+        ["USUBJID", "PPCAT", "PPTESTCD"], ignore_index=True
+    )
+    np.testing.assert_allclose(straight["PPSTRESN"], other["PPSTRESN"])
+    assert list(straight["USUBJID"]) == list(other["USUBJID"])
+    assert list(straight["PPCAT"]) == list(other["PPCAT"])
+    # the values differ between the subjects, so a wrong index would show
+    assert straight["PPSTRESN"].nunique() > 5

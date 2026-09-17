@@ -1219,7 +1219,7 @@ def read_pknca(
     dose_col: str = "dose",
     dose_time_col: str = "time",
     subject_col: str = "subject",
-    duration_col: str | None = None,
+    duration_col: str | None = "duration",
     covariates: Sequence[str] = (),
     dim: str = "individual",
     analyte_col: str | None = None,
@@ -1249,8 +1249,9 @@ def read_pknca(
         dose_col: name of the dose amount column
         dose_time_col: name of the time column of `dose`, 0 when it is absent
         subject_col: name of the subject column of both tables
-        duration_col: name of the infusion duration column of `dose`, `None`
-            without infusions
+        duration_col: name of the infusion duration column of `dose`, absent
+            allowed (a table of another format carries none); `None` reads no
+            duration. `write_pknca` writes it under this name
         covariates: further columns of either table which are constant within a
             subject; they become coordinates along `dim`
         dim: name of the sample dimension of the batch

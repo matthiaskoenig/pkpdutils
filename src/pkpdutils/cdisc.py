@@ -89,10 +89,12 @@ PKPARMCD_NAMES: dict[str, str]
 
 PKPARMCD, PKPARMCD_BY_ROUTE, PKPARMCD_NAMES = _read_codes()
 
-#: the variables of a steady state analysis, which carry
-#: `PPSCAT = "STEADY STATE"` in the domain; the peak and the trough of a dosing
-#: interval are `CMAX` and `CMIN` like those of a single dose, and this is what
-#: tells the two apart (there is no `CMAXSS` code)
+#: the variables which carry `PPSCAT = "STEADY STATE"` in the domain whatever
+#: the sample they belong to; the peak and the trough of a dosing interval are
+#: `CMAX` and `CMIN` like those of a single dose, and this is what tells the
+#: two apart (there is no `CMAXSS` code). Every parameter of a sample which
+#: was analysed over its dosing intervals is `STEADY STATE` as well
+#: (`_steady_state_samples`)
 STEADY_STATE_VARIABLES: frozenset[str] = frozenset(
     {
         "auc_tau",
@@ -245,11 +247,14 @@ _PKUNIT_SPELLINGS: tuple[tuple[str, str], ...] = (
     ("hour * microgram / milligram / milliliter", "h*ug/mL/mg"),
     ("nanogram / milligram / milliliter", "ng/mL/mg"),
     ("microgram / milligram / milliliter", "ug/mL/mg"),
-    ("hour * nanomole / liter / milligram", "h*nmol/L/mg"),
     ("percent", "%"),
 )
 
 PKUNIT = {str(parse_unit(expression)): value for expression, value in _PKUNIT_SPELLINGS}
+
+#: the submission values of `PKUNIT`, which is how `to_pp` tells a unit the
+#: terminology spells from one it wrote in the CDISC symbols itself
+PKUNIT_VALUES: frozenset[str] = frozenset(PKUNIT.values())
 
 
 def pkunit(unit: str) -> str:
@@ -377,6 +382,43 @@ def _coordinate_at(
     return str(coord.to_numpy()[position] if position else coord.to_numpy())
 
 
+def _steady_state_samples(result: ParameterResult) -> np.ndarray | None:
+    """The samples whose parameters were computed from the last dose on.
+
+    A sample of more than one dose (`n_doses`), and every sample of an analysis
+    with `NCAOptions.tau` (`auc_tau`), is analysed over its dosing intervals,
+    so its peak, its exposure and its clearance describe the steady state
+    rather than a single dose (`pkpdutils.nca.steady_state`); `PPSCAT` says so
+    for every parameter of such a sample.
+
+    Args:
+        result: the result.
+
+    Returns:
+        The boolean array over the sample dimensions, `None` when the result
+        holds nothing of a multiple dose analysis.
+    """
+    dims = result.sample_dims
+    steady: np.ndarray | None = None
+    if "n_doses" in result.ds.data_vars:
+        steady = (
+            np.asarray(
+                result.ds["n_doses"].transpose(*dims).to_numpy(), dtype=np.float64
+            )
+            > 1.0
+        )
+    if "auc_tau" in result.ds.data_vars:
+        # a single dose profile analysed with `NCAOptions.tau` carries one dose
+        # and the parameters of a dosing interval
+        covered = np.isfinite(
+            np.asarray(
+                result.ds["auc_tau"].transpose(*dims).to_numpy(), dtype=np.float64
+            )
+        )
+        steady = covered if steady is None else (steady | covered)
+    return steady
+
+
 def _time_unit(result: ParameterResult) -> str:
     """The time unit of a result, read from a parameter which is a time.
 
@@ -410,11 +452,17 @@ def to_pp(
     (`pkparmcd`) becomes one row per sample: `PPTESTCD` the code, `PPTEST` its
     CDISC name, `PPORRES` the value as it was reported and `PPORRESU` its unit
     in the `PKUNIT` spelling (`pkunit`), `PPSTRESN` and `PPSTRESU` the same
-    value as a number. `PPCAT` is the substance the analysis was run on, `PPSCAT`
-    tells a single dose parameter from a steady state one
-    (`STEADY_STATE_VARIABLES`: the steady state peak and trough are `CMAX` and
-    `CMIN` like a single dose, and only `PPSCAT` separates them), `PPSPEC` the
-    specimen and `PPSEQ` numbers the rows of a subject from 1. `PPRFTDTC`, the
+    value as a number. `PPCAT` is the substance the analysis was run on and
+    `PPSPEC` the specimen; `PPSEQ` numbers the rows of a subject from 1.
+
+    `PPSCAT` tells a single dose parameter from a steady state one, and the
+    analysis of the sample decides it: every parameter of a sample which was
+    analysed over its dosing intervals (more than one dose, or
+    `NCAOptions.tau`, `_steady_state_samples`) describes the steady state,
+    since its peak, its exposure and its clearance are computed from the last
+    dose on; a variable of `STEADY_STATE_VARIABLES` is `STEADY STATE` whatever
+    the sample, which is what tells the steady state peak and trough from a
+    single dose one (both are `CMAX` and `CMIN`, there is no `CMAXSS`). `PPRFTDTC`, the
     reference date-time of the analysis, is empty: the analysis works on
     elapsed times and never sees a date.
 
@@ -472,11 +520,63 @@ def to_pp(
     default_spec = str(ds.attrs.get("tissue", "plasma")).upper()
     # `parameters` leaves out the derived, the point and the status variables
     parameters = result.parameters
-    without_code: list[str] = []
+    without_code: set[str] = set()
+    spelled_by_hand: set[str] = set()
     rows: list[dict[str, Any]] = []
     shape = tuple(int(ds.sizes[d]) for d in dims)
     sequence: dict[str, int] = {}
     time_unit = _time_unit(result)
+    steady = _steady_state_samples(result)
+
+    # everything a parameter carries whatever the sample is: its values in the
+    # dimension order of the result, its unit and the test it names. Only the
+    # code of a variable whose code depends on the route (`mrt`) is left to the
+    # sample, and it is resolved once per route.
+    static: dict[str, tuple[np.ndarray, str, str | None, bool]] = {}
+    for name in parameters:
+        raw_unit = result.units(name)
+        unit = pkunit(raw_unit)
+        if unit and unit not in PKUNIT_VALUES:
+            spelled_by_hand.add(raw_unit)
+        window = ds[name].attrs.get("window")
+        test = (
+            None
+            if window is None
+            else f"AUC from {window[0]:g} to {window[1]:g} {time_unit}".strip()
+        )
+        static[name] = (
+            np.asarray(ds[name].transpose(*dims).to_numpy(), dtype=np.float64),
+            unit,
+            test,
+            name in STEADY_STATE_VARIABLES,
+        )
+    codes: dict[Any, dict[str, str]] = {}
+
+    def resolved(sample_route: Any) -> dict[str, str]:
+        """The code of every parameter which has one, for one route.
+
+        Args:
+            sample_route: the route of the sample, `None` when it names none.
+
+        Returns:
+            Parameter name to its `PKPARMCD` code; a parameter without one is
+            not a key and is collected in `without_code`.
+        """
+        if sample_route not in codes:
+            found: dict[str, str] = {}
+            for name in parameters:
+                code = pkparmcd(name, sample_route)
+                if code is None and static[name][2] is not None:
+                    # a named partial area (`NCAOptions.partial_aucs`) is
+                    # `AUCINT` and names its interval in `PPTEST`
+                    code = "AUCINT"
+                if code is None:
+                    without_code.add(name)
+                else:
+                    found[name] = code
+            codes[sample_route] = found
+        return codes[sample_route]
+
     for index in np.ndindex(*shape) if shape else [()]:
         subject = _usubjid_of(usubjid, labels[index[subject_axis]], index[subject_axis])
         substance = _coordinate_at(result, "substance", index) or str(
@@ -487,25 +587,18 @@ def to_pp(
             substance = ""
         sample_route = _coordinate_at(result, "route", index) or ds.attrs.get("route")
         sample_route = route if sample_route is None else sample_route
+        sample_codes = resolved(sample_route)
+        multiple_dose = bool(steady[index]) if steady is not None else False
         for name in parameters:
-            code = pkparmcd(name, sample_route)
-            window = ds[name].attrs.get("window")
-            if code is None and window is not None:
-                # a named partial area (`NCAOptions.partial_aucs`) is `AUCINT`
-                # and names its interval in `PPTEST`
-                code = "AUCINT"
+            code = sample_codes.get(name)
             if code is None:
-                without_code.append(name)
                 continue
-            value = float(np.asarray(ds[name].to_numpy())[index])
+            values, unit, test, steady_state = static[name]
+            value = float(values[index])
             if not np.isfinite(value):
                 continue
-            unit = pkunit(result.units(name))
             if name in PERCENT_VARIABLES:
                 value, unit = value * 100.0, "%"
-            test = PKPARMCD_NAMES[code]
-            if window is not None:
-                test = f"AUC from {window[0]:g} to {window[1]:g} {time_unit}".strip()
             sequence[subject] = sequence.get(subject, 0) + 1
             row: dict[str, Any] = {
                 "STUDYID": studyid,
@@ -513,10 +606,10 @@ def to_pp(
                 "USUBJID": subject,
                 "PPSEQ": sequence[subject],
                 "PPTESTCD": code,
-                "PPTEST": test,
+                "PPTEST": PKPARMCD_NAMES[code] if test is None else test,
                 "PPCAT": substance,
                 "PPSCAT": (
-                    "STEADY STATE" if name in STEADY_STATE_VARIABLES else "SINGLE DOSE"
+                    "STEADY STATE" if steady_state or multiple_dose else "SINGLE DOSE"
                 ),
                 "PPORRES": f"{value:.{digits}g}",
                 "PPORRESU": unit,
@@ -533,7 +626,7 @@ def to_pp(
                 row.update(
                     {
                         "PARAMCD": code,
-                        "PARAM": test,
+                        "PARAM": row["PPTEST"],
                         "AVAL": value,
                         "AVALU": unit,
                     }
@@ -541,8 +634,14 @@ def to_pp(
             rows.append(row)
     if without_code:
         logger.warning(
-            "no PKPARMCD code for %s, left out of the domain",
-            sorted(set(without_code)),
+            "no PKPARMCD code for %s, left out of the domain", sorted(without_code)
+        )
+    if spelled_by_hand:
+        logger.warning(
+            "%s is no PKUNIT value and was written in the CDISC symbols; "
+            "convert the result with ParameterResult.to_units to a unit the "
+            "terminology spells",
+            sorted(spelled_by_hand),
         )
     columns = [
         "STUDYID",

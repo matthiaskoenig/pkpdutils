@@ -45,6 +45,7 @@ def test_from_timecourses_builds_the_route_coordinate() -> None:
         "iv_bolus",
         "oral",
     ]
+    assert "route" not in batch.ds.attrs
     routes = batch.routes
     assert routes is not None
     assert list(routes) == [Route.IV_BOLUS, Route.ORAL, Route.IV_BOLUS, Route.ORAL]

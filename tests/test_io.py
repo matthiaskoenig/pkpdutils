@@ -748,6 +748,7 @@ def test_write_pknca_round_trips_through_read_pknca(
     conc, dose = write_pknca(batch, tmp_path / "conc.csv", tmp_path / "dose.csv")
     assert list(conc.columns) == ["subject", "lloq", "WT", "time", "conc"]
     assert (pd.read_csv(tmp_path / "dose.csv")["dose"] == 100.0).all()
+    # the writer writes the duration under the name the reader reads by default
     back = read_pknca(
         conc,
         dose,
@@ -755,7 +756,6 @@ def test_write_pknca_round_trips_through_read_pknca(
         unit="ng/ml",
         dose_unit="mg",
         route=route,
-        duration_col="duration",
         covariates=["WT", "lloq"],
         substance="drug",
     )
