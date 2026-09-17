@@ -544,6 +544,46 @@ def test_summary_table_method_and_errors() -> None:
         r.summary_table("s", by="missing")
 
 
+@pytest.mark.parametrize(
+    ("name", "layout"),
+    [
+        ("parameter", "parameters_rows"),
+        ("unit", "parameters_rows"),
+        ("mean", "parameters_rows"),
+        ("statistic", "parameters_columns"),
+        ("statistic", "long"),
+        ("value", "long"),
+    ],
+)
+def test_summary_table_rejects_a_group_named_like_a_column_of_the_table(
+    name: str, layout: str
+) -> None:
+    """A group column named like a column of the table used to replace its values.
+
+    `by="parameter"` wrote the group label where the parameter name belongs,
+    `by="mean"` lost the groups under the statistic.
+    """
+    r = MyResult(make().ds.assign_coords({name: ("s", ["a", "b", "a"])}))
+    with pytest.raises(ValueError, match=rf"\['{name}'\] collides with a column"):
+        r.summary_table("s", by=name, stats=("n", "mean"), layout=layout)  # ty: ignore[invalid-argument-type]
+    # a sample dimension of that name is a column of the table as well
+    two = MyResult(make().ds.expand_dims({name: ["low"]}))
+    with pytest.raises(ValueError, match=rf"\['{name}'\] collides with a column"):
+        two.summary_table("s", stats=("n", "mean"), layout=layout)  # ty: ignore[invalid-argument-type]
+
+
+def test_summary_table_groups_by_a_name_the_layout_does_not_write() -> None:
+    """`unit` is no column with the units in the header, `statistic` and `value` only in other layouts."""
+    for name, options in (
+        ("unit", {"units": "header"}),
+        ("statistic", {}),
+        ("value", {"layout": "parameters_columns"}),
+    ):
+        r = MyResult(make().ds.assign_coords({name: ("s", ["a", "b", "a"])}))
+        table = r.summary_table("s", by=name, stats=("mean",), **options)  # ty: ignore[invalid-argument-type]
+        assert table[name].tolist() == ["a", "a", "b", "b"]
+
+
 def test_summary_table_by_another_sample_dimension_explains_itself() -> None:
     # the `(dose, individual)` shape of a dose escalation: `dose` is a column
     # of the table already, `by` groups the samples of `dim` by a coordinate

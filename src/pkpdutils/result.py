@@ -1558,8 +1558,11 @@ def summary_table(
 
     Raises:
         ValueError: if `dim` is not a sample dimension, a parameter is not a
-            variable of the result, a statistic is unknown, or `units`,
-            `unit_style` or `layout` is not one of the values above.
+            variable of the result, a statistic is unknown, `units`,
+            `unit_style` or `layout` is not one of the values above, or a
+            coordinate of `by` or another sample dimension is named like a
+            column the table writes itself (`parameter`, `unit`, `statistic`,
+            `value` or a statistic).
     """
     if dim not in result.sample_dims:
         raise ValueError(f"'{dim}' is not a sample dimension {result.sample_dims}")
@@ -1592,6 +1595,23 @@ def summary_table(
             "'NCAResult.intervals()' of the summary"
         )
     group_columns = [by] if isinstance(by, str) else list(by or [])
+    # the groups and the other sample dimensions are columns next to the
+    # columns of the table itself, whose values would silently replace theirs
+    own = {"parameter", *stats}
+    if units == "column":
+        own.add("unit")
+    if layout != "parameters_rows":
+        own.add("statistic")
+    if layout == "long":
+        own.add("value")
+    others = {*group_columns, *(d for d in result.sample_dims if d != dim)}
+    clash = sorted(others & own)
+    if clash:
+        raise ValueError(
+            f"the grouping coordinate or sample dimension {clash} collides with "
+            "a column of the table of the same name; rename the coordinate or "
+            "the dimension"
+        )
     groups = _table_groups(
         result, dim, group_columns, include_excluded=include_excluded
     )
@@ -1631,16 +1651,17 @@ def summary_table(
     if layout == "parameters_rows":
         return df
     if layout == "long":
-        # `melt` groups the frame by statistic; `_row` restores the order of
-        # the records, so that the statistics of a parameter stay together
-        long = df.assign(_row=np.arange(len(df))).melt(
-            id_vars=[*index_columns, "_row"],
+        # `melt` groups the frame by statistic; the index of the records
+        # restores their order, so that the statistics of a parameter stay
+        # together
+        long = df.melt(
+            id_vars=index_columns,
             value_vars=list(stats),
             var_name="statistic",
             value_name="value",
+            ignore_index=False,
         )
-        long = long.sort_values("_row", kind="stable").drop(columns="_row")
-        return long.reset_index(drop=True)
+        return long.sort_index(kind="stable").reset_index(drop=True)
     return _parameters_as_columns(df, index_columns, list(stats), units)
 
 
