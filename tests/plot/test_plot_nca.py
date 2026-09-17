@@ -1,19 +1,31 @@
 import matplotlib
+import matplotlib.lines
 import matplotlib.pyplot
 import numpy as np
 import pytest
+from matplotlib.axes import Axes
 from matplotlib.collections import PolyCollection
 from matplotlib.container import ErrorbarContainer
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
-from pkpdutils.nca import AUCMethod, NCAOptions, nca, nca_single
+from pkpdutils.nca import (
+    Acceptance,
+    AUCMethod,
+    NCAOptions,
+    TerminalPhase,
+    nca,
+    nca_single,
+)
 from pkpdutils.plot import (
+    DEFAULT_STYLE,
     PlotStyle,
+    draw_nca_panel,
     plot_intervals,
     plot_nca,
     plot_nca_grid,
+    plot_terminal_windows,
     plot_timecourse,
     plot_troughs,
 )
@@ -634,3 +646,222 @@ def test_plot_nca_grid_has_the_band_but_no_annotations_by_default() -> None:
     annotated = plot_nca_grid(batch, nca(batch), annotate=True)
     assert annotated.axes[0].texts
     matplotlib.pyplot.close("all")
+
+
+def terminal_options(acceptance: Acceptance | None = None) -> NCAOptions:
+    """Options which keep the candidate windows of the terminal regression."""
+    return NCAOptions(
+        terminal=TerminalPhase(keep_candidates=True),
+        acceptance=acceptance or Acceptance(),
+    )
+
+
+def x_data(line: matplotlib.lines.Line2D) -> np.ndarray:
+    """The x values of a line as a float array."""
+    return np.asarray(line.get_xdata(), dtype=float)
+
+
+def y_data(line: matplotlib.lines.Line2D) -> np.ndarray:
+    """The y values of a line as a float array."""
+    return np.asarray(line.get_ydata(), dtype=float)
+
+
+def area_x(patch: PolyCollection) -> np.ndarray:
+    """The x range of a filled area."""
+    return np.asarray(patch.get_paths()[0].vertices, dtype=float)[:, 0]
+
+
+def test_plot_terminal_windows_draws_one_marker_per_candidate() -> None:
+    tc = oral()
+    options = terminal_options()
+    result = nca_single(tc, options=options)
+    fig = plot_terminal_windows(tc, result, options=options)
+    assert len(fig.axes) == 2
+    curve_panel, candidates = fig.axes
+    n_candidates = int(result.ds.sizes["candidate"])
+    assert n_candidates >= 3
+    line = next(
+        line
+        for line in candidates.get_lines()
+        if line.get_label() == "candidate window"
+    )
+    np.testing.assert_allclose(x_data(line), result.ds["candidate_t_first"].to_numpy())
+    np.testing.assert_allclose(y_data(line), result.ds["candidate_r2_adj"].to_numpy())
+    # the chosen window is marked once, at the start time of the regression
+    chosen = next(
+        line for line in candidates.get_lines() if line.get_label() == "chosen window"
+    )
+    assert list(x_data(chosen)) == [float(result["lambda_z_t_first"].values)]
+    # the number of points of every window is written above its marker
+    assert len(candidates.texts) == n_candidates
+    assert {text.get_text() for text in candidates.texts} == {
+        str(int(n)) for n in result.ds["candidate_n_points"].to_numpy()
+    }
+    # the curve panel is logarithmic and brackets the window with two lines
+    assert curve_panel.get_yscale() == "log"
+    bounds = [
+        float(x_data(line)[0])
+        for line in curve_panel.get_lines()
+        if line.get_label() == "chosen window"
+    ]
+    assert bounds == [float(result["lambda_z_t_first"].values)]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_terminal_windows_draws_the_acceptance_threshold() -> None:
+    tc = oral()
+    options = terminal_options(acceptance=Acceptance(r2_adj_min=0.9))
+    result = nca_single(tc, options=options)
+    with_threshold = plot_terminal_windows(tc, result, options=options)
+    labels = [line.get_label() for line in with_threshold.axes[1].get_lines()]
+    assert any(str(label).startswith("acceptance") for label in labels)
+    lines = [
+        line
+        for line in with_threshold.axes[1].get_lines()
+        if str(line.get_label()).startswith("acceptance")
+    ]
+    np.testing.assert_allclose(y_data(lines[0]), [0.9, 0.9])
+    # no threshold without the options, and none without an acceptance rule
+    without = plot_terminal_windows(tc, result)
+    assert not any(
+        str(line.get_label()).startswith("acceptance")
+        for line in without.axes[1].get_lines()
+    )
+    plain = plot_terminal_windows(tc, result, options=terminal_options())
+    assert not any(
+        str(line.get_label()).startswith("acceptance")
+        for line in plain.axes[1].get_lines()
+    )
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_terminal_windows_takes_the_axes_and_the_sample_of_a_batch() -> None:
+    batch = Timecourses.from_timecourses([oral(2.0, "a")], labels=["a"])
+    options = terminal_options()
+    result = nca(batch, options=options)
+    fig, axes = matplotlib.pyplot.subplots(ncols=2)
+    same = plot_terminal_windows(
+        batch.sel(individual="a"), result, axes=axes, individual="a", options=options
+    )
+    assert same is fig
+    assert len(axes[1].get_lines()) >= 2
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_terminal_windows_raises_without_the_candidate_windows() -> None:
+    tc = oral()
+    result = nca_single(tc)
+    with pytest.raises(ValueError, match="keep_candidates"):
+        plot_terminal_windows(tc, result)
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_terminal_windows_raises_for_a_batch_of_several_samples() -> None:
+    batch = Timecourses.from_timecourses([oral(2.0, "a"), oral(3.0, "b")])
+    result = nca(batch, options=terminal_options())
+    with pytest.raises(ValueError, match="keep_candidates"):
+        plot_terminal_windows(batch.sel(individual="a"), result, individual="a")
+    matplotlib.pyplot.close("all")
+
+
+def partial_polygon(ax: Axes, label: str) -> PolyCollection:
+    """The filled area of `ax` carrying `label`."""
+    return next(
+        artist
+        for artist in ax.collections
+        if isinstance(artist, PolyCollection) and artist.get_label() == label
+    )
+
+
+def test_plot_nca_shades_a_named_partial_area() -> None:
+    tc = oral()
+    options = NCAOptions(partial_aucs={"auc_0_12": (0.0, 12.0)})
+    result = nca_single(tc, options=options)
+    fig = plot_nca(tc, result, partial="auc_0_12")
+    for ax in fig.axes[:2]:
+        patch = partial_polygon(ax, "auc_0_12")
+        x = area_x(patch)
+        assert x.min() == pytest.approx(0.0) and x.max() == pytest.approx(12.0)
+        color = np.asarray(patch.get_facecolor(), dtype=float)[0]
+        assert matplotlib.colors.to_hex(color[:3]) == DEFAULT_STYLE.partial_color
+    value = float(result["auc_0_12"].values)
+    texts = [text.get_text() for text in fig.axes[0].texts]
+    assert any(t == f"auc_0_12 = {value:.3g} h⋅mg/l" for t in texts)
+    # the area to the last point is still shaded, the partial area sits on it
+    assert partial_polygon(fig.axes[0], "AUC(0-tlast)") is not None
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_grid_shades_the_partial_area_of_every_panel() -> None:
+    batch = Timecourses.from_timecourses([oral(2.0, "a"), oral(3.0, "b")])
+    options = NCAOptions(partial_aucs={"auc_2_8": (2.0, 8.0)})
+    result = nca(batch, options=options)
+    fig = plot_nca_grid(batch, result, partial="auc_2_8")
+    for ax in fig.axes[:2]:
+        x = area_x(partial_polygon(ax, "auc_2_8"))
+        assert x.min() == pytest.approx(2.0) and x.max() == pytest.approx(8.0)
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_nca_raises_for_an_unknown_partial_area() -> None:
+    tc = oral()
+    result = nca_single(tc, options=NCAOptions(partial_aucs={"auc_0_12": (0.0, 12.0)}))
+    with pytest.raises(ValueError, match="auc_0_24"):
+        plot_nca(tc, result, partial="auc_0_24")
+    matplotlib.pyplot.close("all")
+
+
+def test_draw_nca_panel_needs_the_range_of_a_partial_area() -> None:
+    tc = oral()
+    result = nca_single(tc, options=NCAOptions(partial_aucs={"auc_0_12": (0.0, 12.0)}))
+    values = {name: float(result[name].values) for name in result.parameters}
+    with pytest.raises(ValueError, match="partial_range"):
+        draw_nca_panel(tc, values, [], partial="auc_0_12")
+    matplotlib.pyplot.close("all")
+
+
+def test_the_partial_area_of_a_multiple_dose_curve_sits_in_its_interval() -> None:
+    # the interval is relative to the first dose, the panel to the last one
+    tc = multiple_dose_tc(n_doses=3, tau=12.0)
+    options = NCAOptions(
+        auc_method=AUCMethod.LOG, partial_aucs={"auc_24_36": (24.0, 36.0)}
+    )
+    result = nca_single(tc, options=options)
+    fig = plot_nca(tc, result, partial="auc_24_36")
+    x = area_x(partial_polygon(fig.axes[0], "auc_24_36"))
+    assert x.min() == pytest.approx(0.0) and x.max() == pytest.approx(12.0)
+    matplotlib.pyplot.close(fig)
+
+
+def test_a_partial_area_past_the_last_point_follows_the_terminal_regression() -> None:
+    tc = oral()  # the last sample is at 24 h
+    options = NCAOptions(partial_aucs={"auc_0_48": (0.0, 48.0)})
+    result = nca_single(tc, options=options)
+    fig = plot_nca(tc, result, partial="auc_0_48")
+    vertices = np.asarray(
+        partial_polygon(fig.axes[0], "auc_0_48").get_paths()[0].vertices, dtype=float
+    )
+    x, y = vertices[:, 0], vertices[:, 1]
+    assert x.max() == pytest.approx(48.0)
+    # the shaded tail is the regression, not the last value carried forward
+    lambda_z = float(result["lambda_z"].values)
+    clast_pred = float(result["clast_pred"].values)
+    tail = (x > 30.0) & (y > 0.0)
+    np.testing.assert_allclose(
+        y[tail], clast_pred * np.exp(-lambda_z * (x[tail] - 24.0)), rtol=1e-6
+    )
+    matplotlib.pyplot.close(fig)
+
+
+def test_the_partial_annotation_stays_inside_the_panel() -> None:
+    tc = oral()  # the peak sits at 2 h of a panel which runs to about 40 h
+    early = nca_single(tc, options=NCAOptions(partial_aucs={"auc_0_6": (0.0, 6.0)}))
+    late = nca_single(tc, options=NCAOptions(partial_aucs={"auc_8_24": (8.0, 24.0)}))
+    for result, name, align in (
+        (early, "auc_0_6", "left"),
+        (late, "auc_8_24", "center"),
+    ):
+        fig = plot_nca(tc, result, partial=name)
+        text = next(t for t in fig.axes[0].texts if t.get_text().startswith(name))
+        assert text.get_horizontalalignment() == align
+        matplotlib.pyplot.close(fig)

@@ -72,6 +72,21 @@ fig.savefig("mean_curves.png")
 
 ![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
 
+`plot_study_curves` is the figure pair ICH M13A[^ich_m13a] asks a study report for: the concentration-time profile of every subject on a linear and on a semi-logarithmic scale, drawn against the times the samples were taken at, and the mean profile of every group on both scales, drawn against the nominal times of the protocol. A mean over the subjects only exists on the schedule the study sampled by, since no two subjects are sampled at the same minute; the four panels are `plot_timecourse` in the first row and `plot_mean_timecourse` in the second, so `by` colors the groups the same way in all of them. The nominal times come from the variable `nominal_time` of the batch when it carries one (`Timecourses.from_arrays(nominal_time=...)`, `from_dataframe(nominal_time=...)`), else from `nominal_times`, which maps every actual time to the nearest scheduled one, and else the times of the batch are taken as nominal, which is the right answer for a simulation or a mean curve of a publication. `log_y_panels=False` draws the two linear panels alone.
+
+```python
+from pkpdutils.plot import plot_study_curves
+
+fig = plot_study_curves(batch, by="dose")  # four panels, one color per dose
+fig = plot_study_curves(batch, by="dose", nominal_times=time)  # the schedule
+fig = plot_study_curves(batch, log_y_panels=False)  # the linear pair alone
+fig.savefig("study_curves.png")
+```
+
+`plot_study_curves(study, by="dose")` of the dose escalation of `examples/nca_batch.py`, whose samples were taken a few minutes beside the schedule:
+
+![The individual curves on the actual times and the mean curves per dose on the nominal times, linear and semi-logarithmic](images/nca_batch_study.png)
+
 `plot_timecourse` draws one curve or every curve of a batch, with the standard error (or the standard deviation) as error bars when present. Without `by` every sample gets its own color and its label in the legend; `by` names a coordinate and gives one color and one legend entry per group, `facet` a coordinate drawn as one panel per value, and `max_legend` (12 by default) the number of entries above which no legend is drawn at all, since it would cover the figure rather than explain it. A faceted figure takes `axes`, one per value; the panels scale on their own data.
 
 ```python
@@ -123,6 +138,35 @@ draw_nca_panel(tc, values, single.flags(), log_y=True, ax=axes[1])
 ![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.png)
 
 ![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
+
+`partial` shades a named partial area of the result (`NCAOptions.partial_aucs`, see [NCA](nca.md)) over the area to \(t_\mathrm{last}\), in `style.partial_color`, with its value written into it; the interval of the area travels with the result (`NCAResult.partial_aucs`), so the name of the area is all the figure needs. The intervals are relative to the first dose of the protocol while a panel starts at the dose it analyses, so the area of a multiple dose curve is shifted onto the panel, where it lands in the interval the analysis integrated. `plot_nca_grid(partial=...)` shades it in every panel of a batch.
+
+```python
+from pkpdutils import NCAOptions
+
+partial = nca(batch, options=NCAOptions(partial_aucs={"auc_0_12": (0.0, 12.0)}))
+fig = plot_nca(tc, partial, partial="auc_0_12", dose=50.0, individual="s1")  # one curve
+fig = plot_nca_grid(batch, partial, ncols=4, partial="auc_0_12")  # every sample
+```
+
+`plot_terminal_windows` shows how the terminal phase was chosen, the judgement call behind the half-life: the curve on a logarithmic value axis with the regression, the points it used and the chosen window between two dashed lines, next to the adjusted \(R^2\) of every candidate window against the time of its first point, the chosen window marked and the number of points of every window above its marker. A window starting later has fewer points, so the panel reads from left (many points, the earliest window) to right (the last three points): where the curve is flat the choice hardly matters, where it drops the terminal phase is where the last points sit. It is the diagnostic the interactive tools show (the Slopes Selector of Phoenix WinNonlin[^phoenix], the "Check lambda_z" tab of PKanalix). The analysis keeps the candidate windows only when it is asked for them, and only for a single curve: `TerminalPhase(keep_candidates=True)` writes them into the result as the point variables `candidate_t_first`, `candidate_n_points` and `candidate_r2_adj` over the dimension `candidate`. With the options the figure also draws the acceptance threshold `Acceptance.r2_adj_min` as a line.
+
+```python
+from pkpdutils import Acceptance, NCAOptions, TerminalPhase, nca_single
+from pkpdutils.plot import plot_terminal_windows
+
+diagnostic = NCAOptions(
+    terminal=TerminalPhase(keep_candidates=True),
+    acceptance=Acceptance(r2_adj_min=0.98),
+)
+windows = nca_single(tc, options=diagnostic)
+r2_adj = windows.ds["candidate_r2_adj"].to_numpy()  # one per candidate window
+fig = plot_terminal_windows(tc, windows, options=diagnostic)
+```
+
+`plot_terminal_windows` of the caffeine curve of `examples/nca_single.py`, whose five candidate windows all sit above an adjusted \(R^2\) of 0.998:
+
+![The curve with the chosen terminal window next to the adjusted R2 of every candidate window](images/nca_terminal_windows.png)
 
 `plot_intervals` plots a per-interval parameter (`interval_*`) against the interval number, one line per sample of a batch result or a single line with `**indexers` selecting one sample; a missing (incomplete) interval breaks the line rather than raising.
 
@@ -241,3 +285,6 @@ files = save_figure(fig, "figures/figure_1")  # figure_1.png, .svg and .tif
 save_figure(fig, "figures/figure_1.pdf")  # one file, by its extension
 save_figure(fig, "figures/figure_1", formats=("png", "eps"), dpi=600)
 ```
+
+[^ich_m13a]: International Council for Harmonisation. *ICH M13A: Bioequivalence for Immediate-Release Solid Oral Dosage Forms.* 2024, 2.2.2.1. See [References](references.md#regulatory-guidance).
+[^phoenix]: Certara. *Phoenix WinNonlin User's Guide: Noncompartmental Analysis*. See [References](references.md#non-compartmental-analysis).

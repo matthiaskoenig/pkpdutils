@@ -10,7 +10,7 @@ from matplotlib.ticker import MaxNLocator
 from scipy.stats import t as student_t
 
 from pkpdutils.nca.intervals import INTERVAL_DIM, INTERVAL_PREFIX
-from pkpdutils.nca.options import decode_flags
+from pkpdutils.nca.options import NCAOptions, decode_flags
 from pkpdutils.nca.result import NCAResult
 from pkpdutils.nca.sparse import area_window
 from pkpdutils.nca.urine import Excretion
@@ -47,6 +47,19 @@ LEGEND_HEADROOM = 1.6
 #: the variables `plot_sparse` writes into its panel, which say whether a
 #: result comes from `pkpdutils.nca.sparse.nca_sparse`
 SPARSE_PANEL_VARIABLES: tuple[str, ...] = ("auc_last", "auc_last_se", "auc_last_df")
+
+#: share of the visible x range at either end within which an annotation is
+#: anchored at its own end rather than centred, so that it does not run over
+#: the spine of the panel
+EDGE_MARGIN = 0.15
+
+#: the variables `plot_terminal_windows` reads, which a result carries when the
+#: analysis kept the candidate windows (`TerminalPhase.keep_candidates`)
+CANDIDATE_VARIABLES: tuple[str, ...] = (
+    "candidate_t_first",
+    "candidate_r2_adj",
+    "candidate_n_points",
+)
 
 
 def _sample_values(
@@ -290,6 +303,141 @@ def _draw_parameter_table(
     )
 
 
+def partial_window(
+    result: NCAResult, timecourse: Timecourse, partial: str
+) -> tuple[float, float]:
+    """The interval of a named partial area in the times of an NCA panel.
+
+    The intervals of `NCAOptions.partial_aucs` are relative to the first dose
+    of the protocol, while a panel starts at the dose it analyses (the last one
+    of a multiple dose curve): the interval is shifted by the time between the
+    two doses, so that a named area of a multiple dose curve lands where the
+    analysis computed it.
+
+    Args:
+        result: the result of the analysis, which carries the intervals
+            (`NCAResult.partial_aucs`)
+        timecourse: the curve the panel draws, for its dosing protocol
+        partial: name of the area
+
+    Returns:
+        The `(t_start, t_end)` of the area, relative to the analysed dose.
+
+    Raises:
+        ValueError: if the result carries no area of that name.
+    """
+    windows = result.partial_aucs
+    if partial not in windows:
+        known = ", ".join(sorted(windows)) or "none"
+        raise ValueError(
+            f"the result carries no partial area '{partial}' (it has: {known}); "
+            "run the analysis with NCAOptions(partial_aucs={...})"
+        )
+    start, end = windows[partial]
+    dosing = timecourse.dosing
+    offset = 0.0 if dosing is None else float(dosing.last.time - dosing.first.time)
+    return start - offset, end - offset
+
+
+def _draw_partial_area(
+    ax: Axes,
+    t: np.ndarray,
+    c: np.ndarray,
+    values: Mapping[str, float],
+    *,
+    name: str,
+    window: tuple[float, float],
+    unit: str,
+    log_y: bool,
+    annotate: bool,
+    style: PlotStyle,
+) -> None:
+    r"""Shade a named partial area of the curve and write its value into it.
+
+    The area is drawn over the area to the last measurable point, in
+    `style.partial_color`, between the two times of the interval: the values
+    at the bounds are interpolated linearly, as the shading of the other areas
+    follows the data. An interval which reaches beyond the last measurable
+    value is closed with the terminal regression,
+    \(\hat C_\mathrm{last} e^{-\lambda_z (t - t_\mathrm{last})}\), which is
+    what the analysis integrates there
+    (`pkpdutils.nca.nca.named_partial_aucs`).
+
+    Args:
+        ax: the panel
+        t: the times of the curve, relative to the analysed dose
+        c: the values of the curve
+        values: the parameter magnitudes of the curve, for the value of the
+            area and for the terminal regression of its extrapolated part
+        name: name of the area, the variable of the result
+        window: the bounds of the interval, in the times of the panel
+        unit: unit of the area
+        log_y: whether the panel is logarithmic, which moves the text
+        annotate: write the value into the shaded area
+        style: colors and markers
+    """
+    ok = np.isfinite(c) & np.isfinite(t)
+    start, end = window
+    value = values.get(name, np.nan)
+    if not ok.any() or not np.isfinite([start, end]).all():
+        return
+    inside = ok & (t >= start) & (t <= end)
+    tlast, clast = values.get("tlast", np.nan), values.get("clast", np.nan)
+    clast_pred = values.get("clast_pred", clast)
+    lambda_z = values.get("lambda_z", np.nan)
+    extrapolated = np.isfinite([tlast, clast_pred, lambda_z]).all() and end > tlast
+    tail = np.linspace(max(start, tlast), end, 40) if extrapolated else np.empty(0)
+    x = np.concatenate([[start], t[inside], tail, [end]])
+    x.sort()
+    y = np.interp(x, t[ok], c[ok])
+    if extrapolated:
+        beyond = x > tlast
+        y[beyond] = clast_pred * np.exp(-lambda_z * (x[beyond] - tlast))
+    ax.fill_between(
+        x,
+        0.0,
+        y,
+        color=style.partial_color,
+        alpha=style.alpha + 0.2,
+        linewidth=0,
+        label=name,
+    )
+    if not annotate or not np.isfinite(value):
+        return
+    # the text goes where the shaded area is tallest and therefore has room,
+    # which for an area covering the peak is the peak and for a late interval
+    # its beginning
+    tallest = int(np.nanargmax(y))
+    x_text, top = float(x[tallest]), float(y[tallest])
+    # a text centred close to an edge of the panel runs over its spine, so
+    # there it is anchored at its own left or right end instead
+    left, right = ax.get_xlim()
+    margin = EDGE_MARGIN * (right - left)
+    align = (
+        "left"
+        if x_text < left + margin
+        else "right"
+        if x_text > right - margin
+        else "center"
+    )
+    bottom = ax.get_ylim()[0]
+    y_text = (
+        float(np.sqrt(max(top, 1e-300) * max(bottom, top * 1e-3)))
+        if log_y
+        else 0.5 * top
+    )
+    ax.text(
+        x_text,
+        y_text,
+        f"{name} = {value:.3g} {unit}".rstrip(),
+        fontsize=style.annotation_fontsize,
+        color=style.partial_color,
+        ha=align,
+        va="center",
+        bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "none", "alpha": 0.7},
+    )
+
+
 def draw_nca_panel(
     timecourse: Timecourse,
     values: Mapping[str, float],
@@ -302,6 +450,8 @@ def draw_nca_panel(
     spread: Literal["sd", "se"] | None = "sd",
     ci_level: float = 0.95,
     units: Mapping[str, str] | None = None,
+    partial: str | None = None,
+    partial_range: tuple[float, float] | None = None,
     ax: Axes | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Axes:
@@ -312,7 +462,8 @@ def draw_nca_panel(
     multiple dose result), the extrapolated tail, the terminal regression line
     with the points it used and its confidence band (`_terminal_band`), the
     peak \(C_\mathrm{max}\)/\(t_\mathrm{max}\) with its guide lines, \(C_0\)
-    of a bolus, and the dose it analyses (an infusion as its window). With
+    of a bolus, the named partial area `partial` over the area to
+    \(t_\mathrm{last}\), and the dose it analyses (an infusion as its window). With
     `annotate` the areas, the peak, the last point, \\(C_0\\) and the regression
     carry their values on the plot, the interval of the half-life from the uncertainty analysis
     (`thalf_ci_low`/`thalf_ci_high`) or from the regression
@@ -342,12 +493,35 @@ def draw_nca_panel(
         ci_level: level of the confidence band of the regression and of the
             interval of the half-life derived from it
         units: the unit per parameter, for the annotations
+        partial: name of a named partial area of the result
+            (`NCAOptions.partial_aucs`, a variable of `values`), shaded over
+            the area to the last measurable point in `style.partial_color`
+            with its value written into it; `None` for none
+        partial_range: the bounds `(t_start, t_end)` of that area in the times
+            of the panel, i.e. relative to the analysed dose. The intervals of
+            `NCAOptions.partial_aucs` are relative to the first dose of the
+            protocol, so a multiple dose curve needs them shifted by the time
+            between the first and the analysed dose; `plot_nca` and
+            `plot_nca_grid` read the interval from the result
+            (`NCAResult.partial_aucs`) and shift it. An interval which starts
+            before the first sample of the curve is shaded flat from that
+            sample on, while the analysis may add the segment from the dose to
+            it (`pkpdutils.nca.nca.area_between`), so the shading of such an
+            area can cover a little less than the number it carries
         ax: axes to draw on, a new figure by default
         style: colors and markers
 
     Returns:
         The axes the panel was drawn on.
+
+    Raises:
+        ValueError: if `partial` is given without `partial_range`.
     """
+    if partial is not None and partial_range is None:
+        raise ValueError(
+            f"the partial area '{partial}' needs 'partial_range', its bounds "
+            "in the times of the panel"
+        )
     _, ax = figure_of(ax)
     tc = timecourse.relative_to_dose(which="last")
     t, c = tc.time, tc.value
@@ -629,6 +803,21 @@ def draw_nca_panel(
     else:
         ax.set_ylim(bottom=0)
     ax.set_xlim(left=0)
+    # the named area is shaded last, over the areas of the analysis and with
+    # the limits of the panel final, which is what its annotation is placed by
+    if partial is not None and partial_range is not None:
+        _draw_partial_area(
+            ax,
+            t,
+            c,
+            values,
+            name=partial,
+            window=partial_range,
+            unit=unit_of(partial),
+            log_y=log_y,
+            annotate=annotate,
+            style=style,
+        )
     heading = title if title is not None else (tc.label or tc.substance)
     if flags:
         heading = f"{heading} [{', '.join(flags)}]"
@@ -649,11 +838,12 @@ def plot_nca(
     parameters: Sequence[str] = PANEL_PARAMETERS,
     spread: Literal["sd", "se"] | None = "sd",
     ci_level: float = 0.95,
+    partial: str | None = None,
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
 ) -> Figure:
-    """Linear and logarithmic panel of one curve with its NCA diagnostics and its parameters.
+    r"""Linear and logarithmic panel of one curve with its NCA diagnostics and its parameters.
 
     Both panels show the same curve (`draw_nca_panel`): the title of the
     figure names the sample and its flags once, the two panels name the scale
@@ -680,6 +870,10 @@ def plot_nca(
             carries them, `None` for none
         ci_level: level of the confidence band of the terminal regression and
             of the interval of the half-life derived from it
+        partial: name of a named partial area of the result
+            (`NCAOptions.partial_aucs`) to shade over the area to
+            \(t_\mathrm{last}\), its interval read from
+            `NCAResult.partial_aucs`; `None` for none
         axes: the two axes to draw the linear and the logarithmic panel into,
             or three with the parameter table, a new figure by default; a
             figure of the caller keeps its own title, so the heading goes on
@@ -725,6 +919,10 @@ def plot_nca(
         "spread": spread,
         "ci_level": ci_level,
         "units": units,
+        "partial": partial,
+        "partial_range": (
+            None if partial is None else partial_window(result, timecourse, partial)
+        ),
         "style": style,
     }
     draw_nca_panel(
@@ -756,6 +954,157 @@ def plot_nca(
     return fig
 
 
+def plot_terminal_windows(
+    timecourse: Timecourse,
+    result: NCAResult,
+    *,
+    options: NCAOptions | None = None,
+    axes: Sequence[Axes] | None = None,
+    style: PlotStyle = DEFAULT_STYLE,
+    **indexers: Any,
+) -> Figure:
+    r"""The candidate windows of the terminal regression next to the chosen one.
+
+    The selection of the terminal phase is the judgement call a reviewer
+    questions, and every interactive tool shows it (the Slopes Selector of
+    Phoenix WinNonlin, the "Check lambda_z" tab of PKanalix). The figure has
+    two panels: the curve on a logarithmic value axis with the regression line,
+    the points it used and the chosen window between two dashed lines
+    (`draw_nca_panel`), and the adjusted \(R^2\) of every candidate window
+    against the time its first point was taken at, the chosen window marked and
+    the number of points of every window written above its marker. A window
+    starting later has fewer points, so the second panel reads from left
+    (many points) to right (three): where the curve is flat over several
+    windows the choice hardly matters, where it drops the terminal phase is
+    where the last points sit.
+
+    The result must carry the candidate windows, which the analysis keeps only
+    when it is asked for them and only for a single curve:
+
+    ```python
+    # not executed
+    options = NCAOptions(terminal=TerminalPhase(keep_candidates=True))
+    result = nca_single(tc, options=options)
+    fig = plot_terminal_windows(tc, result, options=options)
+    ```
+
+    Args:
+        timecourse: the curve
+        result: the result of its analysis, carrying `candidate_t_first`,
+            `candidate_r2_adj` and `candidate_n_points`
+            (`TerminalPhase.keep_candidates`)
+
+    Keyword Args:
+        options: the options of the analysis; its
+            `NCAOptions.acceptance.r2_adj_min` is drawn as the acceptance
+            threshold of the second panel when it is set
+        axes: the two axes to draw the curve and the candidates into, a new
+            figure by default
+        style: colors and markers
+        **indexers: coordinate labels selecting the sample of a batch result
+
+    Returns:
+        The figure.
+
+    Raises:
+        ValueError: if the result carries no candidate windows; a result of
+            several samples carries none, since the analysis keeps them for a
+            single curve only.
+    """
+    values, flags = _sample_values(result, indexers)
+    ds = result.ds.sel(**indexers) if indexers else result.ds
+    missing = [name for name in CANDIDATE_VARIABLES if name not in ds.data_vars]
+    if missing:
+        raise ValueError(
+            f"the result carries no candidate windows ({', '.join(missing)} "
+            "missing); run the analysis of the single curve with "
+            "NCAOptions(terminal=TerminalPhase(keep_candidates=True))"
+        )
+    starts = ds["candidate_t_first"].to_numpy().astype(float)
+    r2_adj = ds["candidate_r2_adj"].to_numpy().astype(float)
+    n_points = ds["candidate_n_points"].to_numpy().astype(float)
+    chosen = values.get("lambda_z_t_first", np.nan)
+
+    fig, grid = axes_of(axes, nrows=1, ncols=2, figsize=(11, 4.5))
+    ax1, ax2 = grid[0]
+    draw_nca_panel(
+        timecourse,
+        values,
+        flags,
+        log_y=True,
+        title="the curve with the chosen window",
+        annotate=False,
+        units={name: result.units(name) for name in values},
+        ax=ax1,
+        style=style,
+    )
+    t_last = values.get("lambda_z_t_last", np.nan)
+    if np.isfinite(chosen) and np.isfinite(t_last):
+        # the bounds of the window as two dashed lines rather than a shaded
+        # span: the panel already shades the areas, and a second fill over
+        # them would be read as a third area
+        for k, bound in enumerate((chosen, t_last)):
+            ax1.axvline(
+                bound,
+                linestyle="--",
+                color=style.fit_color,
+                linewidth=1,
+                label="chosen window" if k == 0 else None,
+            )
+        ax1.legend(fontsize="small")
+
+    time_unit = unit_label(timecourse.time_unit) or timecourse.time_unit
+    ax2.plot(
+        starts,
+        r2_adj,
+        marker=style.data_marker,
+        linestyle=":",
+        color=style.data_color,
+        markersize=style.markersize,
+        linewidth=style.linewidth,
+        label="candidate window",
+    )
+    for start, value, count in zip(starts, r2_adj, n_points, strict=True):
+        ax2.annotate(
+            f"{int(count)}",
+            xy=(start, value),
+            xytext=(0, 7),
+            textcoords="offset points",
+            fontsize=style.annotation_fontsize,
+            color=style.data_color,
+            ha="center",
+        )
+    picked = np.isclose(starts, chosen) if np.isfinite(chosen) else np.zeros(0, bool)
+    if picked.any():
+        ax2.plot(
+            starts[picked],
+            r2_adj[picked],
+            marker=style.terminal_marker,
+            linestyle="none",
+            color=style.fit_color,
+            markersize=style.markersize + 4,
+            markerfacecolor="none",
+            markeredgewidth=1.5,
+            label="chosen window",
+        )
+    threshold = None if options is None else options.acceptance.r2_adj_min
+    if threshold is not None:
+        ax2.axhline(
+            threshold,
+            linestyle="--",
+            color=style.limit_color,
+            linewidth=1,
+            label=f"acceptance, adjusted R² ≥ {threshold:g}",
+        )
+    ax2.set_xlabel(axis_label("first point of the window", time_unit))
+    ax2.set_ylabel("adjusted R²")
+    ax2.set_title(
+        "candidate windows, points per window above the marker", fontsize="small"
+    )
+    ax2.legend(fontsize="small")
+    return fig
+
+
 def plot_nca_grid(
     timecourses: Timecourses,
     result: NCAResult,
@@ -765,6 +1114,7 @@ def plot_nca_grid(
     annotate: bool = False,
     spread: Literal["sd", "se"] | None = "sd",
     ci_level: float = 0.95,
+    partial: str | None = None,
     axes: Sequence[Axes] | None = None,
     style: PlotStyle = DEFAULT_STYLE,
 ) -> Figure:
@@ -790,6 +1140,8 @@ def plot_nca_grid(
         spread: error bars of the data, `sd` or `se` when the batch carries
             them, `None` for none
         ci_level: level of the confidence band of the terminal regression
+        partial: name of a named partial area of the result
+            (`NCAOptions.partial_aucs`) to shade in every panel, `None` for none
         axes: the `nrows * ncols` axes to draw the panels into, a new figure by
             default
         style: colors and markers
@@ -826,6 +1178,10 @@ def plot_nca_grid(
             spread=spread,
             ci_level=ci_level,
             units=parameter_units,
+            partial=partial,
+            partial_range=(
+                None if partial is None else partial_window(result, tc, partial)
+            ),
             ax=flat_axes[k],
             style=style,
         )

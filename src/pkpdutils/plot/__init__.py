@@ -14,10 +14,14 @@ every group with its spread, the individuals faint behind it, on a linear and
 a semi-logarithmic panel), `plot_timecourse` takes `by` to color the curves by
 group and `facet` for one panel per value of a coordinate, and `plot_troughs`
 shows the trough of every dosing interval, the figure of steady state.
-`plot_excretion` is the figure of a urine study (the excretion rate curve with
-its terminal regression and the amount recovered) and `plot_sparse` the figure
-of a sparse design (the mean curve with the Bailer standard errors and the
-shaded area).
+`plot_study_curves` is the figure pair of a study report (the individual curves
+on the actual times and the mean curves on the nominal times, linear and
+semi-logarithmic) and `plot_terminal_windows` the diagnostic of the terminal
+phase (the adjusted R² of every candidate window against its start time with
+the chosen one marked). `plot_excretion` is the figure of a urine study (the
+excretion rate curve with its terminal regression and the amount recovered) and
+`plot_sparse` the figure of a sparse design (the mean curve with the Bailer
+standard errors and the shaded area).
 """
 
 from pkpdutils.plot.fit import (
@@ -34,13 +38,18 @@ from pkpdutils.plot.nca import (
     plot_nca,
     plot_nca_grid,
     plot_sparse,
+    plot_terminal_windows,
     plot_troughs,
 )
 from pkpdutils.plot.parameters import plot_parameters
 from pkpdutils.plot.ratio import plot_ratio
 from pkpdutils.plot.save import save_figure
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
-from pkpdutils.plot.timecourse import plot_mean_timecourse, plot_timecourse
+from pkpdutils.plot.timecourse import (
+    plot_mean_timecourse,
+    plot_study_curves,
+    plot_timecourse,
+)
 
 __all__ = [
     "DEFAULT_STYLE",
@@ -59,6 +68,8 @@ __all__ = [
     "plot_parameters",
     "plot_ratio",
     "plot_sparse",
+    "plot_study_curves",
+    "plot_terminal_windows",
     "plot_timecourse",
     "plot_troughs",
     "save_figure",

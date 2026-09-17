@@ -36,16 +36,27 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     [![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.png)](images/nca_single.png)
 
-    The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail, the terminal regression with its confidence band and the parameters with their intervals.
+    [![The curve with the chosen terminal window next to the adjusted R2 of every candidate window](images/nca_terminal_windows.png)](images/nca_terminal_windows.png)
+
+    The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail, the terminal regression with its confidence band and the parameters with their intervals; and the diagnostic of the terminal phase, every candidate window with its adjusted \(R^2\) and the chosen one marked.
 
     ```python
     from examples.nca_single import tc
-    from pkpdutils import NCAOptions, nca_single
-    from pkpdutils.plot import plot_nca
+    from pkpdutils import Acceptance, NCAOptions, TerminalPhase, nca_single
+    from pkpdutils.plot import plot_nca, plot_terminal_windows
 
     result = nca_single(tc, options=NCAOptions(seed=1))  # a fixed bootstrap seed
     print(result.to_quantities()["auc_inf_obs"])
     plot_nca(tc, result).savefig("nca_single.png", dpi=120)
+
+    diagnostic = NCAOptions(
+        terminal=TerminalPhase(keep_candidates=True),
+        acceptance=Acceptance(r2_adj_min=0.98),
+    )
+    windows = nca_single(tc, options=diagnostic)
+    plot_terminal_windows(tc, windows, options=diagnostic).savefig(
+        "nca_terminal_windows.png", dpi=120
+    )
     ```
 
     [nca_single.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_single.py) &middot; [Non-compartmental analysis](nca.md)
@@ -56,17 +67,20 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     [![The mean curve of every dose group with its standard deviation](images/nca_batch_curves.png)](images/nca_batch_curves.png)
 
-    A `(dose, individual)` batch analysed at once: the parameters of every curve as a data frame, the mean curve per dose group and a diagnostic panel per sample.
+    [![The individual curves on the actual times and the mean curves per dose on the nominal times](images/nca_batch_study.png)](images/nca_batch_study.png)
+
+    A `(dose, individual)` batch analysed at once: the parameters of every curve as a data frame, the mean curve per dose group, a diagnostic panel per sample and the four panels a study report shows, the individuals on their actual sampling times and the means on the nominal ones.
 
     ```python
-    from examples.nca_batch import batch
+    from examples.nca_batch import batch, study
     from pkpdutils import nca
-    from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid
+    from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid, plot_study_curves
 
     result = nca(batch)
     print(result.to_dataframe()[["dose", "individual", "auc_inf_obs", "cmax"]])
     plot_mean_timecourse(batch, by="dose").savefig("nca_batch_curves.png", dpi=120)
     plot_nca_grid(batch, result, ncols=4).savefig("nca_batch.png", dpi=100)
+    plot_study_curves(study, by="dose").savefig("nca_batch_study.png", dpi=110)
     ```
 
     [nca_batch.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_batch.py) &middot; [Non-compartmental analysis](nca.md)

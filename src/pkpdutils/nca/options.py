@@ -427,6 +427,19 @@ class TerminalPhase(BaseModel):
             `pkpdutils.nca.NCAResult.terminal_windows` writes the windows of a
             result back in this form, so that a reviewed analysis is re-run
             unchanged
+        keep_candidates: whether the regression keeps the table of every
+            candidate window instead of the chosen one alone
+            (`pkpdutils.nca.terminal.TerminalFit.candidates`). The analysis of
+            a single curve (`pkpdutils.nca.nca_single`, or a batch of one
+            sample) then reports the windows as the point variables
+            `candidate_t_first`, `candidate_n_points` and `candidate_r2_adj`
+            over the dimension `candidate`, which
+            `pkpdutils.plot.plot_terminal_windows` draws: the diagnostic of
+            the judgement call behind the half-life, as the Slopes Selector of
+            Phoenix WinNonlin and the "Check lambda_z" tab of PKanalix show it.
+            A batch of several samples keeps no table, since the windows of a
+            row are a table of their own and the rows need not have equally
+            many of them
     """
 
     model_config = ConfigDict(frozen=True)
@@ -439,6 +452,7 @@ class TerminalPhase(BaseModel):
     min_adj_r2: float | None = Field(default=None, ge=0.0, le=1.0)
     tie_tolerance: float = Field(default=1e-4, ge=0.0)
     windows: dict[Any, tuple[float, float]] | None = None
+    keep_candidates: bool = False
 
     @model_validator(mode="after")
     def _validate(self) -> Self:

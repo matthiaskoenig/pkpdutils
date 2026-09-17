@@ -88,6 +88,7 @@ The names used for the variables of the result datasets, with their symbols and 
 | `clr` | \(\mathrm{CL}_R\) | renal clearance, the recovered amount over the plasma area of the collection span | l/h | [Urinary excretion](urine.md) |
 | `auc_last_se`, `auc_last_df` | \(\nu\) | standard error of the area of a sparse design (Bailer; Nedelman and Jia, Holder for a batch design) and its Satterthwaite degrees of freedom (Nedelman, Gibiansky and Lau) | value·time, – | [Sparse sampling](sparse.md) |
 | `n_animals` | \(n_j\) | number of animals behind every nominal time of a sparse design, over the dimension `time` | – | [Sparse sampling](sparse.md) |
+| `candidate_t_first`, `candidate_n_points`, `candidate_r2_adj` | | the candidate windows of the terminal regression over the dimension `candidate`: the time of the first point, the number of points and the adjusted \(R^2\) of every window the selection could choose from, kept by `TerminalPhase(keep_candidates=True)` for a single curve and drawn by `plot_terminal_windows` | time, –, – | [Plotting](plotting.md) |
 
 ## Statistics of the parameter tables
 

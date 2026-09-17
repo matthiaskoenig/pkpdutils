@@ -38,6 +38,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from pkpdutils.nca.auc import (
@@ -70,10 +71,11 @@ from pkpdutils.nca.options import (
 from pkpdutils.nca.result import (
     DOSE_COORDINATE,
     DOSE_NORMALIZED_SUFFIX,
+    PARTIAL_AUCS_ATTR,
     NCAResult,
     parameter_unit,
 )
-from pkpdutils.nca.terminal import terminal_fit
+from pkpdutils.nca.terminal import CANDIDATE_DIM, CANDIDATE_PREFIX, terminal_fit
 from pkpdutils.nca.uncertainty import bootstrap, delta
 from pkpdutils.parallel import (
     NCA_WORKER_THRESHOLD,
@@ -215,6 +217,11 @@ PARAMETER_UNITS: dict[str, str] = {
     # the sparse sampling analysis (`pkpdutils.nca.sparse`)
     "auc_last_df": "dimensionless",
     "n_animals": "dimensionless",
+    # the candidate windows of the terminal regression over the dimension
+    # `candidate` (`TerminalPhase.keep_candidates`, `plot_terminal_windows`)
+    "candidate_t_first": "{time}",
+    "candidate_n_points": "dimensionless",
+    "candidate_r2_adj": "dimensionless",
 }
 
 
@@ -848,8 +855,44 @@ def compute_parameters(
                 out["vss"] = cl * mrt
             out["auc_inf_dn"] = auc_inf_obs / amount
             out["cmax_dn"] = cmax / amount
+    out.update(candidate_variables(fit.candidates, n_rows=n_rows))
     out["flags"] = flags
     return out
+
+
+def candidate_variables(
+    candidates: pd.DataFrame | None, *, n_rows: int
+) -> dict[str, np.ndarray]:
+    """The candidate windows of the terminal regression as variables of one row.
+
+    The table of `pkpdutils.nca.terminal.candidate_table` becomes the
+    `(1, K)` arrays `candidate_t_first`, `candidate_n_points` and
+    `candidate_r2_adj` of a single curve, which `_to_result` writes over the
+    dimension `candidate`. Only an analysis of one row carries them: the
+    windows of a row are a table of their own and the rows of a batch need not
+    have equally many of them, so a batch would need a padded extra dimension
+    which every later step (the uncertainty, the summary, the tables) would
+    have to carry along.
+
+    Args:
+        candidates: the table, `None` unless `TerminalPhase.keep_candidates`
+
+    Keyword Args:
+        n_rows: number of rows of the analysis
+
+    Returns:
+        The three arrays, or nothing for a batch of several rows and for a row
+        without a single candidate window.
+    """
+    if candidates is None or n_rows != 1 or candidates.empty:
+        return {}
+    return {
+        "candidate_t_first": candidates["start_time"].to_numpy(dtype=np.float64)[
+            None, :
+        ],
+        "candidate_n_points": candidates["n"].to_numpy(dtype=np.float64)[None, :],
+        "candidate_r2_adj": candidates["r2_adj"].to_numpy(dtype=np.float64)[None, :],
+    }
 
 
 def reserved_variables(values: dict[str, np.ndarray]) -> set[str]:
@@ -1462,7 +1505,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             int(excluded.sum()),
             n_rows,
         )
-    return _to_result(
+    result = _to_result(
         values,
         timecourses,
         shape,
@@ -1471,6 +1514,14 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         ),
         units=units,
     )
+    if options.partial_aucs:
+        # the intervals travel with the result, so that a figure can shade a
+        # named area without being given the options again (`NCAResult.partial_aucs`)
+        result.ds.attrs[PARTIAL_AUCS_ATTR] = {
+            name: (float(start), float(end))
+            for name, (start, end) in options.partial_aucs.items()
+        }
+    return result
 
 
 def dose_times(
@@ -1595,6 +1646,7 @@ def _to_result(
         )
     data_vars: dict[str, Any] = {}
     n_intervals = 0
+    n_candidates = 0
     overrides = dict(units or {})
     for name, array in values.items():
         unit, factor = parameter_unit(
@@ -1611,10 +1663,20 @@ def _to_result(
             )
         elif array.ndim > 1:
             # the per-interval parameters carry the extra dimension `interval`
-            n_intervals = array.shape[1]
+            # and the candidate windows of the terminal regression the extra
+            # dimension `candidate`
+            is_candidate = name.startswith(CANDIDATE_PREFIX)
+            width = array.shape[1]
+            if is_candidate:
+                n_candidates = width
+            else:
+                n_intervals = width
             data_vars[name] = (
-                (*timecourses.sample_dims, INTERVAL_DIM),
-                (array * factor).reshape((*shape, n_intervals)),
+                (
+                    *timecourses.sample_dims,
+                    CANDIDATE_DIM if is_candidate else INTERVAL_DIM,
+                ),
+                (array * factor).reshape((*shape, width)),
                 {"units": unit},
             )
         elif name in INTEGER_VARIABLES:
@@ -1632,6 +1694,10 @@ def _to_result(
     if n_intervals:
         coords[INTERVAL_DIM] = xr.DataArray(
             np.arange(1, n_intervals + 1), dims=INTERVAL_DIM
+        )
+    if n_candidates:
+        coords[CANDIDATE_DIM] = xr.DataArray(
+            np.arange(1, n_candidates + 1), dims=CANDIDATE_DIM
         )
     check_coordinate_collision(coords, data_vars)
     ds = xr.Dataset(

@@ -1,6 +1,7 @@
 import warnings
 
 import matplotlib
+import matplotlib.lines
 import matplotlib.pyplot
 import numpy as np
 import pytest
@@ -8,7 +9,12 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
-from pkpdutils.plot import PlotStyle, plot_mean_timecourse, plot_timecourse
+from pkpdutils.plot import (
+    PlotStyle,
+    plot_mean_timecourse,
+    plot_study_curves,
+    plot_timecourse,
+)
 
 matplotlib.use("Agg")
 
@@ -387,3 +393,134 @@ def test_plot_mean_timecourse_clips_the_band_at_the_axis_bottom() -> None:
         vertices = np.asarray(band.get_paths()[0].vertices, dtype=float)
         assert float(vertices[:, 1].min()) >= bottom
     matplotlib.pyplot.close(fig)
+
+
+def study_batch(jitter: float = 0.1) -> Timecourses:
+    """Eight subjects of two arms, sampled beside the nominal schedule."""
+    nominal = np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0])
+    rng = np.random.default_rng(7)
+    actual = nominal + rng.normal(0.0, jitter, size=(8, nominal.size))
+    actual[:, 0] = 0.0
+    ke = rng.uniform(0.1, 0.2, 8)
+    values = 10.0 * (np.exp(-ke[:, None] * actual) - np.exp(-2.0 * actual))
+    values[4:] *= 1.5
+    return Timecourses.from_arrays(
+        actual,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        coords={
+            "individual": [f"s{i}" for i in range(8)],
+            "arm": ("individual", np.array(["A"] * 4 + ["B"] * 4)),
+        },
+        nominal_time=nominal,
+        dose={"amount": np.full(8, 100.0), "unit": "mg"},
+        route=Route.ORAL,
+        substance="drug",
+    )
+
+
+def x_data(line: matplotlib.lines.Line2D) -> np.ndarray:
+    """The x values of a line as a float array."""
+    return np.asarray(line.get_xdata(), dtype=float)
+
+
+def test_plot_study_curves_has_four_panels_on_actual_and_nominal_times() -> None:
+    batch = study_batch()
+    fig = plot_study_curves(batch)
+    assert len(fig.axes) == 4
+    titles = [ax.get_title() for ax in fig.axes]
+    assert titles[0] == "individuals, linear"
+    assert titles[1] == "individuals, semi-logarithmic"
+    assert all(title.startswith("mean on the nominal times") for title in titles[2:])
+    assert fig.axes[1].get_yscale() == "log" and fig.axes[3].get_yscale() == "log"
+    assert fig.axes[0].get_yscale() == "linear"
+    times = batch.nominal_times
+    assert times is not None
+    nominal = np.unique(times)
+    # the individual panels draw the times the samples were taken at, which no
+    # two subjects share, the mean panels the eight nominal times
+    individual = x_data(fig.axes[0].get_lines()[0])
+    assert not np.allclose(individual, nominal)
+    mean_line = fig.axes[2].get_lines()[-1]
+    np.testing.assert_allclose(x_data(mean_line), nominal)
+    assert fig.axes[0].get_xlabel() == "time [hr]"
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_study_curves_colors_the_groups_the_same_in_every_panel() -> None:
+    batch = study_batch()
+    fig = plot_study_curves(batch, by="arm")
+    colors = []
+    for ax in (fig.axes[0], fig.axes[2]):
+        labelled = [
+            line
+            for line in ax.get_lines()
+            if str(line.get_label()).startswith(("A", "B"))
+        ]
+        colors.append([line.get_color() for line in labelled])
+    assert len(colors[0]) == 2 and len(colors[1]) == 2
+    assert colors[0] == colors[1]
+    # both rows name the groups the same way, the mean row with the number of
+    # subjects behind the mean
+    for ax, entries in (
+        (fig.axes[0], ["A", "B"]),
+        (fig.axes[2], ["A (n = 4)", "B (n = 4)"]),
+    ):
+        legend = ax.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == entries
+        assert legend.get_title().get_text() == "arm"
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_study_curves_names_a_numeric_group_with_its_unit() -> None:
+    batch = study_batch()
+    dose = np.where(np.arange(8) < 4, 50.0, 100.0)
+    ds = batch.ds.assign_coords(dose=("individual", dose))
+    fig = plot_study_curves(Timecourses(ds), by="dose")
+    for ax in (fig.axes[0], fig.axes[2]):
+        legend = ax.get_legend()
+        assert legend is not None
+        assert legend.get_title().get_text() == "dose"
+        labels = [text.get_text() for text in legend.get_texts()]
+        assert labels[0].startswith("50 mg") and labels[1].startswith("100 mg")
+    # no legend at all below the limit
+    bare = plot_study_curves(Timecourses(ds), by="dose", max_legend=1)
+    assert bare.axes[0].get_legend() is None
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_study_curves_without_the_logarithmic_panels() -> None:
+    batch = study_batch()
+    fig = plot_study_curves(batch, log_y_panels=False)
+    assert len(fig.axes) == 2
+    assert [ax.get_yscale() for ax in fig.axes] == ["linear", "linear"]
+    matplotlib.pyplot.close(fig)
+
+
+def test_plot_study_curves_maps_the_times_to_the_nearest_nominal_time() -> None:
+    batch = study_batch()
+    without = Timecourses(batch.ds.drop_vars("nominal_time"))
+    assert without.nominal_times is None
+    schedule = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0, 24.0]
+    fig = plot_study_curves(without, nominal_times=schedule)
+    np.testing.assert_allclose(x_data(fig.axes[2].get_lines()[-1]), schedule)
+    # without a schedule the actual times are the grid, so the mean curve of a
+    # batch whose subjects were sampled at different times is ragged
+    bare = plot_study_curves(without)
+    assert (
+        x_data(fig.axes[2].get_lines()[-1]).size
+        < x_data(bare.axes[2].get_lines()[-1]).size
+    )
+    matplotlib.pyplot.close("all")
+
+
+def test_plot_study_curves_draws_into_the_given_axes() -> None:
+    batch = study_batch()
+    fig, axes = matplotlib.pyplot.subplots(nrows=2, ncols=2)
+    same = plot_study_curves(batch, by="arm", axes=axes.ravel())
+    assert same is fig
+    assert all(ax.get_lines() for ax in axes.ravel())
+    matplotlib.pyplot.close("all")
