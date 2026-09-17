@@ -78,7 +78,7 @@ The `effect` of `compare` is `a - b` on the linear scale and the ratio of the ge
 
 ## API
 
-A sample comes from a result with `sample(name, dim, **indexers)` or from the numbers of a publication; `summarize` describes it, `compare` tests two of them against each other and `ratio` reports the geometric mean ratio with its 90 % interval:
+A sample comes from a result with `sample(name, dim, **indexers)`, whose `indexers` name one label of every sample dimension besides `dim`, or from the numbers of a publication; `summarize` describes it, `compare` tests two of them against each other and `ratio` reports the geometric mean ratio with its 90 % interval:
 
 ```python
 import numpy as np

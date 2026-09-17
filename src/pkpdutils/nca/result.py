@@ -280,9 +280,10 @@ class NCAResult(ParameterResult):
             reason: the text written into `excluded_reason` of the newly
                 excluded samples; the reason of a sample which was already
                 excluded is kept.
-            **indexers: coordinate label per sample dimension of one sample, as
-                `xarray.Dataset.sel` takes them; a dimension without an indexer
-                is excluded as a whole.
+            **indexers: a label or a list of labels per sample dimension, the
+                values of its dimension coordinate (the positions for a
+                dimension without one); a dimension without an indexer is
+                excluded as a whole.
 
         Returns:
             A copy of the result with `excluded` set and `excluded_reason`
@@ -290,7 +291,9 @@ class NCAResult(ParameterResult):
 
         Raises:
             ValueError: if neither `mask` nor `indexers` are given, if both
-                are, or if the mask does not have the shape of the samples.
+                are, if the mask does not have the shape of the samples, if
+                the name of an indexer is not a sample dimension, or if a
+                label is not on its dimension.
         """
         if (mask is None) == (not indexers):
             raise ValueError(
@@ -300,7 +303,7 @@ class NCAResult(ParameterResult):
         template = xr.zeros_like(self.ds["flags"], dtype=bool)
         if mask is None:
             selected = template.copy()
-            selected.loc[indexers] = True
+            selected[self._indexer_positions(indexers, several=True)] = True
         elif isinstance(mask, xr.DataArray):
             selected = (
                 mask.astype(bool).broadcast_like(template).transpose(*template.dims)

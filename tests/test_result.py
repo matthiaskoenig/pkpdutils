@@ -127,6 +127,129 @@ def test_sample_two_dims_needs_indexers() -> None:
         r.sample("a", dim="s")
 
 
+def two_dims() -> MyResult:
+    """A result over a group and a subject dimension, the period along the subjects."""
+    ds = xr.Dataset(
+        {
+            "a": (
+                ("g", "s"),
+                np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+                {"units": "mg"},
+            ),
+            "flags": (
+                ("g", "s"),
+                np.array([[0, 0, 0], [0, 1, 0]]),
+                {"units": "dimensionless"},
+            ),
+        },
+        coords={"g": ["c", "t"], "s": ["x", "y", "z"], "period": ("s", [1, 2, 1])},
+    )
+    return MyResult(ds)
+
+
+def test_sample_rejects_an_indexer_which_is_not_a_sample_dimension() -> None:
+    """An unknown name, a coordinate and `dim` itself are no indexers (#70)."""
+    r = two_dims()
+    with pytest.raises(
+        ValueError, match=r"'foo' is not a sample dimension \('g', 's'\)"
+    ):
+        r.sample("a", "s", g="t", foo=1)
+    with pytest.raises(
+        ValueError,
+        match="'period' is a coordinate of the result, not a sample dimension",
+    ):
+        r.sample("a", "s", g="t", period=1)
+    with pytest.raises(
+        ValueError, match="'s' is the dimension of the values and takes no indexer"
+    ):
+        r.sample("a", "s", g="t", s="x")
+    with pytest.raises(ValueError, match="takes no indexer"):
+        r.sample("a", "s", g="t", s=["x", "y"])
+    # the dimension of the values is checked before the indexers
+    with pytest.raises(ValueError, match="'q' is not a sample dimension"):
+        r.sample("a", "q", foo=1)
+
+
+def test_sample_rejects_a_label_which_is_not_on_its_dimension() -> None:
+    """An indexer is one label of its dimension, the error names the labels (#70)."""
+    r = two_dims()
+    sample = r.sample("a", "s", g="t")
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+    with pytest.raises(
+        ValueError, match=r"'q' is not a label of the sample dimension 'g' \['c', 't'\]"
+    ):
+        r.sample("a", "s", g="q")
+    with pytest.raises(ValueError, match=r"'g' is one label, got \['t'\]"):
+        r.sample("a", "s", g=["t"])
+    with pytest.raises(ValueError, match="'g' is one label, got slice"):
+        r.sample("a", "s", g=slice("c", "t"))
+    with pytest.raises(
+        ValueError, match="1 is not a label of the sample dimension 'g'"
+    ):
+        r.sample("a", "s", g=1)
+    # a dimension without labels is indexed by the position
+    unlabelled = MyResult(r.ds.drop_vars("g"))
+    sample = unlabelled.sample("a", "s", g=1)
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+    with pytest.raises(
+        ValueError, match=r"2 is not a label of the sample dimension 'g' \[0, 1\]"
+    ):
+        unlabelled.sample("a", "s", g=2)
+    with pytest.raises(ValueError, match="'t' is not a label"):
+        unlabelled.sample("a", "s", g="t")
+    # a long dimension names its first labels and how many there are
+    many = xr.Dataset(
+        {
+            "a": (("g", "s"), np.ones((30, 2)), {"units": "mg"}),
+            "flags": (("g", "s"), np.zeros((30, 2), dtype=int), {"units": "-"}),
+        },
+        coords={"g": [f"g{i}" for i in range(30)]},
+    )
+    with pytest.raises(
+        ValueError, match=r"\['g0', 'g1', .*'g9', \.\.\.\] \(30 labels\)"
+    ):
+        MyResult(many).sample("a", "s", g="q")
+    # a label which several samples carry does not pick one of them
+    duplicated = MyResult(r.ds.assign_coords(g=["c", "c"]))
+    with pytest.raises(
+        ValueError, match="'c' labels 2 samples of the sample dimension 'g'"
+    ):
+        duplicated.sample("a", "s", g="c")
+
+
+def test_one_sample_rejects_an_unknown_indexer_or_label() -> None:
+    """`to_quantities` and `flags` select one sample the same way (#70)."""
+    r = two_dims()
+    assert r.flags(g="t", s="y") == ["BAD"]
+    assert r.to_quantities(s="y", g="c")["a"].magnitude == 2.0
+    with pytest.raises(ValueError, match="'foo' is not a sample dimension"):
+        r.to_quantities(g="t", s="y", foo=1)
+    with pytest.raises(
+        ValueError, match="'q' is not a label of the sample dimension 's'"
+    ):
+        r.flags(g="t", s="q")
+    with pytest.raises(ValueError, match=r"missing \['s'\]"):
+        r.to_quantities(g="t")
+
+
+def test_sample_takes_the_labels_as_iterating_a_coordinate_yields_them() -> None:
+    """A 0-d array of a coordinate and a numpy scalar are labels as well."""
+    r = two_dims()
+    values = {
+        str(group.item()): r.sample("a", "s", g=group).values for group in r.ds["g"]
+    }
+    assert {key: v.tolist() for key, v in values.items() if v is not None} == {
+        "c": [1.0, 2.0, 3.0],
+        "t": [4.0, 5.0, 6.0],
+    }
+    assert r.flags(g=np.str_("t"), s=np.array("y")) == ["BAD"]
+    days = MyResult(
+        r.ds.assign_coords(g=np.array(["2026-01-01", "2026-01-02"], "M8[ns]"))
+    )
+    sample = days.sample("a", "s", g=days.ds["g"][1])
+    assert sample.values is not None and sample.values.tolist() == [4.0, 5.0, 6.0]
+
+
 def test_sample_summary_data() -> None:
     ds = xr.Dataset(
         {

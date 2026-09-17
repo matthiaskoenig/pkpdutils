@@ -1,6 +1,7 @@
 """Shared container of parameter results (`NCAResult`, `FitResult`): an `xarray.Dataset` over sample dimensions, units per variable, an integer `flags` variable, quantities, data frames and summaries."""
 
 import itertools
+import reprlib
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from enum import IntFlag
@@ -190,6 +191,9 @@ SUMMARY_SUFFIXES: tuple[str, ...] = (
 #: leave out (`pkpdutils.nca.NCAResult.exclude`, `Acceptance(exclude=True)`)
 EXCLUDED_VARIABLE: str = "excluded"
 
+#: how many labels of a dimension an error message lists before it abbreviates
+LABELS_SHOWN: int = 10
+
 #: the summary variables every statistic of `summary_table` reads, as the
 #: suffixes of the parameter (`""` is the parameter itself, the mean)
 TABLE_STATISTICS: dict[str, tuple[str, ...]] = {
@@ -288,6 +292,22 @@ def _conversion(name: str, current: str, target: str) -> tuple[float, str]:
             f"'{name}' is in '{current}' and cannot be converted to '{target}'"
         )
     return float(quantity.to(unit).magnitude), str(unit)
+
+
+def _label_list(labels: pd.Index) -> str:
+    """The labels of a dimension as an error message lists them.
+
+    Args:
+        labels: the index of the dimension.
+
+    Returns:
+        The labels as a list, or the first `LABELS_SHOWN` of them followed by
+        the number of labels when there are more.
+    """
+    if len(labels) <= LABELS_SHOWN:
+        return repr(labels.tolist())
+    shown = ", ".join(repr(label) for label in labels[:LABELS_SHOWN].tolist())
+    return f"[{shown}, ...] ({len(labels)} labels)"
 
 
 def base_name(name: str) -> str | None:
@@ -612,34 +632,139 @@ class ParameterResult:
         """
         return decode_flags(self.flag_type, value)
 
+    def _label_position(self, dim: str, label: Any) -> int:
+        """The position of one label along a sample dimension.
+
+        The label is a value of the dimension coordinate, also as the 0-d
+        array iterating over the coordinate yields; a dimension without a
+        coordinate is labelled by the positions `0, ..., n - 1`, as
+        `xarray.Dataset.sel` reads it.
+
+        Args:
+            dim: a sample dimension.
+            label: the label of one sample along it.
+
+        Returns:
+            The position of the sample.
+
+        Raises:
+            ValueError: if no sample along `dim` carries `label`, or several do.
+        """
+        index = self.ds.indexes.get(dim)
+        labels = index if index is not None else pd.RangeIndex(self.ds.sizes[dim])
+        value = label.to_numpy() if isinstance(label, xr.DataArray) else label
+        if isinstance(value, np.ndarray):
+            value = value[()]
+        try:
+            position = labels.get_loc(value)
+        except (KeyError, TypeError, pd.errors.InvalidIndexError) as error:
+            raise ValueError(
+                f"{value!r} is not a label of the sample dimension '{dim}' "
+                f"{_label_list(labels)}"
+            ) from error
+        if isinstance(position, slice):
+            count = len(range(*position.indices(len(labels))))
+        elif isinstance(position, np.ndarray):
+            count = int(np.count_nonzero(position))
+        else:
+            return int(position)
+        raise ValueError(
+            f"{value!r} labels {count} samples of the sample dimension '{dim}', "
+            "an indexer selects one"
+        )
+
+    def _indexer_positions(
+        self,
+        indexers: Mapping[str, Any],
+        *,
+        dim: str | None = None,
+        several: bool = False,
+    ) -> dict[str, int | list[int]]:
+        """The positions the indexers select along the sample dimensions.
+
+        The name of an indexer is a sample dimension and its value one label
+        of it, with `several` also a list of labels. The labels are looked up
+        here instead of in `xarray.Dataset.sel`: its `KeyError` names neither
+        the sample dimensions nor the labels, it also selects by a coordinate
+        along a dimension, and a list of labels keeps the dimension.
+
+        Args:
+            indexers: label per sample dimension.
+            dim: the sample dimension the values run over, which takes no
+                indexer.
+            several: whether a list of labels selects several samples of a
+                dimension.
+
+        Returns:
+            The position, or the list of positions, per indexed dimension, as
+            `xarray.Dataset.isel` takes them.
+
+        Raises:
+            ValueError: if a name is not a sample dimension or is `dim`, if a
+                value is not one label (or a list of labels with `several`),
+                or if a label is not on its dimension or labels several
+                samples of it.
+        """
+        positions: dict[str, int | list[int]] = {}
+        for key, label in indexers.items():
+            if key not in self.sample_dims:
+                what = "a coordinate of the result, " if key in self.ds.coords else ""
+                raise ValueError(
+                    f"'{key}' is {what}not a sample dimension {self.sample_dims}"
+                )
+            if key == dim:
+                others = tuple(d for d in self.sample_dims if d != dim)
+                raise ValueError(
+                    f"'{dim}' is the dimension of the values and takes no indexer, "
+                    f"the indexers select the other sample dimensions {others}"
+                )
+            if np.ndim(label) == 0 and not isinstance(label, slice):
+                positions[key] = self._label_position(key, label)
+            elif several and np.ndim(label) == 1:
+                values = label if isinstance(label, list | tuple) else np.asarray(label)
+                positions[key] = [self._label_position(key, v) for v in values]
+            else:
+                expected = "one label or a list of labels" if several else "one label"
+                raise ValueError(
+                    f"the indexer of '{key}' is {expected}, got {reprlib.repr(label)}"
+                )
+        return positions
+
     def _sample(self, indexers: dict[str, Any]) -> xr.Dataset:
         """Select one sample of the dataset.
 
         Args:
-            indexers: coordinate label per sample dimension.
+            indexers: one label per sample dimension.
 
         Returns:
             The dataset reduced to one sample.
 
         Raises:
-            ValueError: if a sample dimension has no indexer.
+            ValueError: if the name of an indexer is not a sample dimension,
+                an indexer is not one label of its dimension, or a sample
+                dimension has no indexer.
         """
-        missing = set(self.sample_dims) - set(indexers)
+        positions = self._indexer_positions(indexers)
+        missing = set(self.sample_dims) - set(positions)
         if missing:
             raise ValueError(
                 f"A label for every sample dimension is needed, missing {sorted(missing)}"
             )
-        return self.ds.sel(indexers)
+        return self.ds.isel(positions)
 
     def to_quantities(self, **indexers: Any) -> dict[str, Quantity]:
         """The scalar variables of one sample as pint quantities.
 
         Args:
-            **indexers: coordinate label per sample dimension.
+            **indexers: one label per sample dimension.
 
         Returns:
             Variable name to quantity, for the parameters, the derived
             variables and `n` (every scalar data variable except `flags`).
+
+        Raises:
+            ValueError: if the indexers do not name one label of every sample
+                dimension.
         """
         sample = self._sample(indexers)
         return {
@@ -671,20 +796,29 @@ class ParameterResult:
         statistic of `pkpdutils.stats` which reads a result reads the same
         individuals as the summary of it.
 
+        Every sample dimension besides `dim` takes one label, a value of its
+        dimension coordinate (the position for a dimension without one). A
+        coordinate along a sample dimension (`period`, `sequence`) is no
+        indexer, it travels with the sample; a subset of the individuals is
+        selected from the batch before the analysis
+        (`pkpdutils.timecourse.Timecourses.select`).
+
         Args:
             name: name of the parameter.
             dim: the sample dimension the values run over, `None` for a
                 summary sample.
             include_excluded: read the excluded samples as well.
-            **indexers: coordinate label per remaining sample dimension.
+            **indexers: one label per remaining sample dimension.
 
         Returns:
             The sample.
 
         Raises:
             ValueError: if `name` is not a variable, `dim` is not a sample
-                dimension, a sample dimension besides `dim` is not indexed,
-                or the summary sample has no group statistics.
+                dimension, the name of an indexer is not a sample dimension
+                or is `dim`, an indexer is not one label of its dimension, a
+                sample dimension besides `dim` is not indexed, or the summary
+                sample has no group statistics.
         """
         from pkpdutils.stats.sample import ParameterSample
 
@@ -692,17 +826,18 @@ class ParameterResult:
             raise ValueError(f"'{name}' is not a variable of the result")
         if dim is not None and dim not in self.sample_dims:
             raise ValueError(f"'{dim}' is not a sample dimension {self.sample_dims}")
-        selected = self.ds.sel(indexers) if indexers else self.ds
-        keep = self._keep(include_excluded)
-        if keep is not None and dim is not None:
-            kept = keep.sel(indexers) if indexers else keep
-            if tuple(str(d) for d in kept.dims) == (dim,):
-                selected = selected.isel({dim: np.flatnonzero(kept.to_numpy())})
-        remaining = [d for d in selected["flags"].dims if d != dim]
+        positions = self._indexer_positions(indexers, dim=dim)
+        remaining = [d for d in self.sample_dims if d != dim and d not in positions]
         if remaining:
             raise ValueError(
                 f"The remaining sample dimensions {remaining} need an indexer each"
             )
+        selected = self.ds.isel(positions)
+        keep = self._keep(include_excluded)
+        if keep is not None and dim is not None:
+            kept = keep.isel(positions)
+            if tuple(str(d) for d in kept.dims) == (dim,):
+                selected = selected.isel({dim: np.flatnonzero(kept.to_numpy())})
         unit = self.units(name)
         if dim is not None:
             da = selected[name]
@@ -761,10 +896,14 @@ class ParameterResult:
         """Names of the flags set for one sample.
 
         Args:
-            **indexers: coordinate label per sample dimension.
+            **indexers: one label per sample dimension.
 
         Returns:
             The names of the flags set for the sample.
+
+        Raises:
+            ValueError: if the indexers do not name one label of every sample
+                dimension.
         """
         sample = self._sample(indexers)
         return self.decode_flags(int(sample["flags"].values))
