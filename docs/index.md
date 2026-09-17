@@ -90,7 +90,7 @@ The same steps with the table built in place, the parameters printed and four mo
 
 If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi.org/10.5281/zenodo.3997539):
 
-> König, M. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* (Version 1.1.0) \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.22792388
+> König, M. (2026). *pkpdutils: pharmacokinetic and pharmacodynamic analysis of timecourses and parameters* (Version 1.2.0) \[Computer software\]. Zenodo. https://doi.org/10.5281/zenodo.22808373
 
 ## License
 
