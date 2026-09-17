@@ -524,6 +524,13 @@ class NCAOptions(BaseModel):
             switches the completion off
         intervals: whether the per-interval parameters (`interval_*`) are part
             of the result of a multiple dose analysis
+        units: reporting units of the result, variable name to unit
+            (`{"auc_inf_obs": "h*ng/mL", "cl_f": "mL/min"}`). The analysis runs
+            in the units of the batch as before and the result is converted at
+            the end (`pkpdutils.result.ParameterResult.to_units`), together
+            with the uncertainty, summary and dose normalized variables of
+            every named parameter; an empty mapping leaves the derived units as
+            they are
         effect_threshold: threshold of `time_above` for effect timecourses, `None` for none
         n_workers: workers of the analysis. `None` is automatic: the calling
             thread up to `pkpdutils.parallel.NCA_WORKER_THRESHOLD` rows and
@@ -564,6 +571,7 @@ class NCAOptions(BaseModel):
     tau: float | None = Field(default=None, gt=0.0)
     tau_tolerance: float = Field(default=0.1, ge=0.0, lt=1.0)
     intervals: bool = True
+    units: dict[str, str] = Field(default_factory=dict)
     effect_threshold: float | None = None
     n_workers: int | None = Field(default=None, ge=1)
     chunk_rows: int = Field(default=5000, ge=1)

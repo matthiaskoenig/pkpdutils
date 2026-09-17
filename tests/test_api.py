@@ -176,7 +176,14 @@ def test_the_readers_take_column_keywords_and_covariates() -> None:
     """Every column name of a reader is a `*_col` keyword and takes `covariates`."""
     from pkpdutils import io
 
-    for reader in (io.read_events, io.read_pknca, io.read_adnca, io.write_events):
+    for reader in (
+        io.read_events,
+        io.read_pknca,
+        io.read_adnca,
+        io.write_events,
+        io.write_pknca,
+        io.write_adnca,
+    ):
         parameters = inspect.signature(reader).parameters
         columns = [
             name
@@ -184,7 +191,15 @@ def test_the_readers_take_column_keywords_and_covariates() -> None:
             if p.kind is inspect.Parameter.KEYWORD_ONLY
             and isinstance(p.default, str)
             and name
-            not in {"time_unit", "unit", "dose_unit", "dim", "substance", "analyte"}
+            not in {
+                "time_unit",
+                "unit",
+                "dose_unit",
+                "dim",
+                "analyte_dim",
+                "substance",
+                "analyte",
+            }
         ]
         assert columns, reader.__name__
         assert all(name.endswith("_col") for name in columns), (

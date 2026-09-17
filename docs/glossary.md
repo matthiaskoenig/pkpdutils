@@ -95,6 +95,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `sd_ratio_upper` | \((s_{wT}/s_{wR})_\mathrm{upper}\) | upper 90 % bound of the ratio of the within-subject standard deviations, at most 2.500 for a narrow therapeutic index drug | – | [Bioequivalence](bioequivalence.md) |
 | `anova` | | the analysis of variance table of a replicate design: source, `df`, `sum_sq`, `mean_sq`, `f`, `p_value` | – | [Bioequivalence](bioequivalence.md) |
 | `power`, `n` | \(1-\beta\), \(n\) | power of the two one-sided tests and the total number of subjects of a design | –, – | [Bioequivalence](bioequivalence.md) |
+| `substance` | | the analyte of every sample, a coordinate along a sample dimension of a batch of several analytes and of its result; a batch of one names it in `attrs` (`Timecourses.substance`) | – | [Data formats](formats.md) |
+| `route` | | the route of administration of every sample, a coordinate along a sample dimension of a batch of several routes and of its result; a batch of one names it in `attrs` (`Timecourses.route`) | – | [Data formats](formats.md) |
+| `nominal_time` | | the nominal (planned) time of every observation, over the sample dimensions and `time`, read from the `NRRLT` column of an ADNCA dataset | time | [Data formats](formats.md) |
 
 ## Statistics of the parameter tables
 

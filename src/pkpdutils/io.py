@@ -1,10 +1,12 @@
 """Exchange formats of pharmacokinetic data.
 
-Readers and a writer for the table formats the field exchanges timecourses and
+Readers and writers for the table formats the field exchanges timecourses and
 dosing protocols in. Every reader takes a pandas `DataFrame` (the caller reads
 the csv, sas or xpt file) and returns a `pkpdutils.timecourse.Timecourses`
 batch with one sample dimension, the times as given (a reader never shifts the
-time axis), one route and the dosing protocol of every subject:
+time axis), one route and the dosing protocol of every subject; `analytes`
+reads several analytes of a table into one batch with a second sample
+dimension:
 
 - **event records** (`read_events`, `write_events`): the one row per event
   format of NONMEM and Monolix, a row being a dose (`EVID 1`) or an
@@ -19,9 +21,12 @@ time axis), one route and the dosing protocol of every subject:
   time since the first dose (`AFRLT`) and since the reference dose (`ARRLT`),
   see the CDISC ADaM ADNCA implementation guide (2021).
 
-The readers are also reachable as the constructors `Timecourses.from_events`,
-`Timecourses.from_pknca` and `Timecourses.from_adnca`, the writer as
-`Timecourses.to_events`.
+Every format is written back as well (`write_events`, `write_pknca`,
+`write_adnca`), so a study round trips through any of them. The readers are
+also reachable as the constructors `Timecourses.from_events`,
+`Timecourses.from_pknca` and `Timecourses.from_adnca`, the writers as
+`Timecourses.to_events`, `to_pknca` and `to_adnca`; the parameters of an
+analysis are written as the CDISC `PP` domain by `pkpdutils.cdisc`.
 
 ```python
 import pandas as pd
@@ -37,26 +42,39 @@ batch = Timecourses.from_events(
 Columns are looked up case-insensitively, a column which is not in the table is
 treated as absent (a missing required column raises). Compartment columns
 (`CMT`, `ADM`) are not interpreted and modelled rates (`RATE -1`, `RATE -2`)
-are not data: both are out of scope, a batch has one route and the caller
-filters the table before reading it.
+are not data: both are out of scope. A reader reads one route; a study of
+several routes is read into one batch per route, which
+`Timecourses.from_timecourses` combines into one multi-route batch.
 
 The references of the formats are the "Data formats" section of
 `docs/references.md`.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 from pydantic import ValidationError
 
 # `dose_mapping` and `pad_rows` build the padded variables of a batch, shared
 # with the constructors of `Timecourses` (the readers do not go through
 # `Timecourse`: a subject of an exchange format may have no dose records at
 # all, which a single curve does not allow)
-from pkpdutils.timecourse import Dosing, Route, Timecourses, dose_mapping, pad_rows
+from pkpdutils.timecourse import (
+    LLOQ_VAR,
+    ROUTE_VAR,
+    SUBSTANCE_VAR,
+    TIME_DIM,
+    Dosing,
+    Route,
+    Timecourses,
+    dose_mapping,
+    pad_rows,
+)
 from pkpdutils.units import parse_unit
 
 logger = logging.getLogger(__name__)
@@ -374,6 +392,7 @@ def _build_batch(
     dim: str,
     substance: str,
     coordinates: dict[str, np.ndarray],
+    nominal_time: Sequence[np.ndarray] | None = None,
     sd: Sequence[np.ndarray] | None = None,
     se: Sequence[np.ndarray] | None = None,
     n: np.ndarray | None = None,
@@ -396,6 +415,10 @@ def _build_batch(
         dim: name of the sample dimension.
         substance: name of the substance or effect.
         coordinates: the covariates of the subjects along `dim`.
+        nominal_time: the nominal (planned) time of every observation of every
+            subject, with the times; it becomes the variable `nominal_time`
+            over `(dim, time)`, which the figures of a regulatory report use
+            for the mean curves.
         sd: the standard deviations of every subject, with the times.
         se: the standard errors of every subject, with the times.
         n: the number of subjects of every group curve, of shape `(len(labels),)`.
@@ -435,10 +458,125 @@ def _build_batch(
         route=route,
         substance=substance,
     )
-    if not coordinates:
-        return batch
-    return Timecourses(
-        batch.ds.assign_coords({name: (dim, v) for name, v in coordinates.items()})
+    ds = batch.ds
+    if nominal_time is not None:
+        ds = ds.assign(
+            nominal_time=(
+                (dim, TIME_DIM),
+                pad_rows(nominal_time, n_time),
+                {"units": time_unit},
+            )
+        )
+    if coordinates:
+        ds = ds.assign_coords({name: (dim, v) for name, v in coordinates.items()})
+    return Timecourses(ds) if ds is not batch.ds else batch
+
+
+#: name of the sample dimension of the analytes a reader was asked for
+ANALYTE_DIM: str = "analyte"
+
+
+def _stack_analytes(
+    batches: Sequence[Timecourses],
+    analytes: Sequence[str],
+    *,
+    substances: Sequence[str],
+    dim: str = ANALYTE_DIM,
+) -> Timecourses:
+    """Stack the batches of several analytes along a new sample dimension.
+
+    Every analyte is read on its own, as a table of one analyte is, and the
+    batches are concatenated along `dim`; the substance of every analyte
+    becomes the coordinate `substance` along it, which the analysis and
+    `pkpdutils.nca.analytes.metabolite_ratio` read per sample. The subjects are
+    aligned by their label, so an analyte which was not measured in a subject
+    gives a row of `NaN` there, and the protocols are padded to the longest one
+    of the batch.
+
+    Args:
+        batches: the batch of every analyte, in the order of `analytes`.
+        analytes: the labels of the analytes, the coordinate of `dim`.
+
+    Keyword Args:
+        substances: the substance of every analyte.
+        dim: name of the new sample dimension.
+
+    Returns:
+        The batch over `(dim, *sample_dims, time)`.
+
+    Raises:
+        ValueError: if the analytes were measured in different units or on
+            different time units.
+    """
+    units = {(batch.unit, batch.time_unit) for batch in batches}
+    if len(units) != 1:
+        raise ValueError(
+            "the analytes of a batch need the same units, found "
+            f"{sorted(units)}; read them into separate batches"
+        )
+    datasets = []
+    for batch in batches:
+        ds = batch.ds.copy()
+        # the substance travels as the coordinate along `dim` from here on
+        ds.attrs.pop("substance", None)
+        datasets.append(ds)
+    combined = xr.concat(
+        datasets,
+        dim=pd.Index(list(analytes), name=dim),
+        join="outer",
+        combine_attrs="drop_conflicts",
+    )
+    combined = combined.assign_coords(
+        {SUBSTANCE_VAR: (dim, np.array(list(substances), dtype=object))}
+    )
+    return Timecourses(combined)
+
+
+def _read_analytes(
+    analytes: Sequence[str],
+    read: "Callable[[str, pd.DataFrame], Timecourses]",
+    df: pd.DataFrame,
+    *,
+    column: str | None,
+    dim: str,
+    keep_unnamed: bool,
+) -> Timecourses:
+    """Read every analyte of a table on its own and stack the batches.
+
+    Args:
+        analytes: the values of `column` to read, one batch each.
+        read: reads one analyte from the rows of the table it is given.
+        df: the table.
+
+    Keyword Args:
+        column: the column which names the analyte of a row.
+        dim: name of the sample dimension of the analytes.
+        keep_unnamed: whether a row without a value in `column` belongs to
+            every analyte, which a dose record of an event table does.
+
+    Returns:
+        The batch over `(dim, *sample_dims, time)`.
+
+    Raises:
+        ValueError: if `analytes` is empty or if no row names one of them.
+    """
+    if not analytes:
+        raise ValueError("'analytes' is empty")
+    assert column is not None
+    named = df[column].astype("object")
+    batches: list[Timecourses] = []
+    for name in analytes:
+        keep = named.astype(str).str.strip() == name
+        if not bool(keep.any()):
+            raise ValueError(
+                f"No row of the analyte '{name}' in '{column}', found "
+                f"{sorted({str(v) for v in named.dropna().unique()})}"
+            )
+        if keep_unnamed:
+            keep = keep | named.isna()
+        batches.append(read(name, df.loc[keep]))
+    return _stack_analytes(
+        batches, analytes, substances=[batch.substance for batch in batches], dim=dim
     )
 
 
@@ -527,6 +665,9 @@ def read_events(
     ss_doses: int = 5,
     keep_missing: bool = True,
     dim: str = "individual",
+    analyte_col: str | None = None,
+    analytes: Sequence[str] | None = None,
+    analyte_dim: str = ANALYTE_DIM,
     substance: str = "substance",
     covariates: Sequence[str] | None = None,
 ) -> Timecourses:
@@ -592,6 +733,14 @@ def read_events(
         keep_missing: whether a missing observation (`MDV` 1 or no `DV`) is
             read as a `NaN` value at its time instead of being dropped
         dim: name of the sample dimension of the batch
+        analyte_col: name of the column which names the analyte of an
+            observation (`DVID`, `YTYPE`, `CMT` or a column of the study),
+            required with `analytes`
+        analytes: the analytes to read into one batch, which gives the sample
+            dimension `analyte_dim` and the coordinate `substance` along it; a
+            row which names no analyte (a dose record) belongs to every one of
+            them
+        analyte_dim: name of the sample dimension of `analytes`
         substance: name of the substance or effect
         covariates: columns to keep as coordinates along `dim`; by default
             every column which is neither an event column nor a compartment or
@@ -613,6 +762,41 @@ def read_events(
             requested covariate is not a column or not constant within a
             subject, or if the doses of the subjects do not share one unit.
     """
+    if analytes is not None:
+        return _read_analytes(
+            [str(name) for name in analytes],
+            lambda name, rows: read_events(
+                rows,
+                time_unit=time_unit,
+                unit=unit,
+                dose_unit=dose_unit,
+                route=route,
+                id_col=id_col,
+                time_col=time_col,
+                dv_col=dv_col,
+                amt_col=amt_col,
+                evid_col=evid_col,
+                mdv_col=mdv_col,
+                rate_col=rate_col,
+                tinf_col=tinf_col,
+                addl_col=addl_col,
+                ii_col=ii_col,
+                ss_col=ss_col,
+                sd_col=sd_col,
+                se_col=se_col,
+                n_col=n_col,
+                ss_doses=ss_doses,
+                keep_missing=keep_missing,
+                dim=dim,
+                analyte_col=analyte_col,
+                substance=name,
+                covariates=covariates,
+            ),
+            df,
+            column=_column(_lookup(df), analyte_col, required=True),
+            dim=analyte_dim,
+            keep_unnamed=True,
+        )
     route = Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
@@ -803,6 +987,9 @@ def read_events(
         for column in df.columns
         if str(column).strip().upper() in EVENT_IGNORED
     }
+    analyte_column = _column(lookup, analyte_col)
+    if analyte_column is not None:
+        known.add(analyte_column)
     coordinates: dict[str, np.ndarray] = {}
     if covariates is None:
         for column in df.columns:
@@ -1032,9 +1219,12 @@ def read_pknca(
     dose_col: str = "dose",
     dose_time_col: str = "time",
     subject_col: str = "subject",
-    duration_col: str | None = None,
+    duration_col: str | None = "duration",
     covariates: Sequence[str] = (),
     dim: str = "individual",
+    analyte_col: str | None = None,
+    analytes: Sequence[str] | None = None,
+    analyte_dim: str = ANALYTE_DIM,
     substance: str = "substance",
 ) -> Timecourses:
     """Read a batch from the two tables of the R package `PKNCA`.
@@ -1059,11 +1249,18 @@ def read_pknca(
         dose_col: name of the dose amount column
         dose_time_col: name of the time column of `dose`, 0 when it is absent
         subject_col: name of the subject column of both tables
-        duration_col: name of the infusion duration column of `dose`, `None`
-            without infusions
+        duration_col: name of the infusion duration column of `dose`, absent
+            allowed (a table of another format carries none); `None` reads no
+            duration. `write_pknca` writes it under this name
         covariates: further columns of either table which are constant within a
             subject; they become coordinates along `dim`
         dim: name of the sample dimension of the batch
+        analyte_col: name of the column which names the analyte of a row of
+            the concentration table (and of the dose table when it has one),
+            required with `analytes`
+        analytes: the analytes to read into one batch, which gives the sample
+            dimension `analyte_dim` and the coordinate `substance` along it
+        analyte_dim: name of the sample dimension of `analytes`
         substance: name of the substance or effect
 
     Returns:
@@ -1079,6 +1276,37 @@ def read_pknca(
             number, a negative amount, a missing infusion duration), named with
             the subject.
     """
+    if analytes is not None:
+        c_analyte = _column(_lookup(conc), analyte_col, required=True)
+        d_analyte = _column(_lookup(dose), analyte_col)
+        return _read_analytes(
+            [str(name) for name in analytes],
+            lambda name, rows: read_pknca(
+                rows,
+                (
+                    dose
+                    if d_analyte is None
+                    else dose.loc[dose[d_analyte].astype(str).str.strip() == name]
+                ),
+                time_unit=time_unit,
+                unit=unit,
+                dose_unit=dose_unit,
+                route=route,
+                conc_col=conc_col,
+                time_col=time_col,
+                dose_col=dose_col,
+                dose_time_col=dose_time_col,
+                subject_col=subject_col,
+                duration_col=duration_col,
+                covariates=covariates,
+                dim=dim,
+                substance=name,
+            ),
+            conc,
+            column=c_analyte,
+            dim=analyte_dim,
+            keep_unnamed=False,
+        )
     route = Route(route)
     conc = conc.reset_index(drop=True)
     dose = dose.reset_index(drop=True)
@@ -1191,6 +1419,7 @@ def read_adnca(
     route: Route | None = None,
     subject_col: str = "USUBJID",
     analyte: str | None = None,
+    analytes: Sequence[str] | None = None,
     param_col: str = "PARAMCD",
     value_col: str = "AVAL",
     value_unit_col: str = "AVALU",
@@ -1198,10 +1427,13 @@ def read_adnca(
     time_ref_col: str = "ARRLT",
     dose_col: str = "DOSEA",
     dose_unit_col: str = "DOSEU",
+    duration_col: str | None = "ADUR",
+    nominal_time_col: str | None = "NRRLT",
     route_col: str = "ROUTE",
     dtype_col: str = "DTYPE",
     lloq_col: str = "ALLOQ",
     dim: str = "individual",
+    analyte_dim: str = ANALYTE_DIM,
     substance: str | None = None,
     covariates: Sequence[str] = (),
 ) -> Timecourses:
@@ -1215,10 +1447,19 @@ def read_adnca(
     a record (`DTYPE == "COPY"`, the pre-dose record duplicated into the
     previous interval) are dropped.
 
-    The dataset carries no infusion duration, so an infusion protocol cannot be
-    read: a route of `Route.IV_INFUSION` raises (`Dosing` requires a positive
-    duration for every dose). Such a study is read from the event records or
-    from the PKNCA tables, which carry the duration or the rate.
+    The infusion duration is the `ADUR` of the records of a dose
+    (`duration_col`), which not every dataset carries: without the column an
+    infusion protocol cannot be read and a route of `Route.IV_INFUSION` raises
+    (`Dosing` requires a positive duration for every dose), and such a study is
+    read from the event records or from the PKNCA tables instead, which carry
+    the duration or the rate.
+
+    `analytes` reads several analytes of the dataset into one batch: every
+    analyte is read on its own and the batches are stacked along the sample
+    dimension `analyte_dim`, whose coordinate `substance` names the analyte of
+    every row (`_stack_analytes`). The analysis then follows the substance of
+    every sample and `pkpdutils.nca.analytes.metabolite_ratio` divides one by
+    the other.
 
     Args:
         df: the ADNCA dataset
@@ -1230,6 +1471,9 @@ def read_adnca(
         subject_col: name of the subject column
         analyte: the analyte to read, the single analyte of the dataset by
             default
+        analytes: the analytes to read into one batch, which gives the sample
+            dimension `analyte_dim` and the coordinate `substance` along it;
+            `None` reads the single analyte of `analyte`
         param_col: name of the parameter code column
         value_col: name of the value column
         value_unit_col: name of the unit column of the values
@@ -1237,11 +1481,21 @@ def read_adnca(
         time_ref_col: name of the column with the time since the reference dose
         dose_col: name of the dose amount column
         dose_unit_col: name of the unit column of the doses
+        duration_col: name of the infusion duration column, absent in most
+            datasets; the records of one dose must agree on it, `None` reads
+            no duration
+        nominal_time_col: name of the nominal (planned) time column, absent in
+            many datasets; it becomes the variable `nominal_time` over
+            `(dim, time)`, in the time frame the column itself uses (`NRRLT` is
+            the nominal time within the dosing interval, `NFRLT` the one since
+            the first dose, which is the frame of the observation times the
+            reader writes); `None` reads no nominal time
         route_col: name of the route column
         dtype_col: name of the derivation type column
         lloq_col: name of the column with the lower limit of quantification; it
             becomes the coordinate `lloq` along `dim`
         dim: name of the sample dimension of the batch
+        analyte_dim: name of the sample dimension of `analytes`
         substance: name of the substance, the analyte by default
         covariates: further columns which are constant within a subject; they
             become coordinates along `dim`
@@ -1251,14 +1505,53 @@ def read_adnca(
         their `USUBJID` as the coordinate of `dim`.
 
     Raises:
-        ValueError: if a required column is missing, if `analyte` is `None` and
-            the dataset holds several analytes, if a unit or a route cannot be
-            read, if the route is `Route.IV_INFUSION` (the dataset holds no
-            duration, the error names the subject), if a subject has fewer than
-            two records or duplicate times, if the records of one dose time
-            of a subject disagree on the dose amount, or if a covariate column
-            is not in the dataset or not constant within a subject.
+        ValueError: if a required column is missing, if both `analyte` and
+            `analytes` are given, if both are `None` and the dataset holds
+            several analytes, if a unit or a route cannot be read, if the route
+            is `Route.IV_INFUSION` without a duration column (the error names
+            the subject), if a subject has fewer than two records or duplicate
+            times, if the records of one dose time of a subject disagree on the
+            dose amount or on the duration, or if a covariate column is not in
+            the dataset or not constant within a subject.
     """
+    if analytes is not None:
+        if analyte is not None:
+            raise ValueError("give either 'analyte' or 'analytes', not both")
+        names = [str(name) for name in analytes]
+        if not names:
+            raise ValueError("'analytes' is empty")
+        batches = [
+            read_adnca(
+                df,
+                time_unit=time_unit,
+                unit=unit,
+                dose_unit=dose_unit,
+                route=route,
+                subject_col=subject_col,
+                analyte=name,
+                param_col=param_col,
+                value_col=value_col,
+                value_unit_col=value_unit_col,
+                time_first_col=time_first_col,
+                time_ref_col=time_ref_col,
+                dose_col=dose_col,
+                dose_unit_col=dose_unit_col,
+                duration_col=duration_col,
+                nominal_time_col=nominal_time_col,
+                route_col=route_col,
+                dtype_col=dtype_col,
+                lloq_col=lloq_col,
+                dim=dim,
+                covariates=covariates,
+            )
+            for name in names
+        ]
+        return _stack_analytes(
+            batches,
+            names,
+            substances=[batch.substance for batch in batches],
+            dim=analyte_dim,
+        )
     route = None if route is None else Route(route)
     df = df.reset_index(drop=True)
     lookup = _lookup(df)
@@ -1273,17 +1566,19 @@ def read_adnca(
     c_route = _column(lookup, route_col)
     c_dtype = _column(lookup, dtype_col)
     c_lloq = _column(lookup, lloq_col)
+    c_duration = _column(lookup, duration_col)
+    c_nominal = _column(lookup, nominal_time_col)
     assert c_subject is not None and c_param is not None and c_value is not None
     assert c_first is not None and c_ref is not None and c_dose is not None
 
-    analytes = [str(a) for a in pd.unique(df[c_param].dropna())]
+    present = [str(a) for a in pd.unique(df[c_param].dropna())]
     if analyte is None:
-        if len(analytes) != 1:
+        if len(present) != 1:
             raise ValueError(
-                f"The dataset holds {len(analytes)} analytes in '{c_param}' "
-                f"({sorted(analytes)}), give the 'analyte' to read"
+                f"The dataset holds {len(present)} analytes in '{c_param}' "
+                f"({sorted(present)}), give the 'analyte' or the 'analytes' to read"
             )
-        analyte = analytes[0]
+        analyte = present[0]
     rows = df.loc[df[c_param].astype(str) == analyte]
     if rows.empty:
         raise ValueError(f"No record of the analyte '{analyte}' in '{c_param}'")
@@ -1313,14 +1608,18 @@ def read_adnca(
     reference = (times - _numeric(rows, c_ref)).round(6)
     amounts = _numeric(rows, c_dose)
     values = _numeric(rows, c_value)
+    durations = _numeric(rows, c_duration)
+    nominal = _numeric(rows, c_nominal)
 
     subjects = _subjects(rows, c_subject)
     labels = list(subjects)
     sample_times: list[np.ndarray] = []
     sample_values: list[np.ndarray] = []
+    sample_nominal: list[np.ndarray] = []
     protocols: list[Dosing | None] = []
     for label, index in subjects.items():
         protocol: dict[float, float] = {}
+        infusion: dict[float, float] = {}
         for i in index:
             dose_time, amount = float(reference[i]), float(amounts[i])
             if not (np.isfinite(dose_time) and np.isfinite(amount)):
@@ -1332,6 +1631,15 @@ def read_adnca(
                     f"{dose_time}"
                 )
             protocol[dose_time] = amount
+            duration = float(durations[i])
+            if np.isfinite(duration):
+                if infusion.get(dose_time, duration) != duration:
+                    raise ValueError(
+                        f"Subject '{label}' has the infusion durations "
+                        f"{infusion[dose_time]} and {duration} at the dose "
+                        f"time {dose_time}"
+                    )
+                infusion[dose_time] = duration
         dosing = None
         if protocol:
             dose_times = sorted(protocol)
@@ -1339,13 +1647,15 @@ def read_adnca(
                 label,
                 amounts=np.array([protocol[t] for t in dose_times]),
                 times=np.array(dose_times),
+                durations=np.array([infusion.get(t, np.nan) for t in dose_times]),
                 unit=doses_unit,
                 route=route,
             )
         protocols.append(dosing)
-        observed, columns = _subject_arrays(index, times, [values])
+        observed, columns = _subject_arrays(index, times, [values, nominal])
         sample_times.append(observed)
         sample_values.append(columns[0])
+        sample_nominal.append(columns[1])
 
     coordinates: dict[str, np.ndarray] = {}
     if c_lloq is not None and bool(rows[c_lloq].notna().any()):
@@ -1376,4 +1686,341 @@ def read_adnca(
         dim=dim,
         substance=analyte if substance is None else substance,
         coordinates=coordinates,
+        nominal_time=None if c_nominal is None else sample_nominal,
     )
+
+
+#: the `ROUTE` value `write_adnca` writes for every route, one of the values
+#: `ADNCA_ROUTES` reads back
+ADNCA_ROUTE_NAMES: dict[Route, str] = {
+    Route.ORAL: "ORAL",
+    Route.IV_BOLUS: "IV BOLUS",
+    Route.IV_INFUSION: "IV INFUSION",
+}
+
+
+def _writer_dims(timecourses: Timecourses) -> tuple[str, str | None]:
+    """The subject dimension and the analyte dimension of a batch to write.
+
+    A batch of one sample dimension is one analyte; a batch of two is the
+    subjects and the analytes, the analyte dimension being the one the
+    `substance` coordinate lies along.
+
+    Args:
+        timecourses: the batch.
+
+    Returns:
+        The name of the subject dimension and of the analyte dimension, the
+        latter `None` for a batch of one sample dimension.
+
+    Raises:
+        ValueError: if the batch has no sample dimension, more than two, or two
+            without a `substance` coordinate along one of them.
+    """
+    dims = timecourses.sample_dims
+    if len(dims) == 1:
+        return dims[0], None
+    if len(dims) == 2 and SUBSTANCE_VAR in timecourses.ds.coords:
+        coord = timecourses.ds.coords[SUBSTANCE_VAR]
+        analyte = [str(d) for d in coord.dims]
+        if len(analyte) == 1 and analyte[0] in dims:
+            return next(d for d in dims if d != analyte[0]), analyte[0]
+    raise ValueError(
+        "the table formats have one subject column: the batch needs exactly "
+        f"one sample dimension, or two with a '{SUBSTANCE_VAR}' coordinate "
+        f"along one of them, not {list(dims)}"
+    )
+
+
+def _sample_labels(timecourses: Timecourses, dim: str) -> np.ndarray:
+    """The labels of one sample dimension, its positions when it has no coordinate.
+
+    Args:
+        timecourses: the batch.
+        dim: name of the sample dimension.
+
+    Returns:
+        The labels.
+    """
+    ds = timecourses.ds
+    if dim in ds.coords:
+        return ds[dim].to_numpy()
+    return np.arange(int(ds.sizes[dim]))
+
+
+def _covariate_columns(
+    timecourses: Timecourses, dim: str, skip: Sequence[str]
+) -> list[str]:
+    """The coordinates along one sample dimension a writer carries over as columns.
+
+    Args:
+        timecourses: the batch.
+        dim: the sample dimension.
+        skip: names never written as a covariate column.
+
+    Returns:
+        The names of the coordinates.
+    """
+    ds = timecourses.ds
+    return [
+        str(name)
+        for name in ds.coords
+        if str(name) != dim
+        and str(name) not in skip
+        and tuple(str(d) for d in ds[name].dims) == (dim,)
+    ]
+
+
+def write_pknca(
+    timecourses: Timecourses,
+    conc_path: str | Path | None = None,
+    dose_path: str | Path | None = None,
+    *,
+    conc_col: str = "conc",
+    time_col: str = "time",
+    dose_col: str = "dose",
+    dose_time_col: str = "time",
+    subject_col: str = "subject",
+    duration_col: str = "duration",
+    analyte_col: str = "analyte",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Write a batch as the two tables of `PKNCA`, the inverse of `read_pknca`.
+
+    The concentration table holds one row per sample and observation (the
+    subject, the time and the value, `NaN` for a missing one) and the dose
+    table one row per sample and dose of its protocol (the subject, the dose
+    time, the amount and, for an infusion, its duration). The coordinates along
+    the subject dimension become further columns of the concentration table,
+    which `read_pknca` reads back as `covariates`; a batch of several analytes
+    (a `substance` coordinate along a second sample dimension) writes the
+    analyte of every row into `analyte_col` in both tables, which `read_pknca`
+    reads back as `analytes`.
+
+    Args:
+        timecourses: the batch, with one sample dimension or with an analyte
+            dimension besides it
+        conc_path: file to write the concentration table to, `None` to write
+            no file
+        dose_path: file to write the dose table to, `None` to write no file
+
+    Keyword Args:
+        conc_col: name of the concentration column
+        time_col: name of the time column of the concentration table
+        dose_col: name of the dose amount column
+        dose_time_col: name of the time column of the dose table
+        subject_col: name of the subject column of both tables
+        duration_col: name of the infusion duration column, written only when
+            the batch carries a duration
+        analyte_col: name of the analyte column, written only for a batch of
+            several analytes
+
+    Returns:
+        The concentration table and the dose table.
+
+    Raises:
+        ValueError: if the batch does not have the sample dimensions of a
+            table (`_writer_dims`).
+    """
+    subject_dim, analyte_dim = _writer_dims(timecourses)
+    ds = timecourses.ds
+    subjects = _sample_labels(timecourses, subject_dim)
+    substances = (
+        None
+        if analyte_dim is None
+        else [str(value) for value in ds.coords[SUBSTANCE_VAR].to_numpy().ravel()]
+    )
+    covariates = _covariate_columns(
+        timecourses, subject_dim, skip=[SUBSTANCE_VAR, ROUTE_VAR]
+    )
+    dims = timecourses.sample_dims
+    times = timecourses.times
+    values = timecourses.values
+    amounts = timecourses.dose_amount
+    dose_times = timecourses.dose_time
+    durations = timecourses.dose_duration
+    has_duration = durations is not None and bool(np.isfinite(durations).any())
+    conc_rows: list[dict[str, Any]] = []
+    dose_rows: list[dict[str, Any]] = []
+    for index in np.ndindex(*timecourses.sample_shape):
+        position = dict(zip(dims, index, strict=True))
+        shared: dict[str, Any] = {subject_col: subjects[position[subject_dim]]}
+        if analyte_dim is not None and substances is not None:
+            shared[analyte_col] = substances[position[analyte_dim]]
+        for name in covariates:
+            shared[name] = ds[name].to_numpy()[position[subject_dim]]
+        for t, value in zip(times[index], values[index], strict=True):
+            if not np.isfinite(t):
+                continue  # the padding of a shorter sampling grid
+            conc_rows.append({**shared, time_col: float(t), conc_col: float(value)})
+        if amounts is None or dose_times is None:
+            continue
+        for dose_index in range(amounts.shape[-1]):
+            amount = float(amounts[index][dose_index])
+            dose_time = float(dose_times[index][dose_index])
+            if not (np.isfinite(amount) and np.isfinite(dose_time)):
+                continue  # the padding of a shorter protocol
+            row = {**shared, dose_time_col: dose_time, dose_col: amount}
+            if has_duration and durations is not None:
+                row[duration_col] = float(durations[index][dose_index])
+            dose_rows.append(row)
+    conc = pd.DataFrame(conc_rows)
+    dose = pd.DataFrame(dose_rows)
+    if conc_path is not None:
+        conc.to_csv(conc_path, index=False)
+    if dose_path is not None:
+        dose.to_csv(dose_path, index=False)
+    return conc, dose
+
+
+def write_adnca(
+    timecourses: Timecourses,
+    path: str | Path | None = None,
+    *,
+    subject_col: str = "USUBJID",
+    param_col: str = "PARAMCD",
+    value_col: str = "AVAL",
+    value_unit_col: str = "AVALU",
+    time_first_col: str = "AFRLT",
+    time_ref_col: str = "ARRLT",
+    dose_col: str = "DOSEA",
+    dose_unit_col: str = "DOSEU",
+    duration_col: str = "ADUR",
+    nominal_time_col: str = "NRRLT",
+    route_col: str = "ROUTE",
+    lloq_col: str = "ALLOQ",
+) -> pd.DataFrame:
+    """Write a batch as a CDISC ADaM ADNCA (ADPC) dataset, the inverse of `read_adnca`.
+
+    One row per sample and observation: `AFRLT` the time of the record,
+    `ARRLT` its time since the reference dose (the last dose at or before it,
+    the first dose for a record before it) and `DOSEA` the amount of that dose,
+    which is how `read_adnca` recovers the protocol of a subject. `ADUR` is the
+    duration of the reference dose of an infusion, `ALLOQ` the limit of
+    quantification of the subject and `PARAMCD` its analyte. The coordinates
+    along the subject dimension become further columns, which `read_adnca`
+    reads back as `covariates`. No row is a `DTYPE == "COPY"` duplicate.
+
+    A dose which is not followed by an observation is not the reference dose of
+    any record and is therefore not in the dataset, which is a property of the
+    format rather than of the writer: the protocol of a subject lives in the
+    concentration records.
+
+    Args:
+        timecourses: the batch, with one sample dimension or with an analyte
+            dimension besides it
+        path: file to write to, `None` to write no file
+
+    Keyword Args:
+        subject_col: name of the subject column
+        param_col: name of the analyte column
+        value_col: name of the value column
+        value_unit_col: name of the unit column of the values
+        time_first_col: name of the column with the time since the first dose
+        time_ref_col: name of the column with the time since the reference dose
+        dose_col: name of the dose amount column
+        dose_unit_col: name of the unit column of the doses
+        duration_col: name of the infusion duration column, written only when
+            the batch carries a duration
+        nominal_time_col: name of the nominal (planned) time column, written
+            only when the batch carries the variable `nominal_time`
+        route_col: name of the route column
+        lloq_col: name of the column with the limit of quantification, written
+            only when the batch carries one
+
+    Returns:
+        The dataset.
+
+    Raises:
+        ValueError: if the batch does not have the sample dimensions of a
+            table (`_writer_dims`).
+    """
+    subject_dim, analyte_dim = _writer_dims(timecourses)
+    ds = timecourses.ds
+    subjects = _sample_labels(timecourses, subject_dim)
+    substances = (
+        None
+        if analyte_dim is None
+        else [str(value) for value in ds.coords[SUBSTANCE_VAR].to_numpy().ravel()]
+    )
+    covariates = _covariate_columns(
+        timecourses, subject_dim, skip=[SUBSTANCE_VAR, ROUTE_VAR, LLOQ_VAR]
+    )
+    dims = timecourses.sample_dims
+    times = timecourses.times
+    values = timecourses.values
+    amounts = timecourses.dose_amount
+    dose_times = timecourses.dose_time
+    durations = timecourses.dose_duration
+    has_duration = durations is not None and bool(np.isfinite(durations).any())
+    limits = timecourses.lloq
+    nominal = (
+        ds["nominal_time"].transpose(*dims, TIME_DIM).to_numpy()
+        if "nominal_time" in ds.data_vars
+        else None
+    )
+    routes = timecourses.routes
+    one_route = None if routes is not None else timecourses.route
+    rows: list[dict[str, Any]] = []
+    for index in np.ndindex(*timecourses.sample_shape):
+        position = dict(zip(dims, index, strict=True))
+        row_route = one_route if routes is None else Route(routes[index])
+        shared: dict[str, Any] = {
+            subject_col: subjects[position[subject_dim]],
+            param_col: (
+                timecourses.substance
+                if substances is None or analyte_dim is None
+                else substances[position[analyte_dim]]
+            ),
+            value_unit_col: timecourses.unit,
+            dose_unit_col: timecourses.dose_unit,
+            route_col: (
+                None if row_route is None else ADNCA_ROUTE_NAMES[Route(row_route)]
+            ),
+        }
+        if limits is not None and np.isfinite(limits[index]):
+            shared[lloq_col] = float(limits[index])
+        for name in covariates:
+            shared[name] = ds[name].to_numpy()[position[subject_dim]]
+        protocol_times = (
+            np.array([])
+            if dose_times is None
+            else np.asarray(dose_times[index], dtype=np.float64)
+        )
+        protocol_amounts = (
+            np.array([])
+            if amounts is None
+            else np.asarray(amounts[index], dtype=np.float64)
+        )
+        protocol_durations = (
+            np.array([])
+            if durations is None
+            else np.asarray(durations[index], dtype=np.float64)
+        )
+        given = np.isfinite(protocol_times) & np.isfinite(protocol_amounts)
+        protocol_times = protocol_times[given]
+        protocol_amounts = protocol_amounts[given]
+        protocol_durations = (
+            protocol_durations[given] if protocol_durations.size else protocol_durations
+        )
+        for point, (t, value) in enumerate(
+            zip(times[index], values[index], strict=True)
+        ):
+            if not np.isfinite(t):
+                continue  # the padding of a shorter sampling grid
+            row = {**shared, time_first_col: float(t), value_col: float(value)}
+            if nominal is not None:
+                row[nominal_time_col] = float(nominal[index][point])
+            if protocol_times.size:
+                # the reference dose is the last one at or before the record,
+                # the first dose for a record before every dose (ARRLT < 0)
+                at_or_before = np.flatnonzero(protocol_times <= t)
+                reference = int(at_or_before[-1]) if at_or_before.size else 0
+                row[time_ref_col] = float(t - protocol_times[reference])
+                row[dose_col] = float(protocol_amounts[reference])
+                if has_duration and protocol_durations.size:
+                    row[duration_col] = float(protocol_durations[reference])
+            rows.append(row)
+    frame = pd.DataFrame(rows)
+    if path is not None:
+        frame.to_csv(path, index=False)
+    return frame

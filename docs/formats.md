@@ -1,6 +1,6 @@
 # Data formats
 
-Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and the field uses a handful of table layouts: the event record of NONMEM and Monolix, the two tables of PKNCA, and the CDISC ADaM ADNCA dataset. `pkpdutils.io` reads every one of them into a `Timecourses` batch and writes the event record format back, so a study read from any of the three formats runs through the same non-compartmental analysis.
+Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and the field uses a handful of table layouts: the event record of NONMEM and Monolix, the two tables of PKNCA, and the CDISC ADaM ADNCA dataset. `pkpdutils.io` reads every one of them into a `Timecourses` batch and writes every one of them back, so a study read from any of the three formats runs through the same non-compartmental analysis and is handed on in the format the next step asks for. `pkpdutils.cdisc` writes the parameters of the analysis as the CDISC `PP` domain.
 
 ## Concepts
 
@@ -15,8 +15,11 @@ flowchart LR
   RP --> BB
   RA --> BB
   BB --> T["Timecourses"]
-  T -->|"write_events / to_events"| EV
+  T -->|"write_events"| EV
+  T -->|"write_pknca"| PK
+  T -->|"write_adnca"| AD
   T --> N["nca"]
+  N --> PP["NCAResult<br/>to_pp / write_pp<br/>PP domain"]
 ```
 
 **Event records.** NONMEM and Monolix exchange data as one row per event of one subject: a row is a dose or an observation, and the columns describe what happened at that time - `AMT`/`DV` the amount or the value, `EVID`/`MDV` which kind of row it is. Repeated dosing does not need one row per dose: `ADDL`/`II` expand one dose record into several at a fixed interval, and `SS` marks a dose as already at steady state, standing for a dosing history rather than a single administration. With an `EVID` column the two rules are read independently, so a row may be a dose (`EVID 1`) and carry an observed value; without one a row with `AMT > 0` is a dose and nothing else, as NM-TRAN reads such a table, and a `DV` on it is ignored with a warning. A table which records a dose and a sample in one row therefore needs an `EVID` column.
@@ -27,7 +30,7 @@ flowchart LR
 
 **The column keywords.** Every column name a reader takes is a keyword ending in `_col` (`id_col`, `time_col`, `dv_col`, `amt_col`, `subject_col`, `conc_col`, `dose_col`, ...), the default being the name the format uses; the columns kept as coordinates are named by `covariates` on all three readers.
 
-**What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. A subject which is not a curve is an error naming the subject, a `ValueError` and never a pydantic dump: fewer than two observations, a time which is not a number, duplicate sampling times, or dose records which are not a protocol (an infusion without a duration, a dose time which is not a number). Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
+**What every reader does.** A reader returns a `Timecourses` batch with one sample dimension (`individual` by default), the observation times exactly as given (readers never shift the time axis to the dose), one route for the whole batch, and the dosing protocol of every subject as a `Dosing`. `analytes` adds a second sample dimension, one entry per analyte of the study. A subject which is not a curve is an error naming the subject, a `ValueError` and never a pydantic dump: fewer than two observations, a time which is not a number, duplicate sampling times, or dose records which are not a protocol (an infusion without a duration, a dose time which is not a number). Columns are looked up case-insensitively, so `TIME` and `time` are the same column; a column that is not in the table is treated as absent rather than as an error, except the columns a reader cannot do without. Extra columns which are constant within every subject - a covariate such as body weight, sex, or a dose group - become coordinates along the sample dimension and travel with every later result.
 
 ## NONMEM / Monolix event records
 
@@ -35,7 +38,7 @@ flowchart LR
 
 | column | role | notes |
 | --- | --- | --- |
-| `ID` | subject | one batch is one route: a table of several routes is filtered by the caller and read into separate batches |
+| `ID` | subject | a reader reads one route: a table of several routes is read into one batch per route, which `Timecourses.from_timecourses` combines into one multi-route batch |
 | `TIME` | time of the row | in `time_unit` |
 | `DV` (Monolix `OBSERVATION`) | observed value | in `unit`; a dose row leaves it empty |
 | `AMT` (Monolix `AMOUNT`) | dose amount | in `dose_unit`; `0` or empty for an observation |
@@ -114,7 +117,7 @@ The one dose record of the table became a protocol of two doses, the weight beca
 | `conc_col` | `conc` | concentrations | observed value | `0` codes below the limit of quantification, `NA` codes missing, both kept as given |
 | `dose_time_col` | `time` | doses | dose time | in `time_unit`, `0` when the column is absent |
 | `dose_col` | `dose` | doses | dose amount | in `dose_unit` |
-| `duration_col` | none | doses | infusion duration | optional, `None` without infusions |
+| `duration_col` | `duration` | doses | infusion duration | optional, absent allowed, `None` reads none; `write_pknca` writes it under this name, so an infusion batch round trips |
 | `covariates` | none | either | covariate columns | constant per subject, become coordinates along the sample dimension |
 
 ```python
@@ -174,7 +177,8 @@ The two tables are the fixtures `tests/data/formats/pknca_conc.csv` and `pknca_d
 | `time_ref_col` | `ARRLT` | time since the reference dose | `AFRLT - ARRLT` gives the dose times of a subject, one per distinct value |
 | `dose_col`, `dose_unit_col` | `DOSEA`, `DOSEU` | dose amount, its unit | the amount of the dose at the recovered time; disagreeing amounts at the same dose time raise |
 | `route_col` | `ROUTE` | route | `ORAL`/`PO`, `IV`/`INTRAVENOUS`/`IV BOLUS`, `IV INFUSION`; the caller's `route=` wins |
-| none | none | infusion duration | not in the dataset: an infusion protocol cannot be read and `Route.IV_INFUSION` raises, such a study is read from the event records or the PKNCA tables |
+| `duration_col` | `ADUR` | infusion duration | optional, absent in most datasets, `None` reads none; without it an infusion protocol cannot be read and `Route.IV_INFUSION` raises, and such a study is read from the event records or the PKNCA tables instead |
+| `nominal_time_col` | `NRRLT` | nominal time | optional, `None` reads none; it becomes the variable `nominal_time` over `(individual, time)` in the frame of the column itself (`NRRLT` within the dosing interval, `NFRLT` since the first dose, which is the frame of the observation times the reader writes) |
 | `dtype_col` | `DTYPE` | derivation type | `COPY` rows (the predose record duplicated into the previous interval) are dropped |
 | `lloq_col` | `ALLOQ` | lower limit of quantification | kept as the coordinate `lloq` along the sample dimension; the analysis reads it per subject when `NCAOptions.lloq` names no limit of its own, see [NCA](nca.md) |
 | `covariates` | none | covariate columns | constant per subject, become coordinates along the sample dimension |
@@ -214,11 +218,123 @@ S2 [ 0. 12.]
 
 The dose times were recovered from `AFRLT - ARRLT`: the first subject was dosed once, the second one twice. The same extract is the fixture `tests/data/formats/adnca.csv` of the repository and `examples/formats.py` reads it.
 
+## Analytes
+
+A study measures more than one analyte: a parent drug and its metabolite, two enantiomers, a drug and its interaction marker. Every reader takes `analytes`, the values of its analyte column to read (`PARAMCD` of an ADNCA dataset, the analyte column of a PKNCA concentration table, a column of an event table named with `analyte_col`); it reads every one of them on its own and stacks the batches along the sample dimension `analyte`, whose coordinate `substance` names the analyte of every row. In an event table a row which names no analyte, a dose record, belongs to every one of them.
+
+The batch is then analysed in one call: the analysis follows the substance of every sample, the result carries the coordinate, and `metabolite_ratio` divides the exposure of the metabolite by the exposure of the parent, subject by subject. With the molar masses the ratio is on a molar basis, `(AUC_m / M_m) / (AUC_p / M_p)`, which is what a ratio of two substances measured in mass concentrations means.
+
+```python
+import io
+
+import pandas as pd
+
+from pkpdutils import Timecourses, nca
+from pkpdutils.nca import metabolite_ratio
+
+adnca = pd.read_csv(
+    io.StringIO(
+        """USUBJID,PARAMCD,AVAL,AVALU,AFRLT,ARRLT,DOSEA,DOSEU,ROUTE
+S1,PARENT,4.2,ng/mL,1,1,100,mg,ORAL
+S1,PARENT,3.0,ng/mL,4,4,100,mg,ORAL
+S1,PARENT,1.0,ng/mL,12,12,100,mg,ORAL
+S1,META,2.1,ng/mL,1,1,100,mg,ORAL
+S1,META,1.5,ng/mL,4,4,100,mg,ORAL
+S1,META,0.5,ng/mL,12,12,100,mg,ORAL
+S2,PARENT,4.0,ng/mL,1,1,100,mg,ORAL
+S2,PARENT,2.8,ng/mL,4,4,100,mg,ORAL
+S2,PARENT,0.9,ng/mL,12,12,100,mg,ORAL
+S2,META,2.0,ng/mL,1,1,100,mg,ORAL
+S2,META,1.4,ng/mL,4,4,100,mg,ORAL
+S2,META,0.45,ng/mL,12,12,100,mg,ORAL
+"""
+    )
+)
+batch = Timecourses.from_adnca(adnca, analytes=["PARENT", "META"])
+print(batch.sample_dims, batch.substances[:, 0])
+result = nca(batch)
+print(metabolite_ratio(result, parent="PARENT", metabolite="META", parameters=["cmax"]))
+```
+
+```text
+('analyte', 'individual') ['PARENT' 'META']
+  individual  cmax
+0         S1   0.5
+1         S2   0.5
+```
+
+`Timecourses.substance` returns the substance of a batch which has one and raises for a batch of several, which names them in `Timecourses.substances`; the same holds for `Timecourses.route` and `Timecourses.routes` of a batch which mixes an intravenous reference with an oral test, see [Non-compartmental analysis](nca.md).
+
+## Writing PKNCA and ADNCA
+
+`write_pknca`/`Timecourses.to_pknca` writes the two tables of `PKNCA` and `write_adnca`/`Timecourses.to_adnca` an ADNCA dataset, so that all three formats round trip. Both take the file to write (`None` writes no file and returns the frame only) and the same `*_col` keywords as their readers.
+
+The concentration table holds one row per sample and observation and the dose table one row per dose of every protocol; an ADNCA dataset holds one row per observation with `AFRLT` the time of the record, `ARRLT` its time since the reference dose (the last dose at or before it) and `DOSEA` the amount of that dose, which is how the reader recovers the protocol. The coordinates along the sample dimension become further columns, which the reader reads back as `covariates`, and a batch of several analytes writes the analyte of every row.
+
+```python
+from pkpdutils import Route
+
+conc, doses = batch.to_pknca()
+print(conc.head(2).to_string(index=False))
+print(doses.head(2).to_string(index=False))
+back = Timecourses.from_pknca(
+    conc,
+    doses,
+    time_unit="hr",
+    unit="ng/mL",
+    dose_unit="mg",
+    route=Route.ORAL,
+    analyte_col="analyte",
+    analytes=["PARENT", "META"],
+)
+print(back.sample_dims, float(back.values[1, 0, 0]))
+```
+
+```text
+subject analyte  time  conc
+     S1  PARENT   1.0   4.2
+     S1  PARENT   4.0   3.0
+subject analyte  time  dose
+     S1  PARENT   0.0 100.0
+     S2  PARENT   0.0 100.0
+('analyte', 'individual') 2.1
+```
+
+A dose which is not followed by an observation is not the reference dose of any record and is therefore not in an ADNCA dataset, which is a property of the format rather than of the writer: the protocol of a subject lives in its concentration records.
+
+## The PP domain
+
+A submission reports the parameters in the `PP` domain of SDTM (or the `ADPP` dataset of ADaM derived from it), where every parameter is named by a code of the CDISC controlled terminology rather than by the name of an analysis package. `pkpdutils.cdisc` holds the crosswalk: `PKPARMCD` maps every variable of a result to its code, `pkunit` writes a unit as `PKUNIT` spells it and `to_pp`/`write_pp` lay a result out as the domain, one row per subject and parameter.
+
+The codes are read from `src/pkpdutils/data/pkparmcd.csv`, extracted from the NCI EVS package of the SDTM terminology (codelist `C85839`), whose version and checksum the header of the file names. A variable the terminology has no code for is left out with a warning: `clast_pred` has none (there is no `CLSTP`), and the steady state peak and trough are `CMAX` and `CMIN` with `PPSCAT = "STEADY STATE"`, since no `CMAXSS` and no `CMINSS` exist. `PPSCAT` comes from the analysis of the sample: every parameter of a subject which was analysed over its dosing intervals is `STEADY STATE`, because its peak, its exposure and its clearance are computed from the last dose on. A unit the terminology does not spell is written in the CDISC symbols and named in a warning. The variables CDISC defines as a percentage while the package reports a fraction (`auc_extrap_fraction`, `fluctuation`) are written multiplied by 100 with the unit `%`, and `PPRFTDTC` is empty: the analysis works on elapsed times and never sees a date.
+
+```python
+from pkpdutils.cdisc import to_pp
+
+pp = to_pp(result, subject_dim="individual", studyid="STUDY-1")
+columns = ["USUBJID", "PPTESTCD", "PPTEST", "PPCAT", "PPSCAT", "PPORRES", "PPORRESU"]
+print(pp.loc[pp["PPTESTCD"].isin(["CMAX", "AUCLST"]), columns].to_string(index=False))
+```
+
+```text
+USUBJID PPTESTCD                   PPTEST  PPCAT      PPSCAT PPORRES PPORRESU
+     S1     CMAX                     Cmax PARENT SINGLE DOSE     4.2    ng/mL
+     S1   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 25.2631  h*ng/mL
+     S2     CMAX                     Cmax PARENT SINGLE DOSE       4    ng/mL
+     S2   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 23.4855  h*ng/mL
+     S1     CMAX                     Cmax   META SINGLE DOSE     2.1    ng/mL
+     S1   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 12.6315  h*ng/mL
+     S2     CMAX                     Cmax   META SINGLE DOSE       2    ng/mL
+     S2   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 11.7428  h*ng/mL
+```
+
+`spec="ADaM"` adds the analysis variables `PARAMCD`, `PARAM`, `AVAL` and `AVALU` of an `ADPP` dataset and leaves `DOMAIN` out, `usubjid` maps the labels of the batch to the identifiers of the study, and `write_pp(result, path, ...)` writes the csv. The reporting units of the domain come from the result, so a sponsor asking for `mL/min` gets them by converting the result first, see [Units](units.md).
+
 ## What is not read
 
-Only the event format round trips: `write_events`/`Timecourses.to_events` writes it back, and there is no `write_pknca` and no `write_adnca`, so a batch read from the two PKNCA tables or from an ADNCA dataset is written as event records (or as the long frame of `to_dataframe`). An `lloq` coordinate read from a table travels with the batch and is read by the analysis when the options name no limit, but it is not written back by `write_events`.
+An `lloq` coordinate read from a table travels with the batch and is read by the analysis when the options name no limit, but `write_events` writes it back only as an ordinary covariate column. The variable `nominal_time` is written back by `write_adnca` only: `write_events` writes the observed times alone, and `Timecourses.mean` drops it with every other variable it does not reduce, so the nominal times of a group curve are given to the figure rather than read off the batch.
 
-Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments or several routes is filtered by the caller before reading, since a batch has one route. A record which resets the subject and doses (`EVID 4`) and a steady state code other than `SS 0`/`SS 1` describe a dosing history the protocol of a subject cannot hold, and raise rather than being read as an ordinary dose; the caller splits the periods into separate tables. Infusion protocols are read from the event records (`TINF`/`RATE`) and from the PKNCA dose table (`duration_col`), not from an ADNCA dataset, which carries no duration. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`/duration column) or as a positive rate. The PP/ADPP parameter output domains, bioequivalence period and sequence (given as coordinates by the caller), and reading SAS/XPT files directly (the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`) are out of scope of the readers.
+Compartment columns (`CMT`, `ADM`) are not interpreted: a study with several compartments is filtered by the caller before reading. A record which resets the subject and doses (`EVID 4`) and a steady state code other than `SS 0`/`SS 1` describe a dosing history the protocol of a subject cannot hold, and raise rather than being read as an ordinary dose; the caller splits the periods into separate tables. Modelled rates (`RATE -1`, `RATE -2`) are not data and raise: the infusion duration is given directly (`TINF`, `duration_col`, `ADUR`) or as a positive rate. A reader reads one route: a table of several routes is read into one batch per route, which are then combined into a multi-route batch with `Timecourses.from_timecourses`. Reading SAS/XPT files directly is out of scope as well, the caller uses `pandas`/`pyreadstat` and passes the resulting `DataFrame`.
 
 ## References
 

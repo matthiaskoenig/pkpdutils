@@ -1336,14 +1336,22 @@ def carryover_table(
         if dose_time is None
         else np.asarray(dose_time, dtype=np.float64).reshape(n_rows)
     )
-    route = batch.route
     # a sample at the dose time is a pre-dose sample of an extravascular period
-    # only; after a bolus or during an infusion it carries the post-dose value
-    at_dose = route is None or not route.is_iv
+    # only; after a bolus or during an infusion it carries the post-dose value.
+    # A batch of several routes (an intravenous reference against an oral test)
+    # decides that per sample
+    routes = batch.routes
+    if routes is None:
+        route = batch.route
+        at_dose = np.full(n_rows, route is None or not route.is_iv)
+    else:
+        at_dose = np.array(
+            [r is None or not r.is_iv for r in routes.reshape(n_rows)], dtype=bool
+        )
     with np.errstate(invalid="ignore"):
         measured = np.isfinite(c) & np.isfinite(t)
-        candidate = measured & (
-            (t <= time[:, None]) if at_dose else (t < time[:, None])
+        candidate = measured & np.where(
+            at_dose[:, None], t <= time[:, None], t < time[:, None]
         )
     has_predose = candidate.any(axis=1)
     order = np.where(candidate, t, -np.inf).argmax(axis=1)

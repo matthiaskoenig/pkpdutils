@@ -137,6 +137,9 @@ class NCAResult(ParameterResult):
     flag_type = NCAFlag
     lognormal_parameters = LOGNORMAL_PARAMETERS
     discrete_parameters = DISCRETE_PARAMETERS
+    #: `auc_inf_obs` is reported dose normalized as `auc_inf_dn`, every other
+    #: parameter as `x_dn` (`to_units` converts the companion with it)
+    dose_normalized_names = DOSE_NORMALIZED_NAMES
     #: the acceptance and the exclusion of a sample, no parameters of it
     status_variables = frozenset({"accepted", EXCLUDED_VARIABLE, REASON_VARIABLE})
     #: the per-interval parameters are point variables (the dimension

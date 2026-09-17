@@ -7,6 +7,7 @@
 sampling design (`docs/sparse.md`).
 """
 
+from pkpdutils.nca.analytes import metabolite_ratio
 from pkpdutils.nca.bioavailability import bioavailability
 from pkpdutils.nca.nca import nca, nca_single, partial_auc
 from pkpdutils.nca.options import (
@@ -56,6 +57,7 @@ __all__ = [
     "accumulation_ratio",
     "bioavailability",
     "decode_flags",
+    "metabolite_ratio",
     "methods_line",
     "nca",
     "nca_single",

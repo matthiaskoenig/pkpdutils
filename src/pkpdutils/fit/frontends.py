@@ -95,7 +95,12 @@ def fit_timecourses(
         options=options,
         shape=timecourses.sample_shape,
     )
-    substance = timecourses.substance
+    # a batch of several analytes has no single name for its values
+    substance = (
+        _UNNAMED_SUBSTANCE
+        if timecourses.substances is not None
+        else timecourses.substance
+    )
     return _named(
         result,
         "time",

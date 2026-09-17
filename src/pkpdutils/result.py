@@ -11,7 +11,7 @@ import pandas as pd
 import xarray as xr
 from scipy.stats import t as student_t
 
-from pkpdutils.units import Q_, Quantity, short_unit
+from pkpdutils.units import Q_, Quantity, parse_unit, short_unit
 
 if TYPE_CHECKING:
     from rich.table import Table
@@ -264,6 +264,32 @@ def format_number(value: float, digits: int = 3) -> str:
     return f"{rounded:.{digits - 1}e}"
 
 
+def _conversion(name: str, current: str, target: str) -> tuple[float, str]:
+    """The factor from one unit to another and the canonical target unit.
+
+    Args:
+        name: name of the variable, for the error message.
+        current: the unit the variable carries.
+        target: the unit it is converted to.
+
+    Returns:
+        The factor a magnitude in `current` is multiplied with, and the
+        canonical spelling of `target` (`"hour * nanogram / milliliter"` for
+        `"h*ng/mL"`).
+
+    Raises:
+        ValueError: if `target` is not a unit of the registry or does not have
+            the dimensionality of `current`.
+    """
+    unit = parse_unit(target)
+    quantity = Q_(1.0, current)
+    if not quantity.is_compatible_with(unit):
+        raise ValueError(
+            f"'{name}' is in '{current}' and cannot be converted to '{target}'"
+        )
+    return float(quantity.to(unit).magnitude), str(unit)
+
+
 def base_name(name: str) -> str | None:
     """The parameter a derived variable belongs to, `None` for a parameter itself.
 
@@ -319,6 +345,11 @@ class ParameterResult:
     #: in this order, the ones a reader looks for first; a subclass names its
     #: headline parameters, an empty tuple shows every parameter
     console_parameters: ClassVar[tuple[str, ...]] = ()
+    #: the dose normalized variable of a parameter whose name is not
+    #: `f"{parameter}{DOSE_NORMALIZED_SUFFIX}"` (`auc_inf_obs` is reported as
+    #: `auc_inf_dn`); read by `to_units`, which converts the dose normalized
+    #: companion of a parameter with it
+    dose_normalized_names: ClassVar[Mapping[str, str]] = {}
 
     def __init__(self, ds: xr.Dataset) -> None:
         """Wrap a result dataset.
@@ -448,6 +479,105 @@ class ParameterResult:
             The unit string of the parameter.
         """
         return str(self.ds[name].attrs["units"])
+
+    def _companions(self, name: str) -> list[str]:
+        """The variables derived from one parameter, in the order of the dataset.
+
+        The uncertainty and summary variables of the parameter (`x_sd`, `x_se`,
+        `x_ci_low`, `x_median`, ..., every variable whose `base_name` is
+        `name`) and its dose normalized variable (`x_dn`, or the name of
+        `dose_normalized_names`).
+
+        Args:
+            name: name of the parameter.
+
+        Returns:
+            The names of the derived variables present in the result.
+        """
+        normalized = self.dose_normalized_names.get(name, f"{name}_dn")
+        return [
+            str(variable)
+            for variable in self.ds.data_vars
+            if base_name(str(variable)) == name or str(variable) == normalized
+        ]
+
+    def to_units(self, units: Mapping[str, str]) -> Self:
+        """Convert named variables of the result to other units.
+
+        The reporting units of a submission are not the units the data was
+        measured in: an exposure in `hour * nanogram / milliliter` is reported
+        as `h*ng/mL`, a clearance in `liter / hour` as `mL/min`. Every named
+        variable is converted with pint, together with the variables derived
+        from it, which carry the same quantity: the uncertainty and the summary
+        variables (`x_sd`, `x_se`, `x_ci_low`, `x_ci_high`, `x_geomean`,
+        `x_median`, `x_min`, ...) and the dose normalized variable (`x_dn`,
+        which is converted per dose, so `auc_inf_obs` in `h*ng/mL` reports
+        `auc_inf_dn` in `h*ng/mL/mg`). The dimensionless companions of a
+        parameter (`x_cv`, `x_geocv`, `x_n`) are left as they are.
+
+        The values are multiplied by the conversion factor and
+        `attrs["units"]` is rewritten with the canonical spelling of the
+        target unit; the result is a new object, the one it was called on is
+        unchanged. `NCAOptions.units` applies the conversion to the result of
+        `pkpdutils.nca.nca` directly.
+
+        Args:
+            units: variable name to the unit to convert it to, e.g.
+                `{"auc_inf_obs": "h*ng/mL", "cl_f": "mL/min"}`.
+
+        Returns:
+            The result with the named variables and their companions in the
+            new units.
+
+        Raises:
+            KeyError: if a name is not a variable of the result.
+            ValueError: if a unit is not a unit of the registry, or does not
+                have the dimensionality of the variable.
+        """
+        ds = self.ds.copy()
+        for name, target in units.items():
+            if name not in ds.data_vars:
+                raise KeyError(f"'{name}' is not a variable of the result")
+            current = str(ds[name].attrs["units"])
+            normalized = self.dose_normalized_names.get(name, f"{name}_dn")
+            family = [name, *self._companions(name)]
+            if normalized in family:
+                # the dose normalized variable brings its own companions
+                family += [
+                    variable
+                    for variable in self._companions(normalized)
+                    if variable not in family
+                ]
+            normalized_unit = (
+                str(ds[normalized].attrs["units"])
+                if normalized in ds.data_vars
+                else None
+            )
+            for variable in family:
+                variable_unit = str(ds[variable].attrs.get("units", "dimensionless"))
+                quantity = Q_(1.0, variable_unit)
+                if quantity.is_compatible_with(Q_(1.0, current)):
+                    # the parameter itself and every companion which carries
+                    # the same quantity (`x_sd`, `x_ci_low`, `x_median`, ...)
+                    variable_target = target
+                elif normalized_unit is not None and quantity.is_compatible_with(
+                    Q_(1.0, normalized_unit)
+                ):
+                    # the dose normalized variable and its own companions are
+                    # the parameter per dose: the dose keeps its unit and the
+                    # numerator follows
+                    dose = (
+                        Q_(1.0, current) / Q_(1.0, normalized_unit)
+                    ).to_reduced_units()
+                    variable_target = str((Q_(1.0, target) / dose).units)
+                else:
+                    # a dimensionless companion (`x_cv`, `x_geocv`, `x_n`)
+                    continue
+                factor, unit = _conversion(variable, variable_unit, variable_target)
+                attrs = dict(ds[variable].attrs)
+                ds[variable] = ds[variable] * factor
+                ds[variable].attrs = {**attrs, "units": unit}
+        return self._new(ds)
 
     def __getitem__(self, name: str) -> xr.DataArray:
         """The array of a parameter.

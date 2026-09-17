@@ -524,7 +524,13 @@ def bootstrap(
     """
     # the analysis of the replicates runs through the same core as the original
     # curves, whose module imports this one
-    from pkpdutils.nca.nca import chunk_bounds, merge_rows, run_rows, sample_windows
+    from pkpdutils.nca.nca import (
+        chunk_bounds,
+        merge_rows,
+        row_routes,
+        run_rows,
+        sample_windows,
+    )
 
     if (
         options.kind is Kind.EFFECT
@@ -561,6 +567,7 @@ def bootstrap(
     batch_lloq = timecourses.lloq
     lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
     windows = sample_windows(timecourses, options.terminal)
+    route, routes = row_routes(timecourses, n_rows)
     parts: list[dict[str, np.ndarray]] = []
     counts: list[int] = []
     for start, stop in chunk_bounds(n_rows, n_blocks):
@@ -580,9 +587,10 @@ def bootstrap(
                 dose_amount=repeat_block(dose_amount, start, stop, b),
                 dose_time=repeat_block(dose_time, start, stop, b),
                 dose_duration=repeat_block(dose_duration, start, stop, b),
-                route=timecourses.route,
+                route=route,
                 options=options,
                 lloq=None if lloq is None else np.repeat(lloq[start:stop], b),
+                routes=None if routes is None else np.repeat(routes[start:stop], b),
                 windows=_repeat_windows(
                     None if windows is None else windows[start:stop], b
                 ),
@@ -661,7 +669,7 @@ def delta(
     """
     # the analysis of the perturbed curves runs through the same core as the
     # original curves, whose module imports this one
-    from pkpdutils.nca.nca import run_rows, sample_windows
+    from pkpdutils.nca.nca import row_routes, run_rows, sample_windows
 
     n_rows, n_time = timecourses.n_samples, timecourses.n_time
     t = timecourses.times.reshape(n_rows, n_time)
@@ -678,14 +686,16 @@ def delta(
     c_pert[rows, cols] += np.repeat(h, n_time, axis=0)[rows, cols]
 
     logger.info("delta method: %d curves x %d perturbations", n_rows, n_time)
+    delta_route, delta_routes = row_routes(timecourses, n_rows)
     perturbed = run_rows(
         np.repeat(t, n_time, axis=0),
         c_pert,
         dose_amount=repeat_rows(timecourses.dose_amount, n_rows, n_time),
         dose_time=repeat_rows(timecourses.dose_time, n_rows, n_time),
         dose_duration=repeat_rows(timecourses.dose_duration, n_rows, n_time),
-        route=timecourses.route,
+        route=delta_route,
         options=options,
+        routes=None if delta_routes is None else np.repeat(delta_routes, n_time),
         lloq=(
             None
             if timecourses.lloq is None

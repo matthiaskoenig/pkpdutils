@@ -47,20 +47,42 @@ INTRAVENOUS_VARIABLES: tuple[str, ...] = ("c0", "vss", "cl", "vz")
 def is_intravenous(result: NCAResult) -> bool:
     """Whether a result comes from an intravenous analysis.
 
-    A result carries no route of its own, but it carries the variables the
-    route decides: an intravenous analysis reports `cl`, `vz` and `vss` (and
-    `c0` after a bolus) where an extravascular one reports `cl_f` and `vz_f`.
+    A result which names the route of its batch (`attrs["route"]`, or the
+    coordinate `route` when every sample was given the same one) is read
+    there. Otherwise the variables the route decides answer it: an intravenous
+    analysis reports `cl`, `vz` and `vss` (and `c0` after a bolus) where an
+    extravascular one reports `cl_f` and `vz_f`.
 
     Args:
         result: the result
 
     Returns:
-        `True` when the result carries an intravenous variable and no
-        extravascular one.
+        `True` for an intravenous route, or when the result carries an
+        intravenous variable and no extravascular one.
     """
+    named = _named_route(result)
+    if named is not None:
+        return named.is_iv
     variables = set(result.ds.data_vars)
     extravascular = {"cl_f", "vz_f", "cl_ss_f", "tlag", "cmax_half"} & variables
     return not extravascular and bool(set(INTRAVENOUS_VARIABLES) & variables)
+
+
+def _named_route(result: NCAResult) -> Route | None:
+    """The route a result names, `None` when it names none or several.
+
+    Args:
+        result: the result.
+
+    Returns:
+        The route of `attrs["route"]` or of a `route` coordinate whose samples
+        agree, `None` otherwise.
+    """
+    if "route" in result.ds.coords:
+        given = {str(value) for value in result.ds.coords["route"].to_numpy().ravel()}
+        return Route(given.pop()) if len(given) == 1 else None
+    route = result.ds.attrs.get("route")
+    return None if route is None else Route(route)
 
 
 def bioavailability(

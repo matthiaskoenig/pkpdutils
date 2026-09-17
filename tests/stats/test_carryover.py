@@ -182,3 +182,37 @@ def test_a_carryover_check_without_the_batches_raises() -> None:
         bioequivalence(result, result, ["cmax"], carryover="exclude")
     with pytest.raises(ValueError, match="'carryover' must be"):
         bioequivalence(result, result, ["cmax"], carryover="drop")  # ty: ignore[invalid-argument-type]
+
+
+def test_a_batch_of_two_routes_decides_the_predose_rule_per_sample() -> None:
+    import numpy as np
+
+    from pkpdutils import Dose, Route, Timecourse, Timecourses, nca
+
+    time = [0.0, 0.5, 1, 2, 4, 8, 12, 24]
+    # the oral subject has a genuine pre-dose sample at the dose time (6 % of
+    # its peak), the bolus subject's sample at the dose time is the post-dose value
+    oral = Timecourse(
+        time=time,
+        value=[0.18, 1.5, 2.6, 3.0, 2.4, 1.4, 0.8, 0.2],
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.ORAL),
+        label="s_oral",
+    )
+    bolus = Timecourse(
+        time=time,
+        value=list(10 * np.exp(-0.2 * np.asarray(time))),
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+        label="s_iv",
+    )
+    batch = Timecourses.from_timecourses([oral, bolus])
+    assert batch.routes is not None
+    from pkpdutils.stats.bioequivalence import carryover_table
+
+    table = carryover_table(batch, nca(batch)).set_index("individual")
+    assert bool(table.loc["s_oral", "flagged"]) is True
+    assert np.isnan(table.loc["s_iv", "predose"])
+    assert bool(table.loc["s_iv", "flagged"]) is False
