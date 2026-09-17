@@ -129,6 +129,11 @@ class Model(ABC):
     def initial_guess(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """A start vector from the data (finite points only).
 
+        The engine evaluates the guess under `numpy.errstate` and replaces an
+        entry which is not finite by a default start, as it does for every
+        entry when the guess raises `numpy.linalg.LinAlgError` or
+        `ValueError`; the `OverflowError` of the `math` module is not caught.
+
         Args:
             x: independent variable.
             y: dependent variable.

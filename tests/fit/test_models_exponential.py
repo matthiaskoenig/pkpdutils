@@ -150,3 +150,36 @@ def test_strip_always_returns_all_phases() -> None:
     assert guess.shape == (8,)
     assert np.all(np.isfinite(guess))
     _assert_strictly_decreasing_rates(guess)
+
+
+#: a terminal phase whose regression line reaches `e^800` at `x = 0`
+STEEP_X = np.array([10.0, 11.0, 12.0, 13.0])
+STEEP_Y = np.exp(800.0 - 10.0 * STEEP_X)
+
+
+@pytest.mark.filterwarnings("error")
+def test_a_guess_whose_intercept_is_beyond_double_precision_falls_back() -> None:
+    """`math.exp` of the intercept used to raise `OverflowError` and abort the batch (#73)."""
+    a, k = terminal_guess(STEEP_X, STEEP_Y)
+    assert a == STEEP_Y.max() and k == pytest.approx(np.log(2.0) / 1.0)
+    guess = MonoExp().initial_guess(STEEP_X, STEEP_Y)
+    np.testing.assert_array_equal(guess, [a, k])
+    assert np.isfinite(BiExp().initial_guess(STEEP_X, STEEP_Y)).all()
+
+
+def test_a_bateman_guess_whose_amplitude_overflows_falls_back_to_the_maximum() -> None:
+    y = np.tile([1e-300, 1e300], T.size // 2 + 1)[: T.size]
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        guess = Bateman().initial_guess(T, y)
+    assert guess[0] == 1e300
+    assert np.isfinite(guess).all()
+
+
+def test_bateman_derived_of_a_rate_constant_of_zero_does_not_raise() -> None:
+    """A degenerate fit can end at a rate of zero, which used to raise in `math` (#73)."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        no_elimination = Bateman().derived(np.array([10.0, 0.5, 0.0]))
+        no_absorption = Bateman().derived(np.array([10.0, 0.0, 0.5]))
+    assert no_elimination["thalf"] == np.inf and no_elimination["auc"] == np.inf
+    assert no_elimination["tmax"] == np.inf
+    assert no_absorption["tmax"] == np.inf and no_absorption["flip_flop"] == 1.0

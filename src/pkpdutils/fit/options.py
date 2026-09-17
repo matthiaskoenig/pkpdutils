@@ -55,6 +55,11 @@ class FitFlag(IntFlag):
     #: fewer than two bootstrap replicates converged; the reported
     #: uncertainties are the Jacobian ones
     BOOTSTRAP_FALLBACK = 64
+    #: a quantity of the fit is beyond the range of double precision, as the
+    #: data span too many orders of magnitude for the weighting: the sum of
+    #: squares of every start (no fit, with `NOT_CONVERGED`), the covariance
+    #: (no standard errors) or a goodness of fit statistic (`NaN`)
+    OVERFLOW = 128
 
 
 def decode_fit_flags(value: int) -> list[str]:

@@ -30,6 +30,14 @@ process pool (`pkpdutils.parallel`) for a batch of more than
 child seed per row drawn up front so serial and pooled runs agree;
 `pkpdutils.fit.compare` ranks several models on the same data by the corrected
 Akaike information criterion (Burnham & Anderson 2002).
+
+A row whose numbers leave the range of double precision (unweighted values
+beyond about `1e154`, whose squares overflow) is guarded rather than computed:
+the initial guess, the start box, the trust region search, the covariance, the
+statistics and the bootstrap run under `numpy.errstate`, so no floating-point
+warning escapes and aborts a batch under a strict warning filter, and a start,
+a covariance or a statistic which is not finite is `NaN` and flagged
+`FitFlag.OVERFLOW`. The other rows of a batch are not affected.
 """
 
 import functools
@@ -140,10 +148,16 @@ class RowFit:
     n_bootstrap: int = 0
 
 
-def variance_of(
+def residual_sd(
     y: np.ndarray, sd: np.ndarray | None, weighting: Weighting
 ) -> np.ndarray:
-    """Variance of every point under the weighting (`y <= 0` uses the smallest positive `|y|`).
+    """Standard deviation `sqrt(var)` of every point under the weighting (`y <= 0` uses the smallest positive `|y|`).
+
+    The weighted residual is `(y - f) / sqrt(var)` with `var = 1` (`NONE`),
+    `|y|` (`INV_Y`), `y²` (`INV_Y2`) or `sd²` (`INV_SD`). The square root is
+    taken analytically, `|y|` rather than `sqrt(y²)`: the square of a value
+    beyond `1e154` overflows and the square of one below `1e-154` underflows
+    to zero, which would give the point no weight at all or divide by zero.
 
     Args:
         y: the dependent variable of the row.
@@ -151,7 +165,7 @@ def variance_of(
         weighting: the variance model.
 
     Returns:
-        The variance per point.
+        The standard deviation per point.
 
     Raises:
         ValueError: for `Weighting.INV_SD` without `sd`.
@@ -161,11 +175,11 @@ def variance_of(
     if weighting is Weighting.INV_SD:
         if sd is None:
             raise ValueError("Weighting.INV_SD needs 'sd'")
-        return np.asarray(sd, dtype=np.float64) ** 2
+        return np.abs(np.asarray(sd, dtype=np.float64))
     positive = np.abs(y[np.isfinite(y) & (y != 0)])
     floor = positive.min() if positive.size else 1.0
     base = np.where(np.isfinite(y) & (np.abs(y) > 0), np.abs(y), floor)
-    return base if weighting is Weighting.INV_Y else base**2
+    return np.sqrt(base) if weighting is Weighting.INV_Y else base
 
 
 def to_scale(p: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndarray:
@@ -238,11 +252,14 @@ def scale_derivative(p: np.ndarray, scales: Sequence[ParameterScale]) -> np.ndar
         The derivative of the linear parameter with respect to the scaled one.
     """
     d = np.ones_like(p, dtype=np.float64)
-    for i, scale in enumerate(scales):
-        if scale is ParameterScale.LOG10:
-            d[i] = p[i] * LN10
-        elif scale is ParameterScale.LOG:
-            d[i] = p[i]
+    # a parameter within a factor of `ln 10` of the largest double overflows
+    # to `inf`, the derivative it has
+    with np.errstate(over="ignore"):
+        for i, scale in enumerate(scales):
+            if scale is ParameterScale.LOG10:
+                d[i] = p[i] * LN10
+            elif scale is ParameterScale.LOG:
+                d[i] = p[i]
     return d
 
 
@@ -270,7 +287,9 @@ def bounds_in_scale(
     return lq, uq
 
 
-def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray, bool]:
+def covariance(
+    jac: np.ndarray, cost: float, n: int, k: int
+) -> tuple[np.ndarray, FitFlag]:
     """`s² (JᵀJ)⁻¹` with `s² = 2 cost / (n - k)`.
 
     This is the least-squares covariance and it is exact only for
@@ -283,7 +302,9 @@ def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray
     inverse with a negative variance on the diagonal (the covariance is then
     not positive semidefinite, the standard errors are meaningless); the
     values are returned unchanged and the caller clips the variances at zero
-    so that the standard errors stay finite.
+    so that the standard errors stay finite. A Jacobian, a cost, `JᵀJ` or a
+    covariance which is not finite (a row beyond the range of double
+    precision) is an overflow; the products run under `numpy.errstate`.
 
     Args:
         jac: the Jacobian of the residuals in the scaled space, `(n, k)`.
@@ -292,20 +313,32 @@ def covariance(jac: np.ndarray, cost: float, n: int, k: int) -> tuple[np.ndarray
         k: number of free parameters.
 
     Returns:
-        The covariance of the free parameters and whether it is unusable
-        (singular `JᵀJ` or a negative variance).
+        The covariance of the free parameters and its condition:
+        `FitFlag.NONE`, `FitFlag.SINGULAR` (`NaN`, or the values with a
+        negative variance) or `FitFlag.OVERFLOW` (`NaN`).
     """
+    unusable = np.full((k, k), np.nan)
     if n <= k:
-        return np.full((k, k), np.nan), True
-    jtj = jac.T @ jac
+        return unusable, FitFlag.SINGULAR
+    if not (math.isfinite(cost) and np.all(np.isfinite(jac))):
+        return unusable, FitFlag.OVERFLOW
+    with np.errstate(over="ignore", invalid="ignore"):
+        jtj = jac.T @ jac
+    if not np.all(np.isfinite(jtj)):
+        return unusable, FitFlag.OVERFLOW
     try:
         inv = np.linalg.inv(jtj)
     except np.linalg.LinAlgError:
-        return np.full((k, k), np.nan), True
+        return unusable, FitFlag.SINGULAR
     if not np.all(np.isfinite(inv)):
-        return np.full((k, k), np.nan), True
-    cov = inv * (2.0 * cost / (n - k))
-    return cov, bool(np.any(np.diag(cov) < 0.0))
+        return unusable, FitFlag.SINGULAR
+    with np.errstate(over="ignore", invalid="ignore"):
+        cov = inv * (2.0 * cost / (n - k))
+    if not np.all(np.isfinite(cov)):
+        return unusable, FitFlag.OVERFLOW
+    if np.any(np.diag(cov) < 0.0):
+        return cov, FitFlag.SINGULAR
+    return cov, FitFlag.NONE
 
 
 def _problem(
@@ -361,7 +394,18 @@ def _start_vector(
     Returns:
         A start vector strictly inside the bounds.
     """
-    p0 = np.array(model.initial_guess(x, y), dtype=np.float64)
+    # the guess is a heuristic on the raw data (regressions, crossings, the
+    # exponential of an intercept) which can leave the range of double
+    # precision; an entry which is not finite is replaced below, and a
+    # regression whose design matrix under- or overflows into `NaN` (the
+    # `LinAlgError` of `numpy.polyfit` on subnormal `x`) falls back to the
+    # default start of every parameter
+    try:
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            p0 = np.array(model.initial_guess(x, y), dtype=np.float64)
+    except (np.linalg.LinAlgError, ValueError) as err:
+        logger.debug("initial guess of %s failed: %s", model.name, err)
+        p0 = np.full(model.n_parameters, np.nan)
     for name, value in options.initial.items():
         p0[model.parameter_names.index(name)] = value
     for i, scale in enumerate(scales):
@@ -446,20 +490,23 @@ def _starts(
     """
     if options.n_starts == 1:
         return q0[None, :]
-    half = np.array(
-        [
-            math.log10(options.start_spread)
-            if s is ParameterScale.LOG10
-            else math.log(options.start_spread)
-            if s is ParameterScale.LOG
-            else options.start_spread * max(abs(v), 1.0)
-            for s, v in zip(scales, q0, strict=True)
-        ]
-    )
-    lo = np.maximum(q0 - half, lq)
-    hi = np.minimum(q0 + half, uq)
     unit = qmc.LatinHypercube(d=q0.size, seed=rng).random(options.n_starts - 1)
-    return np.vstack([q0[None, :], lo + unit * (hi - lo)])
+    # the box of a linear parameter near the largest double overflows; its
+    # starts are then not finite, and `fit_row` skips them
+    with np.errstate(over="ignore", invalid="ignore"):
+        half = np.array(
+            [
+                math.log10(options.start_spread)
+                if s is ParameterScale.LOG10
+                else math.log(options.start_spread)
+                if s is ParameterScale.LOG
+                else options.start_spread * max(abs(v), 1.0)
+                for s, v in zip(scales, q0, strict=True)
+            ]
+        )
+        lo = np.maximum(q0 - half, lq)
+        hi = np.minimum(q0 + half, uq)
+        return np.vstack([q0[None, :], lo + unit * (hi - lo)])
 
 
 def replicate_statistics(
@@ -496,6 +543,60 @@ def replicate_statistics(
         np.where(usable, low, np.nan),
         np.where(usable, high, np.nan),
     )
+
+
+def _statistics(
+    y: np.ndarray, y_pred: np.ndarray, r: np.ndarray, k: int
+) -> tuple[float, float, float, float, float, bool]:
+    """`r2`, `rmse`, `aic`, `aicc` and `bic` of a fitted row, and whether one of them overflowed.
+
+    `R² = 1 - Σe²/Σ(y - ȳ)²` and `RMSE = sqrt(Σe²/n)` on the unweighted
+    residuals `e = y - f`; `AIC = n ln(Σr²/n) + 2K`, `AICc = AIC +
+    2K(K+1)/(n-K-1)` and `BIC = n ln(Σr²/n) + K ln n` on the weighted ones,
+    with `K = k + 1` estimated parameters, the residual variance being one of
+    them (Burnham & Anderson 2002, sec. 2.2, 6.9.6); the reported
+    `n_parameters` stays `k`. The sums run under `numpy.errstate`, and a sum
+    or a statistic which is not finite is `NaN` and reported as an overflow;
+    `r2` of constant data is `NaN`, `aic` and `bic` of a perfect fit are
+    `-inf` and `aicc` is `NaN` when `n - K - 1 <= 0`, none of them an
+    overflow.
+
+    Args:
+        y: the values of the row which were fitted.
+        y_pred: the prediction at them.
+        r: the weighted residuals.
+        k: number of free parameters.
+
+    Returns:
+        `(r2, rmse, aic, aicc, bic, overflow)`.
+    """
+    n = y.size
+    big_k = k + 1
+    with np.errstate(over="ignore", invalid="ignore"):
+        e = y - y_pred
+        rss_w = float(np.sum(r**2))
+        rss = float(np.sum(e**2))
+        tss = float(np.sum((y - y.mean()) ** 2))
+    overflow = False
+    if math.isfinite(rss_w):
+        ln_term = n * math.log(rss_w / n) if rss_w > 0 else -math.inf
+        aic = ln_term + 2 * big_k
+        aicc = (
+            aic + 2 * big_k * (big_k + 1) / (n - big_k - 1)
+            if n - big_k - 1 > 0
+            else math.nan
+        )
+        bic = ln_term + big_k * math.log(n)
+    else:
+        overflow = True
+        aic = aicc = bic = math.nan
+    r2 = 1.0 - rss / tss if tss > 0 else math.nan
+    rmse = math.sqrt(rss / n)
+    if not (math.isfinite(rss) and math.isfinite(tss)) or math.isinf(r2):
+        # `1 - rss / inf` would be a perfect fit
+        overflow = True
+        r2 = rmse = math.nan
+    return r2, rmse, aic, aicc, bic, overflow
 
 
 def _embed(cov_free: np.ndarray, free: np.ndarray, k_all: int) -> np.ndarray:
@@ -563,8 +664,7 @@ def fit_row(
     if n < k + 1:
         return _nan_rowfit(k_all, x.size, n, int(FitFlag.TOO_FEW_POINTS), model)
     xs, ys = x[ok], y[ok]
-    var = variance_of(ys, None if sd is None else sd[ok], options.weighting)
-    sqrt_var = np.sqrt(var)
+    sqrt_var = residual_sd(ys, None if sd is None else sd[ok], options.weighting)
     p0 = _start_vector(model, xs, ys, options, lower, upper, scales)
     p0 = np.where(free, p0, fixed_values)
     lq_all, uq_all = bounds_in_scale(lower, upper, scales)
@@ -594,15 +694,32 @@ def fit_row(
     best: tuple[Any, bool] | None = None
     n_converged = 0
     nfev = 0
+    overflowed = False
     for q_start in starts:
+        if not np.all(np.isfinite(q_start)):
+            # a start box beyond the range of double precision (`_starts`)
+            continue
+        # finite residuals whose sum of squares overflows would have the search
+        # compare infinite costs; residuals which are not finite are refused
+        # by scipy itself
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            r_start = residuals(q_start)
+            cost_start = 0.5 * float(r_start @ r_start)
+        if np.all(np.isfinite(r_start)) and not math.isfinite(cost_start):
+            overflowed = True
+            logger.debug("start skipped: its sum of squares overflows")
+            continue
         try:
-            # a wild start can make the model overflow to `inf` or `nan`
-            # (`from_scale` already silences its own overflow); scipy turns
-            # a non-finite residual into a `ValueError` it raises itself, so
-            # ignoring the floating-point warning here just lets that failure
-            # path run instead of the warning escaping as an exception under
-            # a strict filter (`pytest -W error`).
-            with np.errstate(over="ignore", invalid="ignore"):
+            # a step of the search can make the model overflow to `inf` or
+            # `nan` (`from_scale` already silences its own overflow), and on
+            # data spanning many orders of magnitude the trust region itself
+            # overflows and divides by zero (the Levenberg-Marquardt parameter
+            # of `scipy.optimize._lsq.common.solve_lsq_trust_region`); scipy
+            # rejects a step with a non-finite residual or cost, so ignoring
+            # the floating-point warnings here lets that path run instead of
+            # the warning escaping as an exception under a strict filter
+            # (`pytest -W error`). The cost of the solution is checked below.
+            with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
                 solution: Any = least_squares(
                     residuals,
                     q_start,
@@ -618,6 +735,14 @@ def fit_row(
             logger.debug("start failed: %s", err)
             continue
         nfev += int(solution.nfev)
+        if not (
+            math.isfinite(float(solution.cost)) and np.all(np.isfinite(solution.x))
+        ):
+            # the search compared costs which are not finite, so its end point
+            # means nothing
+            overflowed = True
+            logger.debug("start overflowed: the cost is %s", solution.cost)
+            continue
         converged = bool(solution.status > 0)
         n_converged += int(converged)
         if (
@@ -627,7 +752,8 @@ def fit_row(
         ):
             best = (solution, converged)
     if best is None:
-        return _nan_rowfit(k_all, x.size, n, int(FitFlag.NOT_CONVERGED), model)
+        failed = FitFlag.NOT_CONVERGED | (FitFlag.OVERFLOW if overflowed else 0)
+        return _nan_rowfit(k_all, x.size, n, int(failed), model)
     solution, converged = best
     flags = 0 if converged else int(FitFlag.NOT_CONVERGED)
 
@@ -657,15 +783,18 @@ def fit_row(
             # refits under `lq_all[free]`/`uq_all[free]` and would otherwise
             # bound every phase by the bounds of another one
             lq_all, uq_all = bounds_in_scale(lower, upper, scales)
-    cov_free, singular = covariance(jac, float(solution.cost), n, k)
-    if singular:
-        flags |= int(FitFlag.SINGULAR)
+    cov_free, condition = covariance(jac, float(solution.cost), n, k)
+    flags |= int(condition)
+    unusable = condition != FitFlag.NONE
     q_all = to_scale(p, scales)
     dpdq = scale_derivative(p, scales)
     se_q = np.sqrt(np.clip(np.diag(cov_free), 0.0, None))
     tq = float(student_t.ppf(1.0 - (1.0 - options.ci_level) / 2.0, max(n - k, 1)))
     se_p = np.full(k_all, np.nan)
-    se_p[free] = se_q * np.abs(dpdq[free])
+    # a parameter near the largest double has an infinite `dp/dq`, and so an
+    # infinite standard error (`NaN` for a standard error of zero)
+    with np.errstate(over="ignore", invalid="ignore"):
+        se_p[free] = se_q * np.abs(dpdq[free])
     lo_q, hi_q = q_all.copy(), q_all.copy()
     lo_q[free] = q_all[free] - tq * se_q
     hi_q[free] = q_all[free] + tq * se_q
@@ -714,7 +843,7 @@ def fit_row(
                     model.derived(from_scale(q_plus, scales))[name]
                     - model.derived(from_scale(q_minus, scales))[name]
                 ) / (2 * h)
-            var_d = math.nan if singular else float(grad @ cov_free @ grad)
+            var_d = math.nan if unusable else float(grad @ cov_free @ grad)
             se_d = math.sqrt(var_d) if var_d >= 0 else math.nan
             derived_se[name] = se_d
             derived_lo[name] = value - tq * se_d
@@ -722,25 +851,12 @@ def fit_row(
     if derived.get("flip_flop", 0.0) >= 1.0:
         flags |= int(FitFlag.FLIP_FLOP)
     # statistics
-    y_pred = model.predict(xs, p)
-    e = ys - y_pred
-    r = e / sqrt_var
-    rss_w = float(np.sum(r**2))
-    tss = float(np.sum((ys - ys.mean()) ** 2))
-    r2 = 1.0 - float(np.sum(e**2)) / tss if tss > 0 else math.nan
-    rmse = math.sqrt(float(np.sum(e**2)) / n)
-    ln_term = n * math.log(rss_w / n) if rss_w > 0 else -math.inf
-    # AIC/AICc/BIC count the residual variance as an estimated parameter,
-    # `K = k + 1` (Burnham & Anderson 2002, sec. 2.2, 6.9.6); `n_parameters`
-    # of the result stays `k`, the free model parameters.
-    big_k = k + 1
-    aic = ln_term + 2 * big_k
-    aicc = (
-        aic + 2 * big_k * (big_k + 1) / (n - big_k - 1)
-        if n - big_k - 1 > 0
-        else math.nan
-    )
-    bic = ln_term + big_k * math.log(n)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        y_pred = model.predict(xs, p)
+        r = (ys - y_pred) / sqrt_var
+    r2, rmse, aic, aicc, bic, overflow = _statistics(ys, y_pred, r, k)
+    if overflow:
+        flags |= int(FitFlag.OVERFLOW)
     full_pred = np.full(x.size, np.nan)
     full_res = np.full(x.size, np.nan)
     full_pred[ok] = y_pred
@@ -769,14 +885,20 @@ def fit_row(
         # `rss_w / n` (Efron & Tibshirani 1993, ch. 9, eq. 9.10): `r_adj =
         # (r - mean(r)) * sqrt(n / (n - k))`. `n - k >= 1` here, the row
         # already returned `TOO_FEW_POINTS` otherwise.
-        r_adj = (r - r.mean()) * math.sqrt(n / (n - k))
+        # the replicate data of a row beyond the range of double precision
+        # are not finite, and such a replicate is skipped like a failed refit
+        with np.errstate(over="ignore", invalid="ignore"):
+            r_adj = (r - r.mean()) * math.sqrt(n / (n - k))
         q_free = q_all[free]
         rows_p: list[np.ndarray] = []
         rows_q: list[np.ndarray] = []
         rows_d: list[dict[str, float]] = []
         for _ in range(options.bootstrap):
             r_star = rng.choice(r_adj, size=r_adj.size, replace=True)
-            y_star = y_pred + r_star * sqrt_var
+            with np.errstate(over="ignore", invalid="ignore"):
+                y_star = y_pred + r_star * sqrt_var
+            if not np.all(np.isfinite(y_star)):
+                continue
 
             def residuals_star(
                 qf: np.ndarray, y_star: np.ndarray = y_star
@@ -785,7 +907,8 @@ def fit_row(
                 return (y_star - model.predict(xs, full_p(qf))) / sqrt_var
 
             try:
-                with np.errstate(over="ignore", invalid="ignore"):
+                # the floating-point warnings of the search, as for the fit
+                with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
                     sol_star: Any = least_squares(
                         residuals_star,
                         q_free,
@@ -800,7 +923,7 @@ def fit_row(
             except (ValueError, np.linalg.LinAlgError) as err:
                 logger.debug("bootstrap replicate failed: %s", err)
                 continue
-            if sol_star.status <= 0:
+            if sol_star.status <= 0 or not math.isfinite(float(sol_star.cost)):
                 continue
             p_star = full_p(np.array(sol_star.x, dtype=np.float64))
             if order_fn is not None and not pinned:
