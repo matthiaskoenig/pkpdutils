@@ -6,6 +6,8 @@ import matplotlib.pyplot
 import numpy as np
 import pytest
 import xarray as xr
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 from pkpdutils import Dose, Dosing, Route
@@ -20,6 +22,7 @@ from pkpdutils.plot._common import (
     format_value,
     group_colors,
     group_order,
+    legend_above_data,
     log_scale,
     make_room_right,
     plain_log_ticks,
@@ -252,6 +255,60 @@ def test_annotate_column_writes_one_text_per_row() -> None:
     ax.plot([1.0, 2.0], [0.0, 1.0])
     annotate_column(ax, [(0.0, "a"), (1.0, "b")], 0.7)
     assert [text.get_text() for text in ax.texts] == ["a", "b"]
+    matplotlib.pyplot.close(fig)
+
+
+def _data_top(ax: Axes) -> float:
+    """The highest pixel of the lines, markers and error bars of `ax` on the drawn canvas."""
+    figure = ax.get_figure(root=True)
+    assert isinstance(figure, Figure)
+    tops = []
+    for line in ax.lines:
+        points = line.get_transform().transform(np.asarray(line.get_xydata()))
+        radius = line.get_markersize() * figure.dpi / 72.0 / 2.0
+        tops.append(float(np.nanmax(points[:, 1])) + radius)
+    for collection in ax.collections:
+        for path in collection.get_paths():
+            points = collection.get_transform().transform(path.vertices)
+            tops.append(float(np.nanmax(points[:, 1])))
+    return max(tops)
+
+
+@pytest.mark.parametrize("log", [False, True])
+def test_legend_above_data_raises_the_top_above_the_data(log: bool) -> None:
+    fig, ax = matplotlib.pyplot.subplots(layout="constrained")
+    x = np.arange(1.0, 6.0)
+    line = ax.plot(x, [1.0, 3.0, 10.0, 30.0, 100.0], marker="o", label="individuals")
+    bar = ax.errorbar([5.3], [60.0], yerr=[[20.0], [40.0]], marker="D", capsize=3)
+    bar.set_label("mean [95 % CI]")
+    if log:
+        log_scale(ax, "y")
+    low, high = ax.get_ylim()
+    legend = legend_above_data(ax, [line[0], bar])
+    assert legend is ax.get_legend() and legend is not None
+    assert ax.get_ylim()[0] == low
+    assert ax.get_ylim()[1] > high
+    fig.canvas.draw()
+    assert _data_top(ax) < legend.get_window_extent().y0
+    # a wide axes takes the legend in one row
+    assert len({text.get_window_extent().y0 for text in legend.get_texts()}) == 1
+    assert legend_above_data(ax, []) is None
+    matplotlib.pyplot.close(fig)
+
+
+def test_legend_above_data_is_one_column_in_a_narrow_axes() -> None:
+    fig, axes = matplotlib.pyplot.subplots(1, 3, layout="constrained")
+    for ax in axes:
+        line = ax.plot([1.0, 2.0], [1.0, 100.0], marker="o", label="individuals")
+        bar = ax.errorbar([2.2], [60.0], yerr=[[20.0], [40.0]], marker="D")
+        bar.set_label("mean [95 % CI]")
+        legend = legend_above_data(ax, [line[0], bar])
+        assert legend is not None
+    fig.canvas.draw()
+    legend = axes[0].get_legend()
+    assert legend is not None
+    assert len({text.get_window_extent().y0 for text in legend.get_texts()}) == 2
+    assert _data_top(axes[0]) < legend.get_window_extent().y0
     matplotlib.pyplot.close(fig)
 
 

@@ -11,6 +11,7 @@ from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.figure import Figure
 from matplotlib.font_manager import FontProperties
+from matplotlib.legend import Legend
 from matplotlib.ticker import LogFormatter
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
@@ -398,6 +399,67 @@ def make_room_right(ax: Axes, share: float = ANNOTATION_ROOM) -> float:
     else:
         ax.set_xlim(low, high + share * (high - low))
     return 1.0 / (1.0 + share)
+
+
+#: the gap between the data and a legend drawn above it (`legend_above_data`),
+#: as a share of the font size of the legend
+LEGEND_GAP = 0.8
+
+#: the largest share of the height of an axes `legend_above_data` gives to the
+#: legend, so that the data keeps at least the rest of it
+LEGEND_MAX_SHARE = 0.5
+
+
+def legend_above_data(
+    ax: Axes, handles: Sequence[Any], *, fontsize: str | float = "small"
+) -> Legend | None:
+    """Draw a legend in the upper right corner of `ax`, in room made above the data.
+
+    The automatic placement of matplotlib (`loc="best"`) avoids points and
+    lines but not error bars, so a legend inside the axes can cover what it
+    explains. This legend is one row when that fits the width of the axes and
+    one column otherwise, and the top of the y axis is raised until the data
+    ends a gap (`LEGEND_GAP`) below it, on a logarithmic axis by the same
+    share of its decades. The heights are measured on the drawn figure, as in
+    `annotation_room`, so call it once the figure is laid out: a title or a
+    panel added afterwards takes height from the axes and can bring the data
+    back under the legend, unless the caller sets the limits.
+
+    Args:
+        ax: the axes, with its data, scale and labels already drawn.
+        handles: the entries of the legend, artists or containers carrying
+            their labels.
+
+    Keyword Args:
+        fontsize: font size of the legend.
+
+    Returns:
+        The legend, `None` without handles.
+    """
+    if not handles:
+        return None
+    figure = ax.get_figure(root=True)
+    assert isinstance(figure, Figure)
+    legend = ax.legend(
+        handles=list(handles), loc="upper right", ncols=len(handles), fontsize=fontsize
+    )
+    figure.draw_without_rendering()
+    size = legend.prop.get_size_in_points() * figure.dpi / 72.0
+    if (
+        legend.get_window_extent().width + 2.0 * legend.borderaxespad * size
+        > ax.bbox.width
+    ):
+        legend = ax.legend(handles=list(handles), loc="upper right", fontsize=fontsize)
+        figure.draw_without_rendering()
+    needed = ax.bbox.y1 - legend.get_window_extent().y0 + LEGEND_GAP * size
+    share = min(needed / max(ax.bbox.height, 1.0), LEGEND_MAX_SHARE)
+    low, high = ax.get_ylim()
+    stretch = 1.0 / (1.0 - share)
+    if ax.get_yscale() == "log" and low > 0.0:
+        ax.set_ylim(low, low * (high / low) ** stretch)
+    else:
+        ax.set_ylim(low, low + (high - low) * stretch)
+    return legend
 
 
 def annotate_column(

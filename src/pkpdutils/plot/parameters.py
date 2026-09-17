@@ -7,7 +7,13 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from pkpdutils.plot._common import axis_label, figure_of, log_scale, unit_label
+from pkpdutils.plot._common import (
+    axis_label,
+    figure_of,
+    legend_above_data,
+    log_scale,
+    unit_label,
+)
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, coerce, summarize
@@ -48,7 +54,10 @@ def plot_parameters(
     The legend names the marker of every statistic once for the figure
     (`geometric mean [95 % CI]`, `mean [...]` with `scale=Scale.LINEAR` or
     for the groups which fall back to it); the groups themselves are the
-    ticks of the x axis and stay out of it.
+    ticks of the x axis and stay out of it. It sits in the upper right corner
+    in room made above the data (`legend_above_data`), so it covers no point,
+    box or interval; the room is measured on the figure as laid out when the
+    function returns.
 
     Args:
         result: the result the parameter is taken from.
@@ -175,18 +184,14 @@ def plot_parameters(
             else statistic_label[effective_scale],
         )
         handles.setdefault(effective_scale, container)
-    if handles:
-        # only the statistics are named: the groups are the ticks of the x axis
-        ax.legend(
-            handles=[
-                handles[s] for s in dict.fromkeys((scale, Scale.LINEAR)) if s in handles
-            ],
-            fontsize="small",
-        )
     ax.set_xticks(positions, list(groups))
     ax.set_ylabel(axis_label(name, unit_label(sample.unit)))
     if by is not None:
         ax.set_xlabel(by)
     if log_axis:
         log_scale(ax, "y")
+    # only the statistics are named: the groups are the ticks of the x axis
+    legend_above_data(
+        ax, [handles[s] for s in dict.fromkeys((scale, Scale.LINEAR)) if s in handles]
+    )
     return fig

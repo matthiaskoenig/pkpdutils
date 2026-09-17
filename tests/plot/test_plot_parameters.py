@@ -7,8 +7,10 @@ import pytest
 import xarray as xr
 from matplotlib import cbook
 from matplotlib.axes import Axes
+from matplotlib.collections import LineCollection
 from matplotlib.container import ErrorbarContainer
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from pkpdutils import Route, Timecourses, nca
 from pkpdutils.plot import plot_parameters
@@ -305,4 +307,89 @@ def test_plot_parameters_log_without_positive_values_stays_linear() -> None:
     legend = ax.get_legend()
     assert legend is not None
     assert [text.get_text() for text in legend.get_texts()] == ["mean [95 % CI]"]
+    matplotlib.pyplot.close(fig)
+
+
+def _covered_by_legend(ax: Axes) -> list[str]:
+    """The data artists of `ax` the legend covers on the drawn canvas.
+
+    A point is covered when its marker reaches into the legend, a line of a
+    box when it crosses the legend and an error bar when its bar does.
+    """
+    figure = ax.get_figure(root=True)
+    assert isinstance(figure, Figure)
+    figure.canvas.draw()
+    legend = ax.get_legend()
+    assert legend is not None
+    box = legend.get_window_extent()
+    covered = []
+    for line in ax.lines:
+        path = line.get_transform().transform_path(line.get_path())
+        if line.get_linestyle() == "None":
+            grown = box.padded(line.get_markersize() * figure.dpi / 72.0 / 2.0)
+            vertices = np.asarray(path.vertices, dtype=float)
+            points = vertices[np.isfinite(vertices).all(axis=1)]
+            if any(grown.contains(float(x), float(y)) for x, y in points):
+                covered.append(f"marker {line.get_marker()}")
+        elif path.intersects_bbox(box, filled=False):
+            covered.append("box")
+    for collection in ax.collections:
+        for segment in collection.get_paths():
+            path = collection.get_transform().transform_path(segment)
+            if path.intersects_bbox(box, filled=False):
+                covered.append("error bar")
+    return covered
+
+
+_LEGEND_GROUPS = {
+    "A": [1.0, 2.0, 4.0, 8.0],
+    "B": [0.0, -1.0, -2.0, 0.0],
+    "C": [5.0],
+    "D": [2.0, 4.0, 8.0, -1.0],
+}
+
+
+@pytest.mark.parametrize(
+    ("shape", "layout"),
+    [
+        (None, None),
+        ((1, 2), None),
+        ((1, 2), "constrained"),
+        ((2, 1), None),
+        ((2, 1), "constrained"),
+    ],
+    ids=["figure", "1x2", "1x2-constrained", "2x1", "2x1-constrained"],
+)
+def test_plot_parameters_legend_covers_no_data(
+    shape: tuple[int, int] | None, layout: str | None
+) -> None:
+    # the legend used to go where `loc="best"` put it, which ignores the error
+    # bars: with these groups it sat on the interval of D
+    result = _grouped_result(_LEGEND_GROUPS)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        if shape is None:
+            fig = plot_parameters(result, "value", "individual", by="group", log_y=True)
+            axes = fig.axes
+        else:
+            fig, grid = matplotlib.pyplot.subplots(*shape, layout=layout)
+            axes = list(grid.flat)
+            for ax in axes:
+                ax.set_title("a panel")
+            for ax in axes:
+                plot_parameters(
+                    result, "value", "individual", by="group", log_y=True, ax=ax
+                )
+        for ax in axes:
+            assert _covered_by_legend(ax) == []
+    # the entries are the markers of the statistics with their error bars
+    legend = axes[0].get_legend()
+    assert legend is not None
+    assert [text.get_text() for text in legend.get_texts()] == [
+        "geometric mean [95 % CI]",
+        "mean [95 % CI]",
+    ]
+    markers = {str(line.get_marker()) for line in legend.findobj(Line2D)}
+    assert {"D", "s"} <= markers
+    assert legend.findobj(LineCollection)  # the bars of the error bars
     matplotlib.pyplot.close(fig)
