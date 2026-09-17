@@ -100,7 +100,7 @@ class TestResult:
         test: the test which was run (`AUTO` resolved)
         statistic: the test statistic
         p_value: the p value under `alternative`
-        effect: difference of the means `a - b` (`LINEAR`) or ratio of the geometric means `a / b` (`LOG`); for the rank tests the difference or the ratio of the medians
+        effect: difference of the means `a - b` (`LINEAR`) or ratio of the geometric means `a / b` (`LOG`); for the rank tests the difference or the ratio of the medians; always of the values the test ran on, the remaining pairs of a paired test
         ci_low: lower bound of the interval of the effect (t tests; one-sided under a one-sided alternative), `NaN` otherwise
         ci_high: upper bound of the interval
         ci_level: level of the interval
@@ -110,8 +110,8 @@ class TestResult:
         df: degrees of freedom of a t test, `NaN` otherwise
         cohen_d: standardized difference of the means on the analysis scale, pooled standard deviation
         hedges_g: `cohen_d` times the small sample correction `J`
-        n_a: number of values of `a`
-        n_b: number of values of `b`
+        n_a: number of values of `a` the test ran on, the number of remaining pairs of a paired test
+        n_b: number of values of `b` the test ran on, the number of remaining pairs of a paired test
         name: name of the parameter (of `a`)
         unit: unit of the parameter
     """
@@ -162,26 +162,6 @@ class TestResult:
             "name": self.name,
             "unit": self.unit,
         }
-
-
-def _values(sample: ParameterSample, scale: Scale) -> np.ndarray:
-    """The finite values of an individual sample on the analysis scale.
-
-    Args:
-        sample: the sample.
-        scale: the scale.
-
-    Returns:
-        The values (logarithms on the log scale).
-
-    Raises:
-        ValueError: for summary data.
-    """
-    if not sample.is_individual:
-        raise ValueError(
-            f"'{sample.name}' has no individual values, this test needs individual data"
-        )
-    return sample.log_values if scale is Scale.LOG else sample.finite_values
 
 
 def _back(value: float, scale: Scale) -> float:
@@ -244,8 +224,14 @@ def _p_from_t(statistic: float, df: float, alternative: Alternative) -> float:
     return float(student_t.sf(statistic, df))
 
 
-def _median_effect(a: ParameterSample, b: ParameterSample, scale: Scale) -> float:
-    """Difference or ratio of the medians of two samples, on the original scale.
+def _median_effect(values_a: np.ndarray, values_b: np.ndarray, scale: Scale) -> float:
+    r"""Difference or ratio of the medians of two samples, on the original scale.
+
+    \(\tilde a - \tilde b\) (`LINEAR`) or \(\tilde a / \tilde b\) (`LOG`), with
+    \(\tilde a\) and \(\tilde b\) the medians of the values the rank test
+    ranks: the finite values of each sample for the Mann-Whitney U test, the
+    values of the surviving pairs for the Wilcoxon signed rank test, so that
+    the effect and the p value describe the same individuals.
 
     The medians are taken of the original values, not of their logarithms:
     for an even sample size the median averages the two middle order
@@ -254,15 +240,15 @@ def _median_effect(a: ParameterSample, b: ParameterSample, scale: Scale) -> floa
     the medians of the logarithms.
 
     Args:
-        a: the first sample.
-        b: the second sample.
+        values_a: the values of the first sample the test runs on, original scale.
+        values_b: the values of the second sample the test runs on, original scale.
         scale: `LINEAR` for the difference, `LOG` for the ratio.
 
     Returns:
         The effect.
     """
-    median_a = float(np.median(a.finite_values))
-    median_b = float(np.median(b.finite_values))
+    median_a = float(np.median(values_a))
+    median_b = float(np.median(values_b))
     return median_a / median_b if scale is Scale.LOG else median_a - median_b
 
 
@@ -354,7 +340,12 @@ def compare(
     is the ratio of the geometric means with the exponentiated t interval.
     The paired tests need individual data of both samples and match it with
     `paired_values`, by label when both samples carry labels and by position
-    otherwise; a pair with a missing value is dropped. The permutation test
+    otherwise; a pair with a missing value is dropped, and so is an
+    individual only one of the samples holds. Every field of the result is
+    computed from the values the test runs on, the finite values of each
+    sample or the remaining pairs: the effect (the medians of the rank tests
+    included), its interval, Cohen's d, Hedges' g and the counts describe
+    the same individuals as the p value. The permutation test
     permutes the group labels (or the signs of the paired differences) of
     the difference of the means, with `n_perm` resamples (Efron & Tibshirani
     1993, ch. 15). A sample of one value or two samples without variance
@@ -401,14 +392,15 @@ def compare(
                 f"{method} needs individual data; summary data allows WELCH_T only"
             )
         return _welch_from_moments(a, b, scale, alternative, ci_level)
+    # every statistic below, the effect of the rank tests included, is computed
+    # from these two arrays, so it describes the individuals the p value does
     if paired:
         raw_a, raw_b = paired_values(a, b)
-        x = log_positive(raw_a, a.name) if scale is Scale.LOG else raw_a
-        y = log_positive(raw_b, b.name) if scale is Scale.LOG else raw_b
-        n_a = n_b = int(x.size)
     else:
-        x, y = _values(a, scale), _values(b, scale)
-        n_a, n_b = int(x.size), int(y.size)
+        raw_a, raw_b = a.finite_values, b.finite_values
+    x = log_positive(raw_a, a.name) if scale is Scale.LOG else raw_a
+    y = log_positive(raw_b, b.name) if scale is Scale.LOG else raw_b
+    n_a, n_b = int(x.size), int(y.size)
     nan = float("nan")
     if n_a < 1 or n_b < 1:
         logger.debug(
@@ -444,14 +436,14 @@ def compare(
     elif method is TestMethod.MANN_WHITNEY:
         res = stats.mannwhitneyu(x, y, alternative=str(alternative))
         statistic, p_value, df = float(res.statistic), float(res.pvalue), nan
-        effect = _median_effect(a, b, scale)
+        effect = _median_effect(raw_a, raw_b, scale)
         ci = (nan, nan)
     elif method is TestMethod.WILCOXON:
         # two identical samples have no spread of the differences to divide by
         with np.errstate(invalid="ignore", divide="ignore"):
             res = stats.wilcoxon(x, y, alternative=str(alternative))
         statistic, p_value, df = float(res.statistic), float(res.pvalue), nan
-        effect = _median_effect(a, b, scale)
+        effect = _median_effect(raw_a, raw_b, scale)
         ci = (nan, nan)
     else:
         res = stats.permutation_test(
