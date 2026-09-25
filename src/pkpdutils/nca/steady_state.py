@@ -65,10 +65,16 @@ from pkpdutils.timecourse import Dosing, DosingRegimen, Route, Timecourse
 SINGLE_DOSE_PARAMETERS: tuple[str, ...] = (
     "cl",
     "cl_f",
+    "cl_pred",
+    "cl_f_pred",
     "vz",
     "vz_f",
+    "vz_pred",
+    "vz_f_pred",
     "vss",
+    "vss_pred",
     "auc_inf_dn",
+    "auc_inf_pred_dn",
     "cmax_dn",
 )
 

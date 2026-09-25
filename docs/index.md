@@ -68,18 +68,18 @@ Pharmacokinetic parameters by dose group
 
   parameter     unit     dose   n   geomean   geocv    median   range
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  auc_inf_obs   h⋅mg/l     50   4   5.07      28.0 %   4.76     4.08 - 7.29
+  auc_inf_obs   h⋅mg/l     50   4   5.13      27.8 %   4.82     4.13 - 7.36
   cmax          mg/l       50   4   0.925     14.9 %   0.883    0.818 - 1.15
   thalf         h          50   4   2.86      23.5 %   2.72     2.37 - 3.89
-  cl_f          l/h        50   4   9.86      28.0 %   10.7     6.86 - 12.3
-  auc_inf_obs   h⋅mg/l    100   4   10.2      27.1 %   9.58     8.22 - 14.4
+  cl_f          l/h        50   4   9.74      27.8 %   10.6     6.79 - 12.1
+  auc_inf_obs   h⋅mg/l    100   4   10.3      26.9 %   9.68     8.33 - 14.5
   cmax          mg/l      100   4   1.87      10.6 %   1.79     1.75 - 2.19
   thalf         h         100   4   2.87      24.2 %   2.73     2.35 - 3.91
-  cl_f          l/h       100   4   9.84      27.1 %   10.6     6.94 - 12.2
-  auc_inf_obs   h⋅mg/l    200   4   20.4      26.0 %   19.3     16.6 - 28.6
+  cl_f          l/h       100   4   9.73      26.9 %   10.5     6.87 - 12.0
+  auc_inf_obs   h⋅mg/l    200   4   20.7      25.9 %   19.5     16.8 - 29.0
   cmax          mg/l      200   4   3.69      6.82 %   3.70     3.38 - 3.99
   thalf         h         200   4   2.89      25.9 %   2.75     2.33 - 4.05
-  cl_f          l/h       200   4   9.79      26.0 %   10.5     6.98 - 12.0
+  cl_f          l/h       200   4   9.68      25.9 %   10.4     6.90 - 11.9
 ```
 
 The same steps with the table built in place, the parameters printed and four more walk-throughs (bioequivalence, drug-drug interaction, steady state, dose proportionality) are in [Workflows](workflows.md). Continue with [Installation](installation.md), [Timecourses](timecourses.md) and [Non-compartmental analysis](nca.md), or browse the [Gallery](gallery.md), a figure and a snippet for every example of the repository.

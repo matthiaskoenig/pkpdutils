@@ -149,7 +149,15 @@ URINE_VARIABLES: frozenset[str] = frozenset(
 #: the curve extrapolated to infinity", `FLUCP` is `Fluctuation%`): the domain
 #: carries the value multiplied by 100 with the unit `%`
 PERCENT_VARIABLES: frozenset[str] = frozenset(
-    {"auc_extrap_fraction", "auc_back_extrap_fraction", "fluctuation"}
+    {
+        "auc_extrap_fraction",
+        "auc_extrap_fraction_pred",
+        "auc_back_extrap_fraction",
+        "auc_back_extrap_fraction_pred",
+        "aumc_extrap_fraction",
+        "aumc_extrap_fraction_pred",
+        "fluctuation",
+    }
 )
 
 #: `PKUNIT` spelling of the units an analysis derives, the canonical pint

@@ -14,7 +14,7 @@ from pkpdutils.nca import (
     TerminalPhase,
     nca_single,
 )
-from pkpdutils.units import parse_unit
+from pkpdutils.units import parse_unit, ureg
 
 REFERENCE = Path(__file__).parent.parent / "data" / "reference" / "nca_reference.json"
 CASES = json.loads(REFERENCE.read_text())
@@ -49,12 +49,58 @@ def to_timecourse(case: dict) -> Timecourse:
     )
 
 
+def expected_parameters(case: dict) -> dict:
+    """The reference parameters of a case, with the area before its first sample.
+
+    pkdb_analysis 0.3.1 started the area at the first sample. An extravascular
+    single dose is 0 at the dose, so `pkpdutils` inserts a zero there when the
+    first sample comes later, as Phoenix WinNonlin does: the areas gain the
+    triangle from the dose to the first sample, and the clearance and the
+    volume, which divide by the area to infinity, shrink by the same factor.
+    """
+    parameters = {name: dict(value) for name, value in case["parameters"].items()}
+    t0, c0 = next(
+        (t, c)
+        for t, c in zip(case["time"], case["concentration"], strict=True)
+        if c is not None
+    )
+    if t0 <= 0 or parameters["auc"]["magnitude"] is None:
+        return parameters
+    triangle = (
+        (0.5 * t0 * c0 * ureg(case["time_unit"]) * ureg(case["unit"]))
+        .to(parameters["auc"]["unit"])
+        .magnitude
+    )
+    parameters["auc"]["magnitude"] += triangle
+    aucinf = parameters["aucinf"]["magnitude"]
+    if aucinf is None:
+        return parameters
+    parameters["aucinf"]["magnitude"] = aucinf + triangle
+    for name in ("cl", "vd"):
+        parameters[name]["magnitude"] *= aucinf / (aucinf + triangle)
+    return parameters
+    triangle = (
+        (0.5 * t0 * c0 * ureg(case["time_unit"]) * ureg(case["unit"]))
+        .to(parameters["auc"]["unit"])
+        .magnitude
+    )
+    factor = parameters["aucinf"]["magnitude"] / (
+        parameters["aucinf"]["magnitude"] + triangle
+    )
+    parameters["auc"]["magnitude"] += triangle
+    parameters["aucinf"]["magnitude"] += triangle
+    parameters["cl"]["magnitude"] *= factor
+    parameters["vd"]["magnitude"] *= factor
+    return parameters
+
+
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_reference_case(case: dict) -> None:
     result = nca_single(to_timecourse(case), options=OPTIONS)
     quantities = result.to_quantities()
+    parameters = expected_parameters(case)
     for old, new in MAPPING.items():
-        expected = case["parameters"][old]
+        expected = parameters[old]
         actual = quantities[new]
         if expected["magnitude"] is None:
             assert np.isnan(actual.magnitude), f"{case['name']}: {new} should be NaN"

@@ -131,12 +131,19 @@ PARAMETER_UNITS: dict[str, str] = {
     "auc_inf_obs": "({unit}) * ({time})",
     "auc_inf_pred": "({unit}) * ({time})",
     "auc_extrap_fraction": "dimensionless",
+    "auc_extrap_fraction_pred": "dimensionless",
     "auc_back_extrap_fraction": "dimensionless",
+    "auc_back_extrap_fraction_pred": "dimensionless",
     "aumc_back_extrap_fraction": "dimensionless",
     "aumc_last": "({unit}) * ({time}) ** 2",
     "aumc_all": "({unit}) * ({time}) ** 2",
     "aumc_inf": "({unit}) * ({time}) ** 2",
+    "aumc_inf_pred": "({unit}) * ({time}) ** 2",
+    "aumc_extrap_fraction": "dimensionless",
+    "aumc_extrap_fraction_pred": "dimensionless",
     "mrt": "{time}",
+    "mrt_last": "{time}",
+    "mrt_pred": "{time}",
     "thalf_eff": "{time}",
     "lambda_z": "1 / ({time})",
     "lambda_z_stderr": "1 / ({time})",
@@ -150,10 +157,16 @@ PARAMETER_UNITS: dict[str, str] = {
     "thalf": "{time}",
     "cl": "({dose}) / (({unit}) * ({time}))",
     "cl_f": "({dose}) / (({unit}) * ({time}))",
+    "cl_pred": "({dose}) / (({unit}) * ({time}))",
+    "cl_f_pred": "({dose}) / (({unit}) * ({time}))",
     "vz": "({dose}) / ({unit})",
     "vz_f": "({dose}) / ({unit})",
+    "vz_pred": "({dose}) / ({unit})",
+    "vz_f_pred": "({dose}) / ({unit})",
     "vss": "({dose}) / ({unit})",
+    "vss_pred": "({dose}) / ({unit})",
     "auc_inf_dn": "(({unit}) * ({time})) / ({dose})",
+    "auc_inf_pred_dn": "(({unit}) * ({time})) / ({dose})",
     "cmax_dn": "({unit}) / ({dose})",
     "auc_last_dn": "(({unit}) * ({time})) / ({dose})",
     "auc_all_dn": "(({unit}) * ({time})) / ({dose})",
@@ -614,10 +627,11 @@ def compute_parameters(
         windows: the terminal window `(t_first, t_last)` of single rows
             `(N, 2)` in the times of the analysis, `NaN` for a row without one
             (`TerminalPhase.windows`, `sample_windows`)
-        single_dose: whether the rows are single dose curves. An infusion which
-            starts at the dose is 0 there, so a zero is inserted at the dose
-            time of a single dose row whose first sample comes later (the
-            `insert_point` call of the `IV_INFUSION` branch below, which
+        single_dose: whether the rows are single dose curves. An infusion
+            or an extravascular dose which starts at the dose is 0 there, so a
+            zero is inserted at the dose time of a single dose row whose first
+            sample comes later (the `insert_point` call of the `IV_INFUSION`
+            and `ORAL` branch below, which
             `_insert_dose_value` does for a partial area); the same row of a
             steady state interval starts at its trough and nothing is inserted
             (`pkpdutils.nca.steady_state.compute_steady_state` passes `False`)
@@ -707,10 +721,11 @@ def compute_parameters(
         tp_area, cp_area, n_area = insert_point(
             tp, cp, n_valid, np.where(insert, 0.0, np.nan), np.where(insert, c0, np.nan)
         )
-    elif route is Route.IV_INFUSION and single_dose:
-        # an infusion starts at 0 at its dose, so a curve whose first sample
-        # comes later starts at the dose with a zero, as Phoenix WinNonlin
-        # inserts it; a steady state interval starts at its trough instead
+    elif route in (Route.IV_INFUSION, Route.ORAL) and single_dose:
+        # an infusion and an extravascular dose start at 0 at the dose, so a
+        # curve whose first sample comes later starts at the dose with a zero,
+        # as Phoenix WinNonlin inserts it "for extravascular and infusion
+        # single dose"; a steady state interval starts at its trough instead
         with np.errstate(invalid="ignore"):
             at_dose = has_data & (tp[:, 0] > 0)
         tp_area, cp_area, n_area = insert_point(
@@ -766,10 +781,29 @@ def compute_parameters(
         clast_pred = np.exp(fit.intercept - lambda_z * tlast)
         auc_inf_pred = auc_last + clast_pred / lambda_z
         extrap = (auc_inf_obs - auc_last) / auc_inf_obs
+        extrap_pred = (auc_inf_pred - auc_last) / auc_inf_pred
         aumc_inf = aumc_last + clast * tlast / lambda_z + clast / (lambda_z * lambda_z)
-        mrt = aumc_inf / auc_inf_obs
-        if route is Route.IV_INFUSION and dose_duration is not None:
-            mrt = mrt - np.where(np.isnan(dose_duration), 0.0, dose_duration) / 2.0
+        # the same extrapolation from the predicted last value (Phoenix
+        # WinNonlin NCA, `AUMCINF_pred`)
+        aumc_inf_pred = (
+            aumc_last
+            + clast_pred * tlast / lambda_z
+            + clast_pred / (lambda_z * lambda_z)
+        )
+        aumc_extrap = (aumc_inf - aumc_last) / aumc_inf
+        aumc_extrap_pred = (aumc_inf_pred - aumc_last) / aumc_inf_pred
+        # MRT = AUMC / AUC, less half the duration of an infusion, whose drug
+        # enters the body on average at its midpoint (Gabrielsson & Weiner
+        # 2016, ch. 2.8); to the last measurable time, to infinity from the
+        # observed and from the predicted last value
+        half_duration = (
+            np.where(np.isnan(dose_duration), 0.0, dose_duration) / 2.0
+            if route is Route.IV_INFUSION and dose_duration is not None
+            else 0.0
+        )
+        mrt = aumc_inf / auc_inf_obs - half_duration
+        mrt_last = aumc_last / auc_last - half_duration
+        mrt_pred = aumc_inf_pred / auc_inf_pred - half_duration
         # the effective half-life, PKNCA `pk.calc.thalf.eff`, verbatim
         # `log(2)*mrt` (see the module docstring)
         thalf_eff = np.log(2.0) * mrt
@@ -802,10 +836,16 @@ def compute_parameters(
         "auc_inf_obs": auc_inf_obs,
         "auc_inf_pred": auc_inf_pred,
         "auc_extrap_fraction": extrap,
+        "auc_extrap_fraction_pred": extrap_pred,
         "aumc_last": aumc_last,
         "aumc_all": aumc_all,
         "aumc_inf": aumc_inf,
+        "aumc_inf_pred": aumc_inf_pred,
+        "aumc_extrap_fraction": aumc_extrap,
+        "aumc_extrap_fraction_pred": aumc_extrap_pred,
         "mrt": mrt,
+        "mrt_last": mrt_last,
+        "mrt_pred": mrt_pred,
         "thalf_eff": thalf_eff,
         "lambda_z": lambda_z,
         "lambda_z_stderr": fit.se_slope,
@@ -836,6 +876,9 @@ def compute_parameters(
             out["auc_back_extrap_fraction"] = np.where(
                 has_data, np.where(insert, area[:, 0], 0.0) / auc_inf_obs, nan
             )
+            out["auc_back_extrap_fraction_pred"] = np.where(
+                has_data, np.where(insert, area[:, 0], 0.0) / auc_inf_pred, nan
+            )
             out["aumc_back_extrap_fraction"] = np.where(
                 has_data, np.where(insert, moment[:, 0], 0.0) / aumc_inf, nan
             )
@@ -848,12 +891,20 @@ def compute_parameters(
         with np.errstate(divide="ignore", invalid="ignore"):
             cl = amount / auc_inf_obs
             vz = cl / lambda_z
+            # the same from the area extrapolated with the predicted last
+            # value (Phoenix WinNonlin NCA, `Cl_pred`, `Vz_pred`, `Vss_pred`)
+            cl_pred = amount / auc_inf_pred
+            vz_pred = cl_pred / lambda_z
             suffix = "" if route.is_iv else "_f"
             out[f"cl{suffix}"] = cl
             out[f"vz{suffix}"] = vz
+            out[f"cl{suffix}_pred"] = cl_pred
+            out[f"vz{suffix}_pred"] = vz_pred
             if route.is_iv:
                 out["vss"] = cl * mrt
+                out["vss_pred"] = cl_pred * mrt_pred
             out["auc_inf_dn"] = auc_inf_obs / amount
+            out["auc_inf_pred_dn"] = auc_inf_pred / amount
             out["cmax_dn"] = cmax / amount
     out.update(candidate_variables(fit.candidates, n_rows=n_rows))
     out["flags"] = flags

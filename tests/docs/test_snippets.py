@@ -4,8 +4,8 @@ Every ```python fence of a page of `docs/` is executed, in the order it
 appears and in one namespace per page, so that a fragment which uses the
 objects of the snippet above it runs as a reader would run it. The page runs
 in a subprocess with warnings as errors, in a temporary working directory
-with the data files of `docs/data/` next to it, so a snippet which reads or
-writes a file works and writes nothing into the repository.
+with the data files and directories of `docs/data/` next to it, so a snippet
+which reads or writes a file works and writes nothing into the repository.
 
 A fence whose first line is the comment `# not executed` is skipped: it is a
 fragment which names objects a page cannot build (the result of another page,
@@ -100,7 +100,10 @@ def test_snippets(name: str, tmp_path: Path) -> None:
     (tmp_path / "run_page.py").write_text(RUNNER, encoding="utf-8")
     if DATA_DIR.is_dir():
         for data in DATA_DIR.iterdir():
-            shutil.copy(data, tmp_path / data.name)
+            if data.is_dir():
+                shutil.copytree(data, tmp_path / data.name)
+            else:
+                shutil.copy(data, tmp_path / data.name)
     env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-W", "error", "run_page.py"],

@@ -136,15 +136,17 @@ def test_tail_of_every_preset() -> None:
         assert q["clast"].magnitude == pytest.approx(0.75)
 
     # the leading value at t = 0: dropped, imputed as 0 (M13A, PKanalix) or
-    # kept (Pumas), which is the only difference in the area to `tlast`
-    tail = dropped["auc_last"].magnitude
+    # kept (Pumas), which is the only difference in the area to `tlast`; the
+    # dropped value leaves the extravascular curve without a value at the
+    # dose, so the zero at the dose is inserted in its place
     triangle = 0.5 * 2.0 * 0.5
-    assert m13a["auc_last"].magnitude == pytest.approx(tail + triangle)
+    tail = m13a["auc_last"].magnitude - triangle
+    assert dropped["auc_last"].magnitude == pytest.approx(tail + triangle)
     assert pkanalix["auc_last"].magnitude == pytest.approx(tail + triangle)
     assert pumas["auc_last"].magnitude == pytest.approx(tail + 0.5 * (0.02 + 2.0) * 0.5)
     # `nan` drops both trailing values, so the area to the last observation is
     # the area to the last measurable one
-    assert dropped["auc_all"].magnitude == pytest.approx(tail)
+    assert dropped["auc_all"].magnitude == pytest.approx(dropped["auc_last"].magnitude)
     # M13A writes a zero at both trailing times: the trapezoid down to 0 and
     # nothing after it
     assert m13a["auc_all"].magnitude == pytest.approx(

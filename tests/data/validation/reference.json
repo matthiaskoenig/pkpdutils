@@ -70,7 +70,7 @@
   },
   "datasets": {
     "theoph": {
-      "file": "theoph.csv",
+      "file": "docs/data/benchmarks/theoph.csv",
       "n_subjects": 12,
       "subject_column": "Subject",
       "time_column": "Time",
@@ -84,7 +84,7 @@
       "dose_note": "The dataset gives the dose as 'Dose' in mg/kg together with the body weight 'Wt' in kg; 'Dose' * 'Wt' is 267.8 mg for subject 9 and between 318.6 and 320.7 mg for the other eleven. The comparators analysed every subject against a flat 320 mg, so the validation does the same; only cl_f, vz_f, cmax_dn and auc_inf_dn depend on the dose."
     },
     "indometh": {
-      "file": "indometh.csv",
+      "file": "docs/data/benchmarks/indometh.csv",
       "n_subjects": 6,
       "subject_column": "Subject",
       "time_column": "time",

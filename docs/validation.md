@@ -8,8 +8,8 @@ The comparison runs in the test suite (`tests/nca/test_validation.py`) and as a 
 
 | dataset | file | subjects | route | dose | concentrations | times |
 | --- | --- | --- | --- | --- | --- | --- |
-| theophylline | `tests/data/validation/theoph.csv` | 12 | oral | 320 mg | mg/L | 0 to 24.65 h, 11 samples |
-| indomethacin | `tests/data/validation/indometh.csv` | 6 | intravenous bolus, and the same profiles as a 0.25 h infusion | 25 mg | µg/mL | 0.25 to 8 h, 11 samples |
+| theophylline | `docs/data/benchmarks/theoph.csv` | 12 | oral | 320 mg | mg/L | 0 to 24.65 h, 11 samples |
+| indomethacin | `docs/data/benchmarks/indometh.csv` | 6 | intravenous bolus, and the same profiles as a 0.25 h infusion | 25 mg | µg/mL | 0.25 to 8 h, 11 samples |
 
 Both are the datasets `datasets::Theoph` and `datasets::Indometh` of R, copied verbatim from the [Rdatasets](https://vincentarelbundock.github.io/Rdatasets/) mirror; `tests/data/validation/README.md` names the source, the license (GPL-2 / GPL-3, as all of R) and the original studies. They are the two datasets the other tools publish their own validation against, which is the only reason to pick a theophylline study from 1994 and an indomethacin study from 1976.
 
@@ -17,7 +17,7 @@ Both are the datasets `datasets::Theoph` and `datasets::Indometh` of R, copied v
 
 ## The reference values
 
-No R installation was available, so every number is transcribed from a published source rather than computed here. Two sources are used.
+Every number of the reference file is transcribed from a published source rather than computed here. Two sources are used. [Benchmark datasets](benchmark_datasets.md) adds the other side: all eight scenarios of the WinNonlin suite, compared against the published tables as they are and against PKNCA and NonCompart run on the same data.
 
 **Phoenix WinNonlin 6.3 and 7.0**, through the validation report of the NonCompart R package (Han 2018). The report compares NonCompart against WinNonlin on exactly these two datasets and publishes the raw WinNonlin output as CSV files, one per dataset and trapezoidal rule, with 8 to 15 significant digits per number. Those CSV files are the reference of the five WinNonlin cases: `Final_Parameters_Pivoted_Theoph_Linear.csv`, `..._Theoph_Log.csv`, `..._Indometh_Linear.csv`, `..._Indometh_Log.csv` and `..._Indometh_Linear_Infusion.csv`, the last one the indomethacin profiles analysed as a 0.25 h infusion. They cover 24 parameters per subject of the theophylline dataset and 26 of the indomethacin one, which carries `c0`, the back extrapolated fraction and the clearance and volumes of an intravenous dose on top; the infusion case carries 24, since an infusion has no \(C_0\) to back-extrapolate.
 
@@ -53,7 +53,7 @@ from pkpdutils import (
     nca,
 )
 
-frame = pd.read_csv("tests/data/validation/theoph.csv")
+frame = pd.read_csv("docs/data/benchmarks/theoph.csv")
 frame["dose_amount"] = 320.0
 batch = Timecourses.from_dataframe(
     frame,
@@ -252,8 +252,7 @@ The tolerance of a WinNonlin number is the machine precision tolerance of 1e-6; 
 
 ## What is not covered
 
-- **Extravascular indomethacin.** The report also publishes a run of the indomethacin dataset as an extravascular dose. It is not compared: the bolus and the infusion run already cover the dataset, and the extravascular run adds no rule which the theophylline dataset does not exercise.
-- **The `pred` variants of the clearance, the volume and the mean residence time** (`Cl_pred`, `Vz_pred`, `Vss_pred`, `MRTINF_pred`, `AUMC_%Extrap_pred`) and `MRTlast`, which WinNonlin reports and `pkpdutils` does not. `auc_inf_pred` is reported and compared.
+- **Extravascular indomethacin, the log-down infusion and the `pred` variants.** The report also publishes a run of the indomethacin dataset as an extravascular dose and the infusion under the linear-up / log-down rule, and every table carries the predicted variants (`Cl_pred`, `Vz_pred`, `Vss_pred`, `MRTINF_pred`, `AUMC_%Extrap_pred`) and `MRTlast`. They are compared on [Benchmark datasets](benchmark_datasets.md), column by column against the published tables, rather than transcribed into the reference file. The extravascular run is the one scenario where an extravascular curve starts after its dose, and it found that `pkpdutils` up to 1.2.0 did not insert the zero at the dose there.
 - **Multiple dosing, steady state, urine and sparse sampling.** Both datasets are single dose plasma profiles with dense sampling. The steady state parameters are covered by `tests/nca/test_steady_state.py` and by the regression reference of `pkdb_analysis` 0.3.1 in `tests/data/reference/nca_reference.json`, not by a comparison against another tool.
 - **Values below the limit of quantification.** Neither dataset carries a limit of quantification, so no BLQ rule is exercised here; `tests/nca/test_blq.py` covers them against the written rules of the tools.
 

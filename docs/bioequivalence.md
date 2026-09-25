@@ -200,8 +200,8 @@ Average bioequivalence, 90 % intervals of the geometric mean ratio
 
   parameter     n_test   gmr      ci_low   ci_high   cv_intra   limits           bioequivalent
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  auc_inf_obs   12       93.2 %   92.2 %   94.2 %    1.46 %     80.0 - 125.0 %   True
-  auc_last      12       93.0 %   91.9 %   94.1 %    1.62 %     80.0 - 125.0 %   True
+  auc_inf_obs   12       93.0 %   92.0 %   94.0 %    1.47 %     80.0 - 125.0 %   True
+  auc_last      12       92.8 %   91.7 %   93.9 %    1.64 %     80.0 - 125.0 %   True
   cmax          12       81.9 %   79.3 %   84.6 %    4.39 %     80.0 - 125.0 %   False
 
 design crossover, 12 subjects, 10 df
@@ -475,7 +475,7 @@ print(
 ```
 
 ```text
-auc_inf_obs  gmr 101.50 % [ 92.37, 111.54] limits  80.00 - 125.00 % scaled False bioequivalent True
+auc_inf_obs  gmr 101.47 % [ 92.34, 111.50] limits  80.00 - 125.00 % scaled False bioequivalent True
 cmax         gmr 100.06 % [ 91.05, 109.95] limits  76.34 - 130.99 % scaled True bioequivalent True
 limits at CV 30 %, 40 %, 50 %: [(0.8, 1.25), (0.7462, 1.3402), (0.6984, 1.4319)]
 ```
@@ -503,7 +503,7 @@ for name, p in scaled.parameters.items():
 ```
 
 ```text
-auc_inf_obs  gmr 101.50 % scaled True criterion -0.0631 bioequivalent True
+auc_inf_obs  gmr 101.47 % scaled True criterion -0.0632 bioequivalent True
 cmax         gmr 100.06 % scaled True criterion -0.0641 bioequivalent True
 ```
 
@@ -543,7 +543,7 @@ limits 90.00 - 111.11 %, bioequivalent False
 criterion -0.0893, s_wT/s_wR upper 0.776, bioequivalent True
 ```
 
-The simulated drug is not a narrow therapeutic index drug at all, and the two rules disagree about it for exactly that reason: its interval of 92.37-111.54 % leaves the tightened EMA limits at the upper end, while the FDA criterion, which scales with a reference that varies by 36.7 %, passes easily and the test formulation is even less variable than the reference (the bound of \(s_{wT}/s_{wR}\) is 0.776, far below 2.500). A real narrow therapeutic index drug varies little, and then the two rules are close to each other.
+The simulated drug is not a narrow therapeutic index drug at all, and the two rules disagree about it for exactly that reason: its interval of 92.34-111.50 % leaves the tightened EMA limits at the upper end, while the FDA criterion, which scales with a reference that varies by 36.7 %, passes easily and the test formulation is even less variable than the reference (the bound of \(s_{wT}/s_{wR}\) is 0.776, far below 2.500). A real narrow therapeutic index drug varies little, and then the two rules are close to each other.
 
 ## tmax
 

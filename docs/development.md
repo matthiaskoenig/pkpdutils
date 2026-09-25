@@ -247,6 +247,13 @@ Every ` ```python ` block of the user guide and of [Workflows](workflows.md) fol
     uv run ruff format docs/
     ```
 
+`docs/data/` holds the files a snippet may read, the event table of the Quickstart and the directory `benchmarks/` of [Benchmark datasets](benchmark_datasets.md): the theophylline and indomethacin datasets, `scenarios.csv` with the settings of every scenario and the result tables of Phoenix WinNonlin, PKNCA and NonCompart. That page pastes no output by hand at all: every snippet is followed by the markers `<!-- output:start -->` and `<!-- output:end -->`, `scripts/benchmark_datasets.py` runs the snippets of the page and writes what each one prints between them, and `tests/docs/test_benchmark_datasets.py` fails when the page is stale. The PKNCA and NonCompart tables are written by `scripts/benchmark_datasets.R`, which needs R with both packages:
+
+```bash
+Rscript scripts/benchmark_datasets.R          # docs/data/benchmarks/{pknca,noncompart}/, versions.csv
+uv run python scripts/benchmark_datasets.py   # rewrites the output of docs/benchmark_datasets.md
+```
+
 The walk-throughs of [Workflows](workflows.md) are the longest of these snippets: they simulate their study in the first lines so that a reader can paste them anywhere, and the figures they save are the figures of the examples of the same data.
 
 ### Files for agents { #files-for-agents }

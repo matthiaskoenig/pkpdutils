@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import xarray as xr
 
 from pkpdutils import (
     AUCMethod,
@@ -114,9 +113,11 @@ def batch_of(
     0.25 h infusion of the same data.
     """
     dataset = _document()["datasets"][dataset_id]
-    frame = pd.read_csv(DATA_DIR / dataset["file"])
+    frame = pd.read_csv(REPO_DIR / dataset["file"])
     frame["dose_amount"] = dose
-    batch = Timecourses.from_dataframe(
+    if duration is not None:
+        frame["dose_duration"] = float(duration)
+    return Timecourses.from_dataframe(
         frame,
         sample=[dataset["subject_column"]],
         time_unit=dataset["time_unit"],
@@ -125,15 +126,10 @@ def batch_of(
         value=dataset["value_column"],
         dose_amount="dose_amount",
         dose_unit=dataset["dose_unit"],
+        dose_duration=None if duration is None else "dose_duration",
         route=Route(route or dataset["route"]),
         substance=dataset["substance"],
     )
-    if duration is None:
-        return batch
-    ds = batch.ds.copy()
-    ds["dose_duration"] = xr.full_like(ds["dose_amount"], float(duration))
-    ds["dose_duration"].attrs = {"units": dataset["time_unit"]}
-    return Timecourses(ds)
 
 
 def options_of(spec: dict[str, Any]) -> NCAOptions:

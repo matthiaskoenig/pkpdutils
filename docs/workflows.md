@@ -102,18 +102,18 @@ and the parameter table, one row per parameter and dose group:
 
 | parameter | unit | dose | n | geomean | geocv |
 | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 50 | 4 | 5.07 | 28.0 % |
+| auc_inf_obs | hour * milligram / liter | 50 | 4 | 5.13 | 27.8 % |
 | cmax | milligram / liter | 50 | 4 | 0.925 | 14.9 % |
 | thalf | hour | 50 | 4 | 2.86 | 23.5 % |
-| cl_f | liter / hour | 50 | 4 | 9.86 | 28.0 % |
-| auc_inf_obs | hour * milligram / liter | 100 | 4 | 10.2 | 27.1 % |
+| cl_f | liter / hour | 50 | 4 | 9.74 | 27.8 % |
+| auc_inf_obs | hour * milligram / liter | 100 | 4 | 10.3 | 26.9 % |
 | cmax | milligram / liter | 100 | 4 | 1.87 | 10.6 % |
 | thalf | hour | 100 | 4 | 2.87 | 24.2 % |
-| cl_f | liter / hour | 100 | 4 | 9.84 | 27.1 % |
-| auc_inf_obs | hour * milligram / liter | 200 | 4 | 20.4 | 26.0 % |
+| cl_f | liter / hour | 100 | 4 | 9.73 | 26.9 % |
+| auc_inf_obs | hour * milligram / liter | 200 | 4 | 20.7 | 25.9 % |
 | cmax | milligram / liter | 200 | 4 | 3.69 | 6.82 % |
 | thalf | hour | 200 | 4 | 2.89 | 25.9 % |
-| cl_f | liter / hour | 200 | 4 | 9.79 | 26.0 % |
+| cl_f | liter / hour | 200 | 4 | 9.68 | 25.9 % |
 
 The exposure triples with the dose while the clearance and the half-life stay where they are, which is what a linear dose range looks like; `tmax` in the same table would leave the two geometric columns empty, since a time read from the sampling grid carries no geometric statistics. `study_curves.png` is the concentration-time figure of the report, the mean of every dose group with the band of its standard deviation and the individual curves faint behind it, linear and semi-logarithmic:
 
@@ -190,8 +190,8 @@ plot_ratio(be).savefig("bioequivalence.png", dpi=120)
 
 | parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 12 | 12 | 93.2 % | 92.2 % | 94.2 % | 90 % | 1.46 % | 80.0 - 125.0 % | True |
-| auc_last | hour * milligram / liter | 12 | 12 | 93.0 % | 91.9 % | 94.1 % | 90 % | 1.62 % | 80.0 - 125.0 % | True |
+| auc_inf_obs | hour * milligram / liter | 12 | 12 | 93.0 % | 92.0 % | 94.0 % | 90 % | 1.47 % | 80.0 - 125.0 % | True |
+| auc_last | hour * milligram / liter | 12 | 12 | 92.8 % | 91.7 % | 93.9 % | 90 % | 1.64 % | 80.0 - 125.0 % | True |
 | cmax | milligram / liter | 12 | 12 | 81.9 % | 79.3 % | 84.6 % | 90 % | 4.39 % | 80.0 - 125.0 % | False |
 
 `design: crossover | bioequivalent: False`: the exposure of the two formulations is equivalent, the peak is not, and a study is bioequivalent only when every parameter is. The figure puts the three ratios against the acceptance limits:

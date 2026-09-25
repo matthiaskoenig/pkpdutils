@@ -515,7 +515,7 @@ def test_plot_nca_annotates_the_parameters_on_the_plot() -> None:
     )
     assert any(t.startswith("clast = ") and "tlast = 24 hr" in t for t in texts)
     # the areas carry their values, the tail its share
-    assert any(t.startswith("AUC(0-tlast) = 22.6") and "h⋅mg/l" in t for t in texts)
+    assert any(t.startswith("AUC(0-tlast) = 22.7") and "h⋅mg/l" in t for t in texts)
     assert any(t.startswith("AUC(tlast-inf) = ") and "%)" in t for t in texts)
     # the intervals of the uncertainty analysis are in the annotation
     assert any("Cmax = 2.9 [" in t for t in texts)
@@ -865,3 +865,30 @@ def test_the_partial_annotation_stays_inside_the_panel() -> None:
         text = next(t for t in fig.axes[0].texts if t.get_text().startswith(name))
         assert text.get_horizontalalignment() == align
         matplotlib.pyplot.close(fig)
+
+
+@pytest.mark.parametrize("route", [Route.ORAL, Route.IV_BOLUS])
+def test_the_area_starts_at_the_dose(route: Route) -> None:
+    # the first sample is at 0.25 h: the shaded area starts at the dose with
+    # the value the analysis inserts there, 0 or the back-extrapolated C0
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
+    value = 10.0 * np.exp(-0.3 * t) - (
+        8.0 * np.exp(-2.0 * t) if route is Route.ORAL else 0.0
+    )
+    tc = Timecourse(
+        time=t,
+        value=value,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=route),
+        substance="drug",
+    )
+    result = nca_single(tc)
+    fig = plot_nca(tc, result)
+    area = next(c for c in fig.axes[0].collections if c.get_label() == "AUC(0-tlast)")
+    vertices = np.asarray(area.get_paths()[0].vertices, dtype=float)
+    assert vertices[:, 0].min() == 0.0
+    start = 0.0 if route is Route.ORAL else float(result["c0"])
+    assert vertices[:, 1].max() >= start
+    at_dose = vertices[vertices[:, 0] == 0.0, 1]
+    assert np.isclose(at_dose, start).any()

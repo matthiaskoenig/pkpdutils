@@ -97,8 +97,8 @@ for name in ("lambda_z", "thalf", "amount_recovered", "percent_recovered", "vol_
 max_rate          5.8 mg/h
 tmax_rate         3 h
 mid_pt_last       30 h
-aurc_last         49.14 mg
-aurc_inf_obs      49.97 mg
+aurc_last         51.59 mg
+aurc_inf_obs      52.42 mg
 lambda_z          0.1414 1/h
 thalf             4.901 h
 amount_recovered  54.3 mg

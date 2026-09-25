@@ -617,6 +617,80 @@ def test_from_dataframe_builds_protocols_from_dose_rows() -> None:
     )
 
 
+def test_from_dataframe_reads_the_infusion_duration() -> None:
+    df = pd.DataFrame(
+        {
+            "subject": ["s1", "s1", "s2", "s2"],
+            "time": [1.0, 2.0, 1.0, 2.0],
+            "value": [2.0, 1.0, 3.0, 1.5],
+            "dose_amount": 100.0,
+            "duration": [0.5, 0.5, 0.25, 0.25],
+        }
+    )
+    batch = Timecourses.from_dataframe(
+        df,
+        sample=["subject"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="dose_amount",
+        dose_unit="mg",
+        dose_duration="duration",
+        route=Route.IV_INFUSION,
+    )
+    assert batch.dosing_of(subject="s1") == Dosing(
+        amounts=[100], times=[0], durations=[0.5], unit="mg", route=Route.IV_INFUSION
+    )
+    s2 = batch.dosing_of(subject="s2")
+    assert s2 is not None and s2.durations is not None
+    assert s2.durations.tolist() == [0.25]
+    assert batch.ds["dose_duration"].attrs["units"] == "hr"
+
+
+def test_from_dataframe_reads_one_duration_per_dose() -> None:
+    rows = []
+    for t, (dt, dur) in zip(
+        [1.0, 2.0, 13.0], [(0.0, 1.0), (0.0, 1.0), (12.0, 2.0)], strict=True
+    ):
+        rows.append({"time": t, "value": 1.0, "amt": 10.0, "dose_time": dt, "dur": dur})
+    batch = Timecourses.from_dataframe(
+        pd.DataFrame(rows).assign(subject="s1"),
+        sample=["subject"],
+        time_unit="hr",
+        unit="mg/l",
+        dose_amount="amt",
+        dose_unit="mg",
+        dose_time="dose_time",
+        dose_duration="dur",
+        route=Route.IV_INFUSION,
+    )
+    s1 = batch.dosing_of(subject="s1")
+    assert s1 is not None and s1.durations is not None
+    assert s1.durations.tolist() == [1.0, 2.0]
+
+
+def test_from_dataframe_duration_must_be_constant_per_sample() -> None:
+    df = pd.DataFrame(
+        {
+            "subject": ["s1", "s1"],
+            "time": [1.0, 2.0],
+            "value": [2.0, 1.0],
+            "amt": 100.0,
+            "dur": [0.5, 1.0],
+        }
+    )
+    with pytest.raises(ValueError, match="sample s1: the dose duration"):
+        Timecourses.from_dataframe(
+            df,
+            sample=["subject"],
+            time_unit="hr",
+            unit="mg/l",
+            dose_amount="amt",
+            dose_unit="mg",
+            dose_duration="dur",
+            route=Route.IV_INFUSION,
+        )
+
+
 def test_single_dose_batch_layout_is_one_column() -> None:
     time = np.array([1.0, 2.0])
     batch = Timecourses.from_arrays(
