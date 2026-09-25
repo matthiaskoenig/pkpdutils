@@ -89,6 +89,10 @@ V_z = \frac{\mathrm{CL}}{\lambda_z}, \qquad
 V_\mathrm{ss} = \mathrm{CL} \cdot \mathrm{MRT}
 \]
 
+The same with \(\hat C_\mathrm{last}\) in place of \(C_\mathrm{last}\) gives the predicted variants (`aumc_inf_pred`, `mrt_pred`, `cl_pred`, `vz_pred`, `vss_pred`, the extrapolated fractions with the suffix `_pred`), and \(\mathrm{MRT}_\mathrm{last} = \mathrm{AUMC}_{0\text{-}t_\mathrm{last}} / \mathrm{AUC}_{0\text{-}t_\mathrm{last}} - T_\mathrm{inf}/2\) (`mrt_last`) is the mean residence time over the observed curve.
+
+The area starts at the dose. A curve whose first sample comes after it gets the value at the dose inserted: \(C_0\) after a bolus, 0 after an infusion and after an extravascular dose, both of which start from nothing (Phoenix WinNonlin, "for extravascular and infusion single dose a concentration of zero is inserted at the dose time"). The inserted point enters the areas and never the terminal regression.
+
 \(C_0\) after a bolus by log-linear back-extrapolation of the first two points \((t_1, C_1)\), \((t_2, C_2)\): \(C_0 = \exp\!\left(\ln C_1 - t_1 \frac{\ln C_2 - \ln C_1}{t_2 - t_1}\right)\); the point \((0, C_0)\) enters the areas.
 
 Steady state over the last complete interval \([t_K, t_K + \tau]\) (the values at its bounds are interpolated, or, after a bolus, back-extrapolated at the start and log-linearly regressed at the end when a post-dose sample lies at it):
@@ -148,19 +152,21 @@ Superposition predicts the multiple dose curve as the sum of the single dose cur
 | `auc_last` | \(\mathrm{AUC}_{0\text{-}t_\mathrm{last}}\) | area to the last measurable value | value·time | |
 | `auc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area to the last observation, the trailing zeros and the values a BLQ rule imputed included; equal to `auc_last` when the last observation is positive[^phoenix] | value·time | |
 | `auc_inf_obs`, `auc_inf_pred` | \(\mathrm{AUC}_{0\text{-}\infty}\) | area extrapolated with the observed or predicted \(C_\mathrm{last}\) | value·time | \(\lambda_z\) |
-| `auc_extrap_fraction` | | \((\mathrm{AUC}_{0\text{-}\infty} - \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) / \mathrm{AUC}_{0\text{-}\infty}\) | – | \(\lambda_z\) |
-| `auc_back_extrap_fraction`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes, 0 with a sample at the dose | – | `IV_BOLUS` |
-| `aumc_last`, `aumc_all`, `aumc_inf` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation[^phoenix] and to infinity | value·time² | \(\lambda_z\) for `_inf` |
-| `mrt` | \(\mathrm{MRT}\) | mean residence time | time | \(\lambda_z\) |
+| `auc_extrap_fraction`, `auc_extrap_fraction_pred` | | \((\mathrm{AUC}_{0\text{-}\infty} - \mathrm{AUC}_{0\text{-}t_\mathrm{last}}) / \mathrm{AUC}_{0\text{-}\infty}\), with the observed or the predicted \(\mathrm{AUC}_{0\text{-}\infty}\) | – | \(\lambda_z\) |
+| `auc_back_extrap_fraction`, `auc_back_extrap_fraction_pred`, `aumc_back_extrap_fraction` | | share of \(\mathrm{AUC}_{0\text{-}\infty}\) (observed or predicted; of \(\mathrm{AUMC}_{0\text{-}\infty}\)) the segment from the dose to the first sample contributes, 0 with a sample at the dose | – | `IV_BOLUS` |
+| `aumc_last`, `aumc_all`, `aumc_inf`, `aumc_inf_pred` | \(\mathrm{AUMC}\) | first moment of the curve, to the last measurable value, to the last observation[^phoenix] and to infinity, extrapolated with the observed or the predicted \(C_\mathrm{last}\) | value·time² | \(\lambda_z\) for `_inf` |
+| `aumc_extrap_fraction`, `aumc_extrap_fraction_pred` | | \((\mathrm{AUMC}_{0\text{-}\infty} - \mathrm{AUMC}_{0\text{-}t_\mathrm{last}}) / \mathrm{AUMC}_{0\text{-}\infty}\), observed or predicted[^phoenix] | – | \(\lambda_z\) |
+| `mrt`, `mrt_pred` | \(\mathrm{MRT}\) | mean residence time, from the observed or the predicted extrapolation | time | \(\lambda_z\) |
+| `mrt_last` | \(\mathrm{MRT}_\mathrm{last}\) | mean residence time over the curve to \(t_\mathrm{last}\), \(\mathrm{AUMC}_{0\text{-}t_\mathrm{last}} / \mathrm{AUC}_{0\text{-}t_\mathrm{last}}\)[^phoenix] | time | |
 | `thalf_eff` | \(t_{1/2,\mathrm{eff}}\) | effective half-life, \(\ln 2 \cdot \mathrm{MRT}\)[^pknca] | time | \(\lambda_z\) |
 | `lambda_z` | \(\lambda_z\) | terminal rate constant | 1/time | ≥ 3 terminal points |
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | \(\lambda_z\) |
 | `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | diagnostics of the regression (`lambda_z_t_first` and `lambda_z_t_last` are the first and the last point of the window; `lambda_z_stderr` is the standard error of the slope) | –, time, time, –, –, – (\(\ln C\)), 1/time | \(\lambda_z\) |
 | `lambda_z_span` | | half-lives the terminal phase covers, \((t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\); below 2 the row is flagged `SPAN_LOW` | – | \(\lambda_z\) |
-| `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular) | dose/(value·time) → l/h | dose, \(\lambda_z\), single dose analysis |
-| `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\), single dose analysis |
-| `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose, single dose analysis |
-| `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose, single dose analysis |
+| `cl`, `cl_f`, `cl_pred`, `cl_f_pred` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance (`_f`: extravascular; `_pred`: from `auc_inf_pred`) | dose/(value·time) → l/h | dose, \(\lambda_z\), single dose analysis |
+| `vz`, `vz_f`, `vz_pred`, `vz_f_pred` | \(V_z\), \(V_z/F\) | terminal volume of distribution | dose/value → l | dose, \(\lambda_z\), single dose analysis |
+| `vss`, `vss_pred` | \(V_\mathrm{ss}\) | steady state volume of distribution | dose/value → l | intravenous dose, single dose analysis |
+| `auc_inf_dn`, `auc_inf_pred_dn`, `cmax_dn` | | dose normalized exposure and peak | value·time/dose, value/dose | dose, single dose analysis |
 | `x_dn` | | any parameter per dose, from `NCAResult.dose_normalized` ("Dose normalization" below) | unit of `x`/dose | dose |
 | `auc_tau` | \(\mathrm{AUC}_{0\text{-}\tau}\) | area over the last complete dosing interval | value·time | protocol (≥ 2 doses) or `tau` |
 | `cmin_ss`, `cmax_ss`, `ctrough`, `cavg` | \(C_\mathrm{min,ss}\), \(C_\mathrm{max,ss}\), \(C_\mathrm{trough}\), \(C_\mathrm{avg}\) | minimum, maximum, value at the end, average over the last interval | value | protocol (≥ 2 doses) or `tau` |
@@ -216,8 +222,8 @@ print(result.flags())
 ```
 
 ```text
-23.08206165659116 h⋅mg/l
-4.332368637072965 l/h 4.477500250658255 h
+23.194561656591162 h⋅mg/l
+4.311355458256016 l/h 4.477500250658255 h
 []
 ```
 
@@ -293,10 +299,10 @@ print(
 ```text
 ('dose', 'individual') hour
  dose individual  auc_inf_obs     cmax    thalf      cl_f flags
- 50.0         s1     5.407557 0.890678 3.023747  9.246319
- 50.0         s2     4.121210 0.874586 2.414383 12.132360
- 50.0         s3     7.287995 1.146958 3.888391  6.860598
- 50.0         s4     4.078572 0.818410 2.371655 12.259193
+ 50.0         s1     5.459071 0.890678 3.023747  9.159068
+ 50.0         s2     4.174637 0.874586 2.414383 11.977090
+ 50.0         s3     7.362814 1.146958 3.888391  6.790882
+ 50.0         s4     4.133924 0.818410 2.371655 12.095046
 ```
 
 `result.ds` is the `xarray.Dataset` behind it, one variable per parameter over `(dose, individual)`, and `result.flag_table()` is one boolean column per flag. `plot_nca_grid(batch, result, ncols=4)` draws the diagnostic panel of every sample of this batch:
@@ -344,7 +350,7 @@ for name, rules in (
 ```
 
 ```text
-drop (default) tlast=  8.0 auc_last=13.632 auc_all=13.632 n_points=3
+drop (default) tlast=  8.0 auc_last=14.132 auc_all=14.132 n_points=3
 ich_m13a       tlast=  8.0 auc_last=14.132 auc_all=15.632 n_points=3
 pkanalix       tlast=  8.0 auc_last=14.132 auc_all=15.366 n_points=3
 pumas          tlast=  8.0 auc_last=14.137 auc_all=15.328 n_points=3
@@ -368,8 +374,8 @@ print(normalized["auc_last_dn"].attrs["units"])
 
 ```text
  dose individual  auc_last_dn  cmax_dn
- 50.0         s1     0.107610 0.017814
- 50.0         s2     0.082334 0.017492
+ 50.0         s1     0.108641 0.017814
+ 50.0         s2     0.083402 0.017492
 hour / liter
 ```
 
@@ -482,9 +488,9 @@ print(areas["auc_0_2"].attrs["units"])
 
 ```text
  dose individual  auc_0_2  auc_0_72  auc_last                flags
- 50.0         s1 1.451162  5.459001  5.380521 PARTIAL_EXTRAPOLATED
- 50.0         s2 1.408312  4.174724  4.116689 PARTIAL_EXTRAPOLATED
- 50.0         s3 1.780409  7.362280  7.175732 PARTIAL_EXTRAPOLATED
+ 50.0         s1 1.451162  5.459001  5.432035 PARTIAL_EXTRAPOLATED
+ 50.0         s2 1.408312  4.174724  4.170117 PARTIAL_EXTRAPOLATED
+ 50.0         s3 1.780409  7.362280  7.250551 PARTIAL_EXTRAPOLATED
 hour * milligram / liter
 ```
 
@@ -547,21 +553,21 @@ geometric = result.summary_table(
 
 | parameter | unit | dose | n | mean | sd | cv | geomean | geocv | median | min | max |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| auc_inf_obs | hour * milligram / liter | 50.0 | 4 | 5.22 | 1.51 | 28.9 % | 5.07 | 28.0 % | 4.76 | 4.08 | 7.29 |
+| auc_inf_obs | hour * milligram / liter | 50.0 | 4 | 5.28 | 1.52 | 28.7 % | 5.13 | 27.8 % | 4.82 | 4.13 | 7.36 |
 | cmax | milligram / liter | 50.0 | 4 | 0.933 | 0.146 | 15.7 % | 0.925 | 14.9 % | 0.883 | 0.818 | 1.15 |
 | tmax | hour | 50.0 | 4 | 1.25 | | | | | 1.00 | 1.00 | 2.00 |
 | thalf | hour | 50.0 | 4 | 2.92 | 0.708 | 24.2 % | 2.86 | 23.5 % | 2.72 | 2.37 | 3.89 |
-| cl_f | liter / hour | 50.0 | 4 | 10.1 | 2.58 | 25.5 % | 9.86 | 28.0 % | 10.7 | 6.86 | 12.3 |
-| auc_inf_obs | hour * milligram / liter | 100.0 | 4 | 10.4 | 2.92 | 27.9 % | 10.2 | 27.1 % | 9.58 | 8.22 | 14.4 |
+| cl_f | liter / hour | 50.0 | 4 | 10.0 | 2.54 | 25.4 % | 9.74 | 27.8 % | 10.6 | 6.79 | 12.1 |
+| auc_inf_obs | hour * milligram / liter | 100.0 | 4 | 10.6 | 2.93 | 27.7 % | 10.3 | 26.9 % | 9.68 | 8.33 | 14.5 |
 | cmax | milligram / liter | 100.0 | 4 | 1.88 | 0.209 | 11.1 % | 1.87 | 10.6 % | 1.79 | 1.75 | 2.19 |
 | tmax | hour | 100.0 | 4 | 1.00 | | | | | 1.00 | 1.00 | 1.00 |
 | thalf | hour | 100.0 | 4 | 2.93 | 0.727 | 24.8 % | 2.87 | 24.2 % | 2.73 | 2.35 | 3.91 |
-| cl_f | liter / hour | 100.0 | 4 | 10.1 | 2.51 | 24.9 % | 9.84 | 27.1 % | 10.6 | 6.94 | 12.2 |
-| auc_inf_obs | hour * milligram / liter | 200.0 | 4 | 21.0 | 5.62 | 26.8 % | 20.4 | 26.0 % | 19.3 | 16.6 | 28.6 |
+| cl_f | liter / hour | 100.0 | 4 | 9.98 | 2.46 | 24.7 % | 9.73 | 26.9 % | 10.5 | 6.87 | 12.0 |
+| auc_inf_obs | hour * milligram / liter | 200.0 | 4 | 21.2 | 5.67 | 26.8 % | 20.7 | 25.9 % | 19.5 | 16.8 | 29.0 |
 | cmax | milligram / liter | 200.0 | 4 | 3.69 | 0.250 | 6.78 % | 3.69 | 6.82 % | 3.70 | 3.38 | 3.99 |
 | tmax | hour | 200.0 | 4 | 1.00 | | | | | 1.00 | 1.00 | 1.00 |
 | thalf | hour | 200.0 | 4 | 2.97 | 0.791 | 26.6 % | 2.89 | 25.9 % | 2.75 | 2.33 | 4.05 |
-| cl_f | liter / hour | 200.0 | 4 | 10.0 | 2.39 | 23.9 % | 9.79 | 26.0 % | 10.5 | 6.98 | 12.0 |
+| cl_f | liter / hour | 200.0 | 4 | 9.90 | 2.35 | 23.8 % | 9.68 | 25.9 % | 10.4 | 6.90 | 11.9 |
 
 The statistics are `n`, `mean`, `sd`, `se`, `cv`, `geomean`, `geocv`, `median`, `q25`, `q75`, `min`, `max` and `range`; the flags stay out of the table and are reported by `flag_table`. A parameter read from the sampling grid, such as \(t_\mathrm{max}\), carries no standard deviation and no geometric statistics, so those cells stay empty. `by` groups the samples by a coordinate along the dimension the statistics are taken over, which is what a study with one sample dimension and a dose group coordinate needs, see the first walk-through of [Workflows](workflows.md).
 
@@ -588,13 +594,13 @@ print(methods_line(options, result))
 
 ```text
   parameter                     unit  dose n geomean  geocv median  mean    sd   min  max
-auc_inf_obs hour * milligram / liter  50.0 4    5.07 28.0 %   4.76  5.22  1.51  4.08 7.29
+auc_inf_obs hour * milligram / liter  50.0 4    5.13 27.8 %   4.82  5.28  1.52  4.13 7.36
        cmax        milligram / liter  50.0 4   0.925 14.9 %  0.883 0.933 0.146 0.818 1.15
 individual  auc_last  auc_inf_obs    ratio  below
-        s1 10.808676    10.864122 0.994896  False
-        s2  8.213553     8.223094 0.998840  False
-        s3 14.182827    14.410426 0.984206  False
-        s4  8.278163     8.287248 0.998904  False
+        s1 10.912890    10.968336 0.994945  False
+        s2  8.317943     8.327483 0.998854  False
+        s3 14.319160    14.546759 0.984354  False
+        s4  8.387341     8.396427 0.998918  False
 True
 The areas were computed with the linear up / logarithmic down trapezoidal method. The terminal log-linear phase was selected as the points of the largest adjusted coefficient of determination and estimated by log-linear regression using 3 to 7 data points.
 ```

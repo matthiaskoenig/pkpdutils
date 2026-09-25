@@ -438,6 +438,24 @@ def _draw_partial_area(
     )
 
 
+def _value_at_dose(values: Mapping[str, float], route: Route) -> float:
+    """The value the analysis inserts at the dose of a single dose curve.
+
+    The back-extrapolated `c0` after a bolus, 0 after an infusion and after an
+    extravascular dose (`pkpdutils.nca.nca.compute_parameters`).
+
+    Args:
+        values: the parameters of the sample
+        route: route of the dose
+
+    Returns:
+        The value, `NaN` when the analysis estimated none.
+    """
+    if route is Route.IV_BOLUS:
+        return float(values.get("c0", np.nan))
+    return 0.0
+
+
 def draw_nca_panel(
     timecourse: Timecourse,
     values: Mapping[str, float],
@@ -543,10 +561,28 @@ def draw_nca_panel(
     auc_label = "AUC(0-tau)" if steady_state else "AUC(0-tlast)"
     if np.isfinite(auc_bound):
         area = ok & (t <= auc_bound)
+        x_area, c_area = t[area], c[area]
+        at_dose = (
+            _value_at_dose(values, tc.dose.route)
+            if not steady_state and tc.dose is not None and len(x_area)
+            else np.nan
+        )
+        if np.isfinite(at_dose) and x_area[0] > 0.0:
+            # the area starts at the dose with the value the analysis inserted
+            # there, which the data does not show
+            ax.plot(
+                [0.0, x_area[0]],
+                [at_dose, c_area[0]],
+                color=style.data_color,
+                linestyle=":",
+                linewidth=1.0,
+            )
+            x_area = np.concatenate([[0.0], x_area])
+            c_area = np.concatenate([[at_dose], c_area])
         ax.fill_between(
-            t[area],
+            x_area,
             0.0,
-            c[area],
+            c_area,
             color=style.auc_color,
             alpha=style.alpha + 0.1,
             linewidth=0,
@@ -557,7 +593,6 @@ def draw_nca_panel(
             auc_text = _quantity_text(values, units, auc_name)
             if auc_text:
                 # inside the area, at a third of its width and height
-                x_area, c_area = t[area], c[area]
                 x_text = 0.55 * auc_bound
                 top = float(np.interp(x_text, x_area, c_area))
                 bottom = ax.get_ylim()[0]

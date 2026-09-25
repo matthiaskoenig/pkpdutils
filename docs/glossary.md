@@ -8,8 +8,8 @@ The names used for the variables of the result datasets, with their symbols and 
 | `auc_all`, `aumc_all` | \(\mathrm{AUC}_\mathrm{all}\) | area (and moment) to the last observation, the trailing zeros and the values a BLQ rule imputed included | value·time, value·time² | [NCA](nca.md) |
 | `auc_inf_obs`, `auc_inf_pred` | \(\mathrm{AUC}_{0\text{-}\infty}\) | area extrapolated to infinity, observed or predicted last value | value·time | [NCA](nca.md) |
 | `auc_extrap_fraction` | | extrapolated fraction of \(\mathrm{AUC}_{0\text{-}\infty}\) | – | [NCA](nca.md) |
-| `aumc_last`, `aumc_inf` | \(\mathrm{AUMC}\) | area under the first moment curve | value·time² | [NCA](nca.md) |
-| `mrt` | \(\mathrm{MRT}\) | mean residence time | time | [NCA](nca.md) |
+| `aumc_last`, `aumc_inf`, `aumc_inf_pred` | \(\mathrm{AUMC}\) | area under the first moment curve | value·time² | [NCA](nca.md) |
+| `mrt`, `mrt_pred`, `mrt_last` | \(\mathrm{MRT}\) | mean residence time, to infinity (observed or predicted) or to the last measurable value | time | [NCA](nca.md) |
 | `thalf_eff` | \(t_{1/2,\mathrm{eff}}\) | effective half-life, \(\ln 2 \cdot \mathrm{MRT}\) | time | [NCA](nca.md) |
 | `cmax`, `tmax` | \(C_\mathrm{max}\), \(t_\mathrm{max}\) | maximum and its time | value, time | [NCA](nca.md) |
 | `cmin`, `tmin` | \(C_\mathrm{min}\), \(t_\mathrm{min}\) | minimum and its time | value, time | [NCA](nca.md) |
@@ -24,9 +24,9 @@ The names used for the variables of the result datasets, with their symbols and 
 | `thalf` | \(t_{1/2}\) | terminal half-life | time | [NCA](nca.md) |
 | `lambda_z_n_points`, `lambda_z_t_first`, `lambda_z_t_last`, `lambda_z_r2`, `lambda_z_r2_adj`, `lambda_z_intercept`, `lambda_z_stderr` | | regression diagnostics (`lambda_z_t_first`, `lambda_z_t_last`: first and last point of the terminal window; `lambda_z_stderr`: standard error of the slope of the terminal regression) | –, time, time, –, –, –, 1/time | [NCA](nca.md) |
 | `lambda_z_span` | | half-lives the terminal phase covers, \((t_\mathrm{last} - t_\mathrm{first}) / t_{1/2}\); below 2 the sample is flagged `SPAN_LOW` | – | [NCA](nca.md) |
-| `cl`, `cl_f` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed | l/h | [NCA](nca.md) |
-| `vz`, `vz_f` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
-| `vss` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
+| `cl`, `cl_f`, `cl_pred`, `cl_f_pred` | \(\mathrm{CL}\), \(\mathrm{CL}/F\) | clearance, relative to the fraction absorbed (`_pred`: from the predicted area) | l/h | [NCA](nca.md) |
+| `vz`, `vz_f`, `vz_pred`, `vz_f_pred` | \(V_z\), \(V_z/F\) | terminal volume of distribution | l | [NCA](nca.md) |
+| `vss`, `vss_pred` | \(V_\mathrm{ss}\) | steady state volume of distribution | l | [NCA](nca.md) |
 | `auc_inf_dn`, `cmax_dn` | | dose normalized exposure and maximum | value·time/dose, value/dose | [NCA](nca.md) |
 | `x_dn` | | any parameter `x` per dose, from `NCAResult.dose_normalized` (`auc_last_dn`, `auc_all_dn`, `auc_tau_dn`, `cavg_dn`, `cmax_ss_dn`, `c0_dn`, ...) | unit of `x`/dose | [NCA](nca.md) |
 | `dose_amount` | \(D\) | dose amount of a sample, the coordinate of a result the dose normalized variables divide by | dose | [NCA](nca.md) |

@@ -332,3 +332,85 @@ def test_the_terminal_window_of_an_infusion_starts_after_the_infusion() -> None:
         options=options,
     )
     assert float(bolus["lambda_z_t_first"]) == 0.5
+
+
+def test_an_extravascular_dose_starts_at_zero_at_the_dose() -> None:
+    # the first sample at 0.5 h is already measurable: the area gains the
+    # triangle from (0, 0) to it, as Phoenix WinNonlin inserts a zero at the dose
+    # of an extravascular single dose
+    t = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
+    c = np.array([2.0, 3.0, 2.5, 1.5, 0.6, 0.25])
+    late = nca_single(oral_curve(t, c), options=LINEAR).to_quantities()
+    early = nca_single(
+        oral_curve(np.concatenate([[0.0], t]), np.concatenate([[0.0], c])),
+        options=LINEAR,
+    ).to_quantities()
+    for name in ("auc_last", "auc_all", "aumc_last", "auc_inf_obs", "mrt", "cl_f"):
+        assert late[name].magnitude == pytest.approx(early[name].magnitude), name
+    assert late["auc_last"].magnitude > 0.5 * 0.5 * 2.0
+    assert late["tlag"].magnitude == 0.0
+    assert late["tmax"].magnitude == early["tmax"].magnitude
+
+
+def test_predicted_variants_follow_the_predicted_last_value() -> None:
+    # a noisy bolus curve: the regression misses the last value, so the
+    # predicted and the observed variants differ
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0])
+    noise = np.array([1.0, 1.02, 0.97, 1.03, 0.98, 1.04, 0.95, 1.06])
+    tc = Timecourse(
+        time=t,
+        value=10.0 * np.exp(-0.5 * t) * noise,
+        time_unit="hr",
+        unit="mg/l",
+        dose=Dose(amount=100, unit="mg", route=Route.IV_BOLUS),
+        substance="drug",
+    )
+    r = {
+        k: v.magnitude
+        for k, v in nca_single(tc, options=LINEAR).to_quantities().items()
+    }
+    lam, tlast, pred = r["lambda_z"], r["tlast"], r["clast_pred"]
+    assert pred != pytest.approx(r["clast"])
+    aumc_inf_pred = r["aumc_last"] + pred * tlast / lam + pred / lam**2
+    assert r["aumc_inf_pred"] == pytest.approx(aumc_inf_pred)
+    assert r["auc_extrap_fraction_pred"] == pytest.approx(
+        (r["auc_inf_pred"] - r["auc_last"]) / r["auc_inf_pred"]
+    )
+    assert r["aumc_extrap_fraction"] == pytest.approx(
+        (r["aumc_inf"] - r["aumc_last"]) / r["aumc_inf"]
+    )
+    assert r["aumc_extrap_fraction_pred"] == pytest.approx(
+        (aumc_inf_pred - r["aumc_last"]) / aumc_inf_pred
+    )
+    assert r["mrt_last"] == pytest.approx(r["aumc_last"] / r["auc_last"])
+    assert r["mrt_pred"] == pytest.approx(aumc_inf_pred / r["auc_inf_pred"])
+    assert r["cl_pred"] == pytest.approx(100.0 / r["auc_inf_pred"])
+    assert r["vz_pred"] == pytest.approx(r["cl_pred"] / lam)
+    assert r["vss_pred"] == pytest.approx(r["cl_pred"] * r["mrt_pred"])
+    assert r["auc_inf_pred_dn"] == pytest.approx(r["auc_inf_pred"] / 100.0)
+    assert r["auc_back_extrap_fraction_pred"] == pytest.approx(
+        r["auc_back_extrap_fraction"] * r["auc_inf_obs"] / r["auc_inf_pred"]
+    )
+    assert "cl_f_pred" not in r
+
+
+def test_predicted_variants_of_an_extravascular_dose() -> None:
+    t = np.array([0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
+    c = np.array([0.0, 2.0, 3.0, 2.5, 1.5, 0.6, 0.25])
+    r = {
+        k: v.magnitude
+        for k, v in nca_single(oral_curve(t, c), options=LINEAR).to_quantities().items()
+    }
+    assert r["cl_f_pred"] == pytest.approx(100.0 / r["auc_inf_pred"])
+    assert r["vz_f_pred"] == pytest.approx(r["cl_f_pred"] / r["lambda_z"])
+    assert "cl_pred" not in r
+    assert "vss_pred" not in r
+
+
+def test_mrt_last_of_an_infusion_is_corrected_by_half_the_duration() -> None:
+    t = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 8.0])
+    r = nca_single(infusion_curve(t, duration=0.25), options=LINEAR).to_quantities()
+    ratio = r["aumc_last"].magnitude / r["auc_last"].magnitude
+    assert r["mrt_last"].magnitude == pytest.approx(ratio - 0.125)
+    ratio_pred = r["aumc_inf_pred"].magnitude / r["auc_inf_pred"].magnitude
+    assert r["mrt_pred"].magnitude == pytest.approx(ratio_pred - 0.125)

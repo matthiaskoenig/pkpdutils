@@ -1,0 +1,9 @@
+scenario,dataset,subject,time,conc,time_unit,unit,dose,dose_unit,route,duration,auc_method,exclude_cmax,winnonlin
+theoph-linear,theoph.csv,Subject,Time,conc,h,mg/L,320,mg,oral,,linear,true,Final_Parameters_Pivoted_Theoph_Linear.csv
+theoph-linear-log,theoph.csv,Subject,Time,conc,h,mg/L,320,mg,oral,,linear_log,true,Final_Parameters_Pivoted_Theoph_Log.csv
+indometh-bolus-linear,indometh.csv,Subject,time,conc,h,mg/L,25,mg,iv_bolus,,linear,false,Final_Parameters_Pivoted_Indometh_Linear.csv
+indometh-bolus-linear-log,indometh.csv,Subject,time,conc,h,mg/L,25,mg,iv_bolus,,linear_log,false,Final_Parameters_Pivoted_Indometh_Log.csv
+indometh-infusion-linear,indometh.csv,Subject,time,conc,h,mg/L,25,mg,iv_infusion,0.25,linear,false,Final_Parameters_Pivoted_Indometh_Linear_Infusion.csv
+indometh-infusion-linear-log,indometh.csv,Subject,time,conc,h,mg/L,25,mg,iv_infusion,0.25,linear_log,false,Final_Parameters_Pivoted_Indometh_Log_Infusion.csv
+indometh-oral-linear,indometh.csv,Subject,time,conc,h,mg/L,25,mg,oral,,linear,true,Final_Parameters_Pivoted_Indometh_Linear_Wrong_Extravascular.csv
+indometh-oral-linear-log,indometh.csv,Subject,time,conc,h,mg/L,25,mg,oral,,linear_log,true,Final_Parameters_Pivoted_Indometh_Log_Wrong_Extravascular.csv

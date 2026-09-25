@@ -1,10 +1,10 @@
 # Validation data
 
-The datasets and the published reference values `tests/nca/test_validation.py` and `scripts/validation.py` compare the non-compartmental analysis against. The page [`docs/validation.md`](../../../docs/validation.md) explains the comparison, the option mapping between the tools and the known differences; this file names where every file came from and under which license.
+The published reference values `tests/nca/test_validation.py` and `scripts/validation.py` compare the non-compartmental analysis against, and the origin of the two datasets they read. The datasets live in `docs/data/benchmarks/`, next to the complete output of Phoenix WinNonlin, PKNCA and NonCompart on them which [`docs/benchmark_datasets.md`](../../../docs/benchmark_datasets.md) compares against, so that the snippets of the documentation can read them. The page [`docs/validation.md`](../../../docs/validation.md) explains the comparison, the option mapping between the tools and the known differences; this file names where every file came from and under which license.
 
 ## The datasets
 
-| file | dataset | subjects | columns |
+| file in `docs/data/benchmarks/` | dataset | subjects | columns |
 | --- | --- | --- | --- |
 | `theoph.csv` | `datasets::Theoph` of R, the theophylline study | 12 | `Subject`, `Wt` (kg), `Dose` (mg/kg), `Time` (h), `conc` (mg/L) |
 | `indometh.csv` | `datasets::Indometh` of R, the indomethacin study | 6 | `Subject`, `time` (h), `conc` (µg/mL) |
@@ -45,7 +45,7 @@ The report validates the NonCompart R package against Phoenix WinNonlin on these
 
 The report states the settings of every run: `tblNCA(Theoph, "Subject", "Time", "conc", dose=320, concUnit="mg/L")` with `down="Log"` for the mixed rule, `tblNCA(Indometh, "Subject", "time", "conc", dose=25, adm="Bolus", concUnit="mg/L", R2ADJ=0.8)`, again with `down="Log"` for the mixed rule, and `tblNCA(Indometh, "Subject", "time", "conc", dose=25, adm="Infusion", dur=0.25, concUnit="mg/L", R2ADJ=0.8)` for the infusion run, which the case `indometh-winnonlin-linear-infusion` reproduces with `Route.IV_INFUSION` and a dose duration of 0.25 h. The WinNonlin columns are mapped onto the variables of `pkpdutils` one to one; the percentages (`AUC_%Extrap_obs`, `AUC_%Back_Ext_obs`) are stored as the fractions `pkpdutils` reports. The report's files are retrieved on 2026-09-16 and carry 8 to 15 significant digits per number.
 
-The report also publishes a run of the indomethacin dataset as an extravascular dose. It is not used, see the "What is not covered" section of `docs/validation.md`.
+The report also publishes a run of the indomethacin dataset as an extravascular dose and the infusion under the linear up / log down rule. They are not transcribed here: all eight tables of the report are copied unchanged into `docs/data/benchmarks/winnonlin/` and compared on the page of the benchmark datasets.
 
 ### PKNCA
 
@@ -59,4 +59,4 @@ The vignette runs `pk.nca` on `datasets::Theoph` with the PKNCA defaults (`auc.m
 
 The vignette prints no per-subject clearance, volume or mean residence time, so the reference file carries none for PKNCA.
 
-No R installation was used: every number of this directory is transcribed from the sources above.
+No R installation was used for this directory: every number of `reference.json` is transcribed from the sources above. The PKNCA and NonCompart tables of `docs/data/benchmarks/` are computed by `scripts/benchmark_datasets.R`.

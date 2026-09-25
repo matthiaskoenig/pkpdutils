@@ -1077,15 +1077,16 @@ def _frame_doses(
     dose_unit: str | None,
     dose_time: str | None,
     route: Route | None,
+    dose_duration: str | None = None,
 ) -> dict[str, Any]:
     """The padded dose arrays of the samples of a long data frame.
 
     Without a `dose_time` column a sample carries one dose at time 0 and the
-    amount must be constant over its rows. With a `dose_time` column every
-    distinct `(dose_time, dose_amount)` pair of a sample is one dose of its
-    protocol; rows whose dose columns are `NaN` are observations only. The
-    checks are the ones `Dosing` makes on a single protocol, applied to every
-    sample at once.
+    amount (and the infusion duration) must be constant over its rows. With a
+    `dose_time` column every distinct `(dose_time, dose_amount)` pair of a
+    sample is one dose of its protocol, with the duration of its rows; rows
+    whose dose columns are `NaN` are observations only. The checks are the
+    ones `Dosing` makes on a single protocol, applied to every sample at once.
 
     Args:
         df: the long frame.
@@ -1097,6 +1098,7 @@ def _frame_doses(
         dose_unit: unit of the doses.
         dose_time: name of the dose time column, 0 by default.
         route: route of the doses.
+        dose_duration: name of the infusion duration column, none by default.
 
     Returns:
         The `dose` mapping of `Timecourses.from_arrays`.
@@ -1104,9 +1106,9 @@ def _frame_doses(
     Raises:
         ValueError: if `dose_unit` or `route` is missing, if a dose column
             holds a value which is not a number, if a sample has no dose or the
-            dose is not constant per sample (without `dose_time`), if a dose
-            time of a sample carries several amounts, or if an amount is not
-            finite or negative.
+            dose or its duration is not constant per sample (without
+            `dose_time`), if a dose time of a sample carries several amounts or
+            durations, or if an amount is not finite or negative.
     """
     if dose_unit is None or route is None:
         raise ValueError("'dose_unit' and 'route' are required with 'dose_amount'")
@@ -1114,25 +1116,41 @@ def _frame_doses(
     # a value which is not a number is an error in both branches: it would
     # otherwise become a missing dose and drop the record from the protocol
     amount_column = _numeric_column(df, dose_amount, codes=codes, labels=labels)
+    duration_column = (
+        None
+        if dose_duration is None
+        else _numeric_column(df, dose_duration, codes=codes, labels=labels)
+    )
     if dose_time is None:
-        column = amount_column
-        grouped = column.groupby(codes, sort=True)
-        distinct = grouped.nunique(dropna=True).reindex(range(n_samples)).to_numpy()
-        if (distinct != 1).any():
-            i = int(np.argmax(distinct != 1))
-            found = column[codes == i].dropna().unique()
-            raise ValueError(
-                f"sample {labels[i]}: the dose must be constant per sample, "
-                f"found {found}"
+
+        def per_sample(column: pd.Series, what: str) -> np.ndarray:
+            """The one value of a column every sample carries, `(n_samples, 1)`."""
+            grouped = column.groupby(codes, sort=True)
+            distinct = grouped.nunique(dropna=True).reindex(range(n_samples)).to_numpy()
+            if (distinct != 1).any():
+                i = int(np.argmax(distinct != 1))
+                found = column[codes == i].dropna().unique()
+                raise ValueError(
+                    f"sample {labels[i]}: the {what} must be constant per sample, "
+                    f"found {found}"
+                )
+            return (
+                grouped.first()
+                .reindex(range(n_samples))
+                .to_numpy(dtype=np.float64)
+                .reshape(n_samples, 1)
             )
-        amounts = (
-            grouped.first()
-            .reindex(range(n_samples))
-            .to_numpy(dtype=np.float64)
-            .reshape(n_samples, 1)
-        )
+
+        amounts = per_sample(amount_column, "dose")
         _check_dose_amounts(amounts, labels)
-        return {"amount": amounts, "unit": dose_unit, "time": np.zeros((n_samples, 1))}
+        single: dict[str, Any] = {
+            "amount": amounts,
+            "unit": dose_unit,
+            "time": np.zeros((n_samples, 1)),
+        }
+        if duration_column is not None:
+            single["duration"] = per_sample(duration_column, "dose duration")
+        return single
 
     pairs = pd.DataFrame(
         {
@@ -1143,6 +1161,8 @@ def _frame_doses(
             "amount": amount_column.to_numpy(),
         }
     ).dropna()
+    if duration_column is not None:
+        pairs["duration"] = duration_column.to_numpy()[pairs.index]
     pairs = pairs.drop_duplicates().sort_values(
         ["sample", "time", "amount"], kind="stable"
     )
@@ -1168,7 +1188,12 @@ def _frame_doses(
             f"{amounts[i, valid]} at {times[i, valid]}"
         )
     _check_dose_amounts(amounts, labels)
-    return {"amount": amounts, "unit": dose_unit, "time": times}
+    protocol: dict[str, Any] = {"amount": amounts, "unit": dose_unit, "time": times}
+    if duration_column is not None:
+        durations = np.full((n_samples, n_dose), np.nan)
+        durations[row, column] = pairs["duration"].to_numpy()
+        protocol["duration"] = durations
+    return protocol
 
 
 def _check_sample_times(
@@ -2600,6 +2625,7 @@ class Timecourses:
         dose_amount: str | None = None,
         dose_unit: str | None = None,
         dose_time: str | None = None,
+        dose_duration: str | None = None,
         route: Route | str | None = None,
         substance: str = "substance",
         tissue: str | None = None,
@@ -2639,6 +2665,9 @@ class Timecourses:
                 distinct `(dose_time, dose_amount)` pair of a sample is one
                 dose of its protocol, rows with `NaN` dose columns are
                 observations only
+            dose_duration: name of the column with the duration of an
+                infusion (`Route.IV_INFUSION`) in `time_unit`, constant per
+                sample without `dose_time` and one per dose with it
             route: route of the doses, required with `dose_amount`, a `Route`
                 or a string it coerces (`"oral"`, `"IV_BOLUS"`)
             substance: name of the substance or effect
@@ -2730,6 +2759,7 @@ class Timecourses:
                 dose_amount=dose_amount,
                 dose_unit=dose_unit,
                 dose_time=dose_time,
+                dose_duration=dose_duration,
                 route=route,
             )
 

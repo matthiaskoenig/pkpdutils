@@ -1,6 +1,6 @@
 # Data formats
 
-Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and the field uses a handful of table layouts: the event record of NONMEM and Monolix, the two tables of PKNCA, and the CDISC ADaM ADNCA dataset. `pkpdutils.io` reads every one of them into a `Timecourses` batch and writes every one of them back, so a study read from any of the three formats runs through the same non-compartmental analysis and is handed on in the format the next step asks for. `pkpdutils.cdisc` writes the parameters of the analysis as the CDISC `PP` domain.
+Pharmacokinetic data is exchanged as tables, not as `Timecourse` objects, and the field uses a handful of table layouts: the event record of NONMEM and Monolix, the two tables of PKNCA, and the CDISC ADaM ADNCA dataset. `pkpdutils.io` reads every one of them into a `Timecourses` batch and writes every one of them back, so a study read from any of the three formats runs through the same non-compartmental analysis and is handed on in the format the next step asks for. `pkpdutils.cdisc` writes the parameters of the analysis as the CDISC `PP` domain, and `pkpdutils.crosswalk` writes and reads them in the result tables of Phoenix WinNonlin, PKNCA and NonCompart ("The result tables of other tools" below).
 
 ## Concepts
 
@@ -319,16 +319,30 @@ print(pp.loc[pp["PPTESTCD"].isin(["CMAX", "AUCLST"]), columns].to_string(index=F
 ```text
 USUBJID PPTESTCD                   PPTEST  PPCAT      PPSCAT PPORRES PPORRESU
      S1     CMAX                     Cmax PARENT SINGLE DOSE     4.2    ng/mL
-     S1   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 25.2631  h*ng/mL
+     S1   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 27.3631  h*ng/mL
      S2     CMAX                     Cmax PARENT SINGLE DOSE       4    ng/mL
-     S2   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 23.4855  h*ng/mL
+     S2   AUCLST AUC to Last Nonzero Conc PARENT SINGLE DOSE 25.4855  h*ng/mL
      S1     CMAX                     Cmax   META SINGLE DOSE     2.1    ng/mL
-     S1   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 12.6315  h*ng/mL
+     S1   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 13.6815  h*ng/mL
      S2     CMAX                     Cmax   META SINGLE DOSE       2    ng/mL
-     S2   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 11.7428  h*ng/mL
+     S2   AUCLST AUC to Last Nonzero Conc   META SINGLE DOSE 12.7428  h*ng/mL
 ```
 
 `spec="ADaM"` adds the analysis variables `PARAMCD`, `PARAM`, `AVAL` and `AVALU` of an `ADPP` dataset and leaves `DOMAIN` out, `usubjid` maps the labels of the batch to the identifiers of the study, and `write_pp(result, path, ...)` writes the csv. The reporting units of the domain come from the result, so a sponsor asking for `mL/min` gets them by converting the result first, see [Units](units.md).
+
+## The result tables of other tools
+
+A result compared against, or handed on to, another tool is wanted in the table that tool writes. `pkpdutils.crosswalk` holds the names of every parameter in Phoenix WinNonlin, PKNCA and NonCompart and writes a result in their layouts: `to_winnonlin` the "Final Parameters Pivoted" table of Phoenix (one row per subject, `AUCINF_obs`, `Cl_F_obs`, the extrapolated fractions in percent), `to_pknca_results` the long table of `as.data.frame(pk.nca(...))` (one row per subject and parameter, `PPTESTCD` and `PPORRES`) and `to_noncompart` the table of `NonCompart::tblNCA`, whose columns are the CDISC codes. The `write_*` functions write the same tables as csv files, and the `read_*` functions read a table of the tool back into the variables of `pkpdutils`, with the percentages as fractions, so that a published result compares against `NCAResult.to_dataframe` column by column:
+
+```python
+from pkpdutils.crosswalk import read_winnonlin, to_pknca_results, to_winnonlin
+
+phoenix = to_winnonlin(result)
+long = to_pknca_results(result)
+back = read_winnonlin(phoenix)
+```
+
+[Benchmark datasets](benchmark_datasets.md) uses them to compare `pkpdutils` against the published output of Phoenix WinNonlin and against PKNCA and NonCompart, parameter by parameter.
 
 ## What is not read
 

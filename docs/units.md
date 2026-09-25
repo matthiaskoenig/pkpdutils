@@ -48,8 +48,8 @@ print(nca(batch, options=options).units("cl_f"))
 ```
 
 ```text
-liter / hour 2343.76696402188
-milliliter / minute 39062.782733698004
+liter / hour 2325.782438663154
+milliliter / minute 38763.0406443859
 milliliter / minute
 ```
 

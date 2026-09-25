@@ -126,11 +126,11 @@ print(f"se   {delta.to_quantities()['auc_inf_obs_se']:~P} (delta)")
 ```
 
 ```text
-auc  19.99379796863043 h⋅mg/l
-se   0.5510537013864025 h⋅mg/l
-ci   18.977328445090134 h⋅mg/l - 21.062905318509465 h⋅mg/l
-sd   1.762755309648389 h⋅mg/l
-se   0.5480678838283282 h⋅mg/l (delta)
+auc  20.468797968630433 h⋅mg/l
+se   0.5528011615788205 h⋅mg/l
+ci   19.457701487836186 h⋅mg/l - 21.548631339792216 h⋅mg/l
+sd   1.771977691454522 h⋅mg/l
+se   0.5507979713871599 h⋅mg/l (delta)
 ```
 
 The bootstrap and the delta method agree on the standard error of an area, which is linear in the points; the standard deviation over the individuals is about \(\sqrt{10}\) times the standard error of the mean, the two scales the concepts above describe.
@@ -186,9 +186,9 @@ print(area.values.round(3), area.attrs["units"])
 
 ```text
  auc_inf_obs  auc_inf_obs_sd  auc_inf_obs_se  auc_inf_obs_geocv  auc_inf_obs_n   n
-   12.822918        3.908277        1.381785           0.287253            8.0 8.0
+   13.415418        3.927342        1.388525            0.27569            8.0 8.0
   parameter                     unit n mean   sd     cv geomean  geocv median  min  max
-auc_inf_obs hour * milligram / liter 8 12.8 3.91 30.5 %    12.4 28.7 %   11.0 9.20 20.4
+auc_inf_obs hour * milligram / liter 8 13.4 3.93 29.3 %    13.0 27.6 %   11.6 9.80 21.1
       thalf                     hour 8 3.79 1.00 26.5 %    3.68 24.9 %   3.28 2.98 5.72
 [7.872 6.731 7.344 8.679 8.781 7.204 9.88  7.364] hour * milligram / liter
 ```

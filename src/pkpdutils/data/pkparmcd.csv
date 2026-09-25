@@ -23,9 +23,14 @@ auc_partial,AUCINT,AUC from T1 to T2,
 auc_inf_obs,AUCIFO,AUC Infinity Obs,
 auc_inf_pred,AUCIFP,AUC Infinity Pred,
 auc_extrap_fraction,AUCPEO,AUC %Extrapolation Obs,
+auc_extrap_fraction_pred,AUCPEP,AUC %Extrapolation Pred,
 auc_back_extrap_fraction,AUCPBEO,AUC %Back Extrapolation Obs,
+auc_back_extrap_fraction_pred,AUCPBEP,AUC %Back Extrapolation Pred,
 aumc_last,AUMCLST,AUMC to Last Nonzero Conc,
 aumc_inf,AUMCIFO,AUMC Infinity Obs,
+aumc_inf_pred,AUMCIFP,AUMC Infinity Pred,
+aumc_extrap_fraction,AUMCPEO,AUMC % Extrapolation Obs,
+aumc_extrap_fraction_pred,AUMCPEP,AUMC % Extrapolation Pred,
 lambda_z,LAMZ,Lambda z,
 lambda_z_r2,R2,R Squared,
 lambda_z_r2_adj,R2ADJ,R Squared Adjusted,
@@ -38,12 +43,24 @@ thalf_eff,EFFHL,Effective Half-Life,
 mrt,MRTEVIFO,MRT Extravasc Infinity Obs,oral
 mrt,MRTIBIFO,MRT IV Bolus Infinity Obs,iv_bolus
 mrt,MRTICIFO,MRT IV Cont Inf Infinity Obs,iv_infusion
+mrt_last,MRTEVLST,MRT Extravasc to Last Nonzero Conc,oral
+mrt_last,MRTIBLST,MRT IV Bolus to Last Nonzero Conc,iv_bolus
+mrt_last,MRTICLST,MRT IV Cont Inf to Last Nonzero Conc,iv_infusion
+mrt_pred,MRTEVIFP,MRT Extravasc Infinity Pred,oral
+mrt_pred,MRTIBIFP,MRT IV Bolus Infinity Pred,iv_bolus
+mrt_pred,MRTICIFP,MRT IV Cont Inf Infinity Pred,iv_infusion
 cl,CLO,Total CL Obs,
 cl_f,CLFO,Total CL Obs by F,
+cl_pred,CLP,Total CL Pred,
+cl_f_pred,CLFP,Total CL Pred by F,
 vz,VZO,Vz Obs,
 vz_f,VZFO,Vz Obs by F,
+vz_pred,VZP,Vz Pred,
+vz_f_pred,VZFP,Vz Pred by F,
 vss,VSSO,Vol Dist Steady State Obs,
+vss_pred,VSSP,Vol Dist Steady State Pred,
 auc_inf_dn,AUCIFOD,AUC Infinity Obs Norm by Dose,
+auc_inf_pred_dn,AUCIFPD,AUC Infinity Pred Norm by Dose,
 auc_last_dn,AUCLSTD,AUC to Last Nonzero Conc Norm by Dose,
 auc_all_dn,AUCALLD,AUC All Norm by Dose,
 auc_tau_dn,AUCTAUD,AUC Over Dosing Interval Norm by Dose,
