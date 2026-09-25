@@ -2,7 +2,7 @@
 
 Every figure of this page is written by one of the [examples](https://github.com/matthiaskoenig/pkpdutils/tree/develop/examples) of the repository. An example is a module of the `examples` package and is run from the root of a checkout with `python -m examples.<name>`; it writes its figures into the working directory and never opens a window. The figures shown here are rendered by `uv run python scripts/render_examples.py`.
 
-The snippet of a card is the core of its example. It runs from the root of a checkout, where the data of the example comes from its module (`from examples.<name> import ...`); the card links to the full source and to the page of the user guide which explains the method.
+The snippet of a card is the core of its example. It runs from the root of a checkout, where the data of the example comes from its module (`from examples.<name> import ...`); the card links to the full source and to the page of the core functionality which explains the method.
 
 <div class="grid cards" markdown>
 

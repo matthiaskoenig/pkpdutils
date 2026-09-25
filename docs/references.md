@@ -1,6 +1,6 @@
 # References
 
-`pkpdutils` implements the standard methods of pharmacokinetic data analysis. These are the textbooks, guidances and publications behind them; cite them when you report an analysis, and cite `pkpdutils` itself as described in [Home](index.md#how-to-cite). Every user guide page cites the entries it builds on.
+`pkpdutils` implements the standard methods of pharmacokinetic data analysis. These are the textbooks, guidances and publications behind them; cite them when you report an analysis, and cite `pkpdutils` itself as described in [Home](index.md#how-to-cite). Every page of the core functionality cites the entries it builds on.
 
 ## Textbooks
 
