@@ -229,7 +229,7 @@ A page only embeds a figure an example writes, so the committed images and the p
 
 ### Snippets of the documentation
 
-Every ` ```python ` block of the user guide and of [Workflows](workflows.md) follows two rules:
+Every ` ```python ` block of the pages of the core functionality, of [Data formats](formats.md), of [Workflows](workflows.md) and of the validation follows two rules:
 
 - **It runs.** The first block of the usage section of a page is self-contained (its imports, its data, the call and the output it prints) and runs from the root of the repository with warnings as errors:
 

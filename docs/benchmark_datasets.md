@@ -10,16 +10,16 @@ Every table on this page is the printed output of the code above it. `scripts/be
 
 `docs/data/benchmarks/scenarios.csv` records every setting of a scenario next to its data, since NCA is not uniquely defined and a difference in a setting looks like a difference in the result:
 
-| scenario | dataset | subjects | route | dose | trapezoidal rule | peak in the terminal phase |
-| --- | --- | --- | --- | --- | --- | --- |
-| `theoph-linear` | theophylline | 12 | oral | 320 mg | linear | excluded |
-| `theoph-linear-log` | theophylline | 12 | oral | 320 mg | linear up / log down | excluded |
-| `indometh-bolus-linear` | indomethacin | 6 | intravenous bolus | 25 mg | linear | included |
-| `indometh-bolus-linear-log` | indomethacin | 6 | intravenous bolus | 25 mg | linear up / log down | included |
-| `indometh-infusion-linear` | indomethacin | 6 | 0.25 h infusion | 25 mg | linear | included |
-| `indometh-infusion-linear-log` | indomethacin | 6 | 0.25 h infusion | 25 mg | linear up / log down | included |
-| `indometh-oral-linear` | indomethacin | 6 | oral | 25 mg | linear | excluded |
-| `indometh-oral-linear-log` | indomethacin | 6 | oral | 25 mg | linear up / log down | excluded |
+| scenario | data | route | trapezoid | peak in \(\lambda_z\) |
+| --- | --- | --- | --- | --- |
+| theoph-linear | theophylline, 12 subjects, 320 mg | oral | linear | excluded |
+| theoph-linear-log | theophylline, 12 subjects, 320 mg | oral | linear up / log down | excluded |
+| indometh-bolus-linear | indomethacin, 6 subjects, 25 mg | bolus | linear | included |
+| indometh-bolus-linear-log | indomethacin, 6 subjects, 25 mg | bolus | linear up / log down | included |
+| indometh-infusion-linear | indomethacin, 6 subjects, 25 mg | 0.25 h infusion | linear | included |
+| indometh-infusion-linear-log | indomethacin, 6 subjects, 25 mg | 0.25 h infusion | linear up / log down | included |
+| indometh-oral-linear | indomethacin, 6 subjects, 25 mg | oral | linear | excluded |
+| indometh-oral-linear-log | indomethacin, 6 subjects, 25 mg | oral | linear up / log down | excluded |
 
 In every scenario the terminal phase is the best fit: the window of at least three points with the largest adjusted \(R^2\), where a window with more points wins within 0.0001. The theophylline profiles start with a sample at the dose. The indomethacin profiles start at 0.25 h, so every tool has to decide what the curve does before its first sample. After a bolus it back-extrapolates \(C_0\) from the first two samples. After an infusion or an extravascular dose it inserts a zero at the dose. The last two scenarios treat the intravenous indomethacin data as an extravascular dose. That makes no sense pharmacologically, but it is the one scenario of the suite where an extravascular curve starts after its dose.
 
