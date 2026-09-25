@@ -18,7 +18,7 @@ pytest                                   # all tests, in parallel with pytest-xd
 pytest -n 0                              # in one process, e.g. for --pdb
 pytest tests/test_units.py               # single file
 pytest tests/test_units.py::test_parse_unit  # single test
-tox r -e py3.14                          # single tox env (py3.13, py3.14 available)
+tox r -e py3.14                          # single tox env (py3.13, py3.14, py3.15 available)
 tox run-parallel                         # full matrix + ty
 
 # lint / format / types
