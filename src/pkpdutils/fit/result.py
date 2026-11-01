@@ -61,7 +61,7 @@ class FitResult(ParameterResult):
     them.
     """
 
-    flag_type: ClassVar[type[FitFlag]] = FitFlag
+    flag_type = FitFlag
     statistic_variables: ClassVar[frozenset[str]] = frozenset(
         {
             "cost",
