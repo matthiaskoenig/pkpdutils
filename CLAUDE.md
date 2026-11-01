@@ -4,7 +4,7 @@ This file provides guidance when working with code in this repository.
 
 ## Project
 
-`pkpdutils` is a python library for the pharmacokinetic and pharmacodynamic analysis of timecourses and parameters: non-compartmental analysis, uncertainty propagation, curve fitting, statistics on parameters (tests, bioequivalence, drug-drug interactions, meta-analysis) and figures. Pure library, no CLI entry points. Requires python >= 3.13, packaged with hatchling (version is read from `src/pkpdutils/__init__.py`). Runtime dependencies are `numpy`, `scipy`, `pandas`, `xarray`, `pint`, `pydantic`, `matplotlib` and `rich`. It was `pkdb_analysis` until 0.3.1.
+`pkpdutils` is a python library for the pharmacokinetic and pharmacodynamic analysis of timecourses and parameters: non-compartmental analysis, uncertainty propagation, curve fitting, statistics on parameters (tests, bioequivalence, drug-drug interactions, meta-analysis) and figures. Pure library, no CLI entry points. Requires python >= 3.13, packaged with hatchling (version is read from `src/pkpdutils/__init__.py`). Runtime dependencies are `numpy`, `scipy`, `pandas`, `xarray`, `pint`, `pydantic`, `matplotlib`, `rich` and `pillow` (reached through matplotlib, a direct dependency only for its floor 13.0.0, the fix of the advisories of 12.x). It was `pkdb_analysis` until 0.3.1.
 
 ## Commands
 
