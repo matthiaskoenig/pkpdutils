@@ -46,6 +46,10 @@ dependencies = [
     # figures and console output
     "matplotlib>=3.10.0",
     "rich>=14.0.0",
+    # not imported, reached through matplotlib; 13.0.0 fixes the critical
+    # advisories GHSA-332p-7hrc-92wf, GHSA-8g5g-8vmr-9782, GHSA-v9pv-5gc8-w2m6,
+    # GHSA-w889-685w-c8fh, GHSA-5x8w-8jj5-q52h and the others of 12.x
+    "pillow>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +58,9 @@ dev = [
     "ruff>=0.16.6",
     "pre-commit>=4.6.2",
     "ty>=0.0.79",
-    "tox>=4.61.2",
+    # 4.67.5 refuses its package staging directory when it was created under
+    # umask 002, tox-dev/tox#4357
+    "tox>=4.61.2,!=4.67.5",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8",
