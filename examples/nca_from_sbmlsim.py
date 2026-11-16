@@ -40,7 +40,7 @@ def simulated_dataset() -> xr.Dataset:
 
 if __name__ == "__main__":
     try:
-        from sbmlsim.result import XResult  # ty: ignore[unresolved-import]
+        from sbmlsim.result import XResult  # ty: ignore[import-not-found]
 
         console.print("sbmlsim is installed:", XResult.__name__)
     except ImportError:
