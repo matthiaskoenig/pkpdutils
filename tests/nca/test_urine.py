@@ -276,6 +276,39 @@ def test_a_dose_in_an_incompatible_unit_is_rejected() -> None:
         nca_urine(exc)
 
 
+def placebo(dose_unit: str = "mg") -> Excretion:
+    """The collections of a placebo arm: a dose of 0 and nothing excreted."""
+    start, end = EDGES[:-1], EDGES[1:]
+    return Excretion(
+        start=start,
+        end=end,
+        amount=np.zeros_like(start),
+        volume=VOLUME,
+        unit="mg",
+        time_unit="hr",
+        volume_unit="ml",
+        dose=Dose(amount=0.0, unit=dose_unit, route=Route.ORAL),
+        substance="drug",
+        label="placebo",
+    )
+
+
+def test_a_placebo_arm_has_no_percentage_and_is_no_error() -> None:
+    """A dose of 0 gives `percent_recovered` as `NaN`, as every dose divided parameter."""
+    result = nca_urine(placebo())
+    assert np.isnan(float(result["percent_recovered"]))
+    assert result.units("percent_recovered") == "percent"
+    # what was collected is reported as it was measured, dose or no dose
+    assert float(result["amount_recovered"]) == 0.0
+    assert float(result["vol_ur"]) == pytest.approx(1e-3 * VOLUME.sum())
+
+
+def test_a_placebo_arm_in_an_incompatible_unit_is_still_rejected() -> None:
+    """The dose of 0 does not skip the unit check, which is about the units."""
+    with pytest.raises(ValueError, match="cannot be compared"):
+        nca_urine(placebo(dose_unit="mmole"))
+
+
 def test_a_contradicting_amount_concentration_and_volume_is_rejected() -> None:
     """All three given: the amount has to be the concentration times the volume."""
     exc = collected()
