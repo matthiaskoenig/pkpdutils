@@ -1,7 +1,10 @@
 import importlib
+import os
+import subprocess
 import sys
 from collections.abc import Sequence
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -1341,6 +1344,85 @@ def test_the_kernel_reports_a_unit_for_every_variable_but_the_flags() -> None:
     # `KERNEL_UNITLESS` is removed, and the day it stops reporting one for a
     # parameter the gate reports that parameter rather than passing
     assert set(values) - set(units) == engine.KERNEL_UNITLESS
+
+
+# --- the flag which requires the gate -----------------------------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+GATE_FLAG = "--require-engine-gate"
+
+
+def collect_with(*args: str, armed: bool) -> subprocess.CompletedProcess[str]:
+    """Collect one file of the suite in a child session, armed or not.
+
+    The flag is the one thing continuous integration says on the command line
+    and the variable the one thing it says through the environment, so the two
+    are given to a real session here rather than asserted about the hook: a
+    flag which stopped being read, or a session which stopped refusing to run
+    without the variable, is what the `engines` job would otherwise report as
+    the agreement of two engines it never compared.
+    """
+    # the variable the gate reads is the one thing this controls, and the
+    # `PYTEST_*` of the running session are dropped so that a child session is
+    # a session of its own and not a second worker of this one
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name != engine.COMPARE_VARIABLE and not name.startswith("PYTEST_")
+    }
+    if armed:
+        env[engine.COMPARE_VARIABLE] = "1"
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-n",
+            "0",
+            "-q",
+            "--collect-only",
+            "-p",
+            "no:cacheprovider",
+            "tests/test_units.py",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=env,
+        check=False,
+    )
+
+
+def test_the_flag_refuses_a_session_which_is_not_armed() -> None:
+    refused = collect_with(GATE_FLAG, armed=False)
+    assert refused.returncode != 0
+    assert GATE_FLAG in refused.stderr
+    assert "the gate is not armed" in refused.stderr
+    assert engine.COMPARE_VARIABLE in refused.stderr
+    # nothing ran: the session is refused before it collects a test
+    assert "test session starts" not in refused.stdout
+
+
+def test_the_flag_is_satisfied_by_the_variable() -> None:
+    armed = collect_with(GATE_FLAG, armed=True)
+    assert armed.returncode == 0, armed.stderr
+    assert "the gate is not armed" not in armed.stderr
+
+
+def test_a_misspelled_flag_is_no_silent_pass() -> None:
+    # the lesson of the step this flag replaced: a check which can fail for a
+    # reason of its own is no check, and a check which can pass for one is
+    # worse. A flag can only be read or be unknown
+    misspelled = collect_with(GATE_FLAG + "s", armed=True)
+    assert misspelled.returncode != 0
+    assert "unrecognized arguments" in misspelled.stderr
+
+
+def test_a_session_without_the_flag_needs_no_variable() -> None:
+    # the ordinary local run, which the flag must leave alone
+    plain = collect_with(armed=False)
+    assert plain.returncode == 0, plain.stderr
 
 
 # --- the cross-check of the two predicates ------------------------------------

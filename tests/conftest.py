@@ -21,8 +21,8 @@ does not carry - and which ones do changes with every release of
 maintain. The counts of a run are read off the hook itself (`CrossCheck`), not
 written down here where they would go stale.
 
-So the check is not a list but a hook of two halves, and a sentinel over the
-session:
+So the check is not a list but a hook of two halves, a sentinel over the
+session and a flag the session can be held to:
 
 - **every batch which reaches `nca` is asked of both predicates**, and their
   answers must be equal, word for word. A predicate which refuses what the
@@ -41,6 +41,25 @@ session:
   count at all, which would leave the sentinel reading zeros of its own.
   Nothing else in the suite can see that: every test passes in the ordinary way
   and the evidence of two engines agreeing is a job which was never armed.
+- **a session which is told it must be armed and is not fails before it
+  collects a test** (`pytest_configure`, `REQUIRE_FLAG`). This is the one
+  question a test process cannot ask of itself: a process which never sees the
+  variable cannot know it was meant to be armed, so the requirement arrives on
+  the command line while the variable arrives through the environment (the
+  `passenv` of `tox.ini`). A variable which stops being forwarded leaves the
+  flag behind and the session says so, instead of passing as a second copy of
+  the ordinary test run.
+
+  It is a flag of the suite and no longer a step of the job outside pytest,
+  and the reason is measured: that step asked the same question with
+  `tox exec -e py3.14 -- python -c "... engine.comparing() ..."`, which exits 1
+  for a disarmed gate and exits 1 just as well because `tox exec` installs no
+  package, so `import pkpdutils` fails. It passed where a `tox r` had left a
+  wheel in the environment and failed on a clean runner, which means it had
+  never once answered the question it was written for. A flag cannot fail that
+  way: a misspelled one is an unrecognized argument and fails the job loudly,
+  where a command which always exits 1 is indistinguishable from a real catch
+  and one which always exits 0 is invisible.
 
 **Half 2 is secondary to half 1.** A refusal of the kernel after the host
 accepted the batch already means the two predicates disagreed, and half 1
@@ -124,8 +143,68 @@ rename on one side alone arms nothing and would otherwise turn that job into a
 second green copy of the ordinary test run.
 """
 
+REQUIRE_FLAG = "--require-engine-gate"
+"""The flag which makes a session fail unless the differential gate is armed.
+
+The one thing the `engines` job of `.github/workflows/ci-cd.yml` says on the
+command line, where the variable which arms the gate is the one thing it says
+through the environment. The two travel by different roads on purpose: a
+`passenv` of `tox.ini` which stops forwarding the variable, or a job which
+stops setting it, leaves the flag in place and the session refuses to run,
+where a suite which only reads the environment would pass as a second copy of
+the ordinary test run. See the module docstring for why this is a flag and no
+longer a step of the job.
+"""
+
 CHECK_KEY = pytest.StashKey["CrossCheck"]()
 """Where the cross-check of a test is kept for the hooks below to read."""
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add the flag which requires the differential gate to be armed.
+
+    Args:
+        parser: the parser of the command line.
+    """
+    parser.addoption(
+        REQUIRE_FLAG,
+        action="store_true",
+        default=False,
+        help=(
+            "fail the session unless the differential gate of the two engines "
+            f"is armed ({COMPARE_VARIABLE}), which is how the `engines` job of "
+            "continuous integration runs the suite"
+        ),
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse a session which has to compare the two engines and would not.
+
+    Reached before a test is collected, so a job which lost the variable says
+    so in one line instead of reporting the agreement of two engines it ran
+    once. The value is read from the library (`engine.comparing`) rather than
+    from the environment here, so that the flag asks the question the analysis
+    itself asks.
+
+    Args:
+        config: the configuration of the session.
+
+    Raises:
+        pytest.UsageError: if the flag is given and the gate is not armed.
+    """
+    if not config.getoption(REQUIRE_FLAG) or engine.comparing():
+        return
+    raise pytest.UsageError(
+        f"{REQUIRE_FLAG} says this session must compare the two engines of "
+        f"the analysis, and the gate is not armed: {COMPARE_VARIABLE} is "
+        f"{os.environ.get(COMPARE_VARIABLE, '')!r} and the library arms the "
+        f"gate with {engine.COMPARE_VARIABLE!r}. Every test of such a run "
+        "passes through one engine and reports the agreement of two. Set "
+        f"{COMPARE_VARIABLE}=1 to arm it, or drop the flag to run the suite "
+        "through whichever engine the dispatch picks."
+    )
+
 
 # the wheel of `pkpdutils-core` carries no stub beside its compiled module, so
 # the one lookup of the kernel's own predicate is suppressed here rather than
@@ -467,10 +546,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
       reported therefore fails rather than being read as a run which compared
       nothing on purpose.
     - the variable never reaches pytest at all, through a `passenv` of
-      `tox.ini` or the `env:` of a job. That one is **not** visible here, since
-      a process which never sees the variable cannot know it was meant to be
-      armed; the `engines` job of `.github/workflows/ci-cd.yml` therefore asks
-      the same question of `tox exec` before it runs the suite.
+      `tox.ini` or the `env:` of a job. That one is **not** reached here, since
+      a session which never sees the variable cannot know it was meant to be
+      armed: `REQUIRE_FLAG` is that half, and such a run is refused in
+      `pytest_configure` before a test is collected, so the sentinel never gets
+      the chance to be read as an ordinary unarmed run.
 
     The verdict is only reached on a session which passed everything: a run
     which failed, was interrupted or collected no test says something more

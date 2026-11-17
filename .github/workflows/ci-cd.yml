@@ -66,11 +66,9 @@ jobs:
     # the suite does not
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # the one place this job names the variable: both steps below inherit it,
-    # so the step which checks the arming and the step which runs the armed
-    # suite cannot be given different names. Named twice, a misspelling of the
-    # suite's copy alone would leave the check passing and the suite unarmed,
-    # where the conftest reads nothing and says nothing
+    # the one place this job names the variable, and the step below inherits
+    # it. Named twice, a misspelling of the suite's copy alone would leave the
+    # suite unarmed with nothing to say about it
     env:
       PKPDUTILS_COMPARE_ENGINES: "1"
     steps:
@@ -86,20 +84,26 @@ jobs:
         # expression; the distributions are built without one, see `release`
         enable-cache: ${{ !startsWith(github.ref, 'refs/tags/') }}  # zizmor: ignore[cache-poisoning]
         cache-python: ${{ !startsWith(github.ref, 'refs/tags/') }}  # zizmor: ignore[cache-poisoning]
-    # the suite itself fails when it is armed and compares nothing
-    # (tests/conftest.py), which covers a gate that stops being reached and a
-    # variable the library renamed. It cannot cover the variable not arriving
-    # at all, since a test process which never sees it cannot know it was
-    # meant to be armed: this step is that half, outside pytest and through
-    # the same tox environment, so a `passenv` which stops forwarding it fails
-    # the job instead of turning it into a second copy of `test`
-    - name: The differential gate is armed inside the test environment
-      run: >
-        uvx --with tox-uv tox exec -e py3.14 -- python -c
-        "import sys; from pkpdutils.nca import engine;
-        sys.exit(0 if engine.comparing() else 1)"
+    # one step, and the arming is required rather than hoped for:
+    # `--require-engine-gate` makes the session refuse to run unless the gate
+    # is armed (tests/conftest.py), so the requirement arrives on the command
+    # line while the variable arrives through the `passenv` of tox.ini. A
+    # `passenv` which stops forwarding it, or a job which stops setting it,
+    # leaves the flag behind and fails here instead of turning this job into a
+    # second copy of `test`; a misspelling of the flag is an unrecognized
+    # argument and fails just as loudly. The suite's own sentinel covers the
+    # rest: a gate which stops being reached, a variable the library renamed
+    # and a distributed run whose workers report nothing.
+    #
+    # It was a second step until the gate of PR #128 measured what that step
+    # really did: `tox exec` installs no package, so its `python -c "...
+    # engine.comparing() ..."` exited 1 for a disarmed gate and exited 1 for
+    # the missing import just as well, and it had only ever passed where an
+    # earlier `tox r` had left a wheel in the environment
     - name: Compare the two engines on every batch of the suite
-      run: uvx --with tox-uv tox -e py3.14 -- -m "not docs and not examples"
+      run: >
+        uvx --with tox-uv tox -e py3.14 --
+        -m "not docs and not examples" --require-engine-gate
 
   tests:
     # the one check the branch protection requires; the names of the matrix
