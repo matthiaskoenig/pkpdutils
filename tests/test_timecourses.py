@@ -2056,3 +2056,80 @@ def test_event_reader_retains_partially_known_subject_counts() -> None:
     )
     assert batch.n is not None
     np.testing.assert_allclose(batch.n, [8.0, np.nan], equal_nan=True)
+
+
+class TestReadOnlyDataset:
+    """A batch is its dataset: the layout is read once, so the dataset is fixed."""
+
+    @staticmethod
+    def _batch() -> Timecourses:
+        return Timecourses.from_arrays(
+            T,
+            V,
+            time_unit="hr",
+            unit="mg/l",
+            dims=("individual",),
+            coords={"individual": ["s1", "s2", "s3"]},
+            dose={"amount": np.full(3, 10.0), "unit": "mg"},
+            route=Route.IV_BOLUS,
+            substance="drug",
+        )
+
+    def test_the_dataset_cannot_be_replaced(self) -> None:
+        batch = self._batch()
+        assert batch.n_time == 4
+        with pytest.raises(AttributeError):
+            batch.ds = batch.ds.isel(time=slice(0, 3))  # ty: ignore[invalid-assignment]
+        assert batch.n_time == 4
+
+    def test_a_batch_around_a_shortened_dataset_reads_the_shorter_grid(self) -> None:
+        batch = self._batch()
+        assert batch.n_time == 4
+        shorter = Timecourses(batch.ds.isel(time=slice(0, 3)))
+        assert shorter.n_time == 3
+        assert shorter.values.shape == (3, 3)
+        assert batch.n_time == 4
+
+    def test_a_batch_around_a_relabelled_dataset_reads_the_new_unit(self) -> None:
+        batch = self._batch()
+        assert batch.unit == "mg/l"
+        ds = batch.ds.copy()
+        ds["value"] = ds["value"].copy()
+        ds["value"].attrs["units"] = "ug/l"
+        assert Timecourses(ds).unit == "ug/l"
+        assert batch.unit == "mg/l"
+
+    def test_a_batch_around_a_dataset_with_doses_reads_them(self) -> None:
+        batch = self._batch()
+        without = Timecourses(batch.ds.drop_vars(["dose_amount", "dose_time"]))
+        assert without.has_dose is False
+        assert without.n_dose == 0
+        again = Timecourses(batch.ds)
+        assert again.has_dose is True
+        assert again.n_dose == batch.n_dose
+        assert again.dose_unit == "mg"
+
+    def test_a_coordinate_is_added_by_building_another_batch(self) -> None:
+        batch = self._batch()
+        arms = ["A", "A", "B"]
+        tagged = Timecourses(batch.ds.assign_coords(arm=("individual", arms)))
+        assert list(tagged.ds.coords["arm"].to_numpy()) == arms
+        assert tagged.sample_dims == batch.sample_dims
+        assert "arm" not in batch.ds.coords
+
+
+class TestOrderedArrays:
+    """`_ordered` has to answer what the DataArray path answered."""
+
+    def test_a_pint_backed_variable_keeps_its_magnitudes(self) -> None:
+        values = Q_(V, "mg/l")
+        ds = xr.Dataset(
+            {"value": (("individual", "time"), values, {"units": "mg/l"})},
+            coords={
+                "time": ("time", T, {"units": "hr"}),
+                "individual": ["s1", "s2", "s3"],
+            },
+        )
+        batch = Timecourses(ds)
+        assert np.allclose(batch.values, V)
+        assert not isinstance(batch.values, type(values))

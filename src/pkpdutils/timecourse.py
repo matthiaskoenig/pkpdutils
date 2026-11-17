@@ -39,6 +39,7 @@ import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from typing import Any, Literal, Self
 
 import numpy as np
@@ -1926,19 +1927,40 @@ class Timecourses:
             se=None if "se" not in ds else ds["se"].to_numpy(),
             n=count,
         )
-        self.ds: xr.Dataset = ds
+        self._ds: xr.Dataset = ds
         #: the units `_check_units_once` has parsed, so that building single
         #: timecourses parses the three unit strings of the batch once
         self._checked_units: tuple[str, str, str | None] | None = None
 
+    @property
+    def ds(self) -> xr.Dataset:
+        """The dataset of the batch, read-only; see the class documentation for its layout.
+
+        A batch is its dataset, and the layout and the units below are read from
+        it once and kept: each of them went through `Dataset.__getitem__` on
+        every access, which builds a throwaway `DataArray`, and one `nca()` call
+        read them about ninety times each. So the dataset is fixed for the life
+        of the batch - this property has no setter, and the dataset itself is to
+        be treated as read-only. To change a batch, build another one around the
+        dataset you want:
+
+        ```python
+        batch = Timecourses(batch.ds.assign_coords(arm=("individual", arms)))
+        ```
+
+        `select`, `groupby`, `mean`, `relative_to_dose` and `dose_normalized`
+        all return a new batch the same way.
+        """
+        return self._ds
+
     # --- layout -------------------------------------------------------------
 
-    @property
+    @cached_property
     def sample_dims(self) -> tuple[str, ...]:
         """The dimensions other than `time`."""
         return tuple(str(d) for d in self.ds["value"].dims if d != TIME_DIM)
 
-    @property
+    @cached_property
     def sample_shape(self) -> tuple[int, ...]:
         """The shape of the sample dimensions."""
         return tuple(int(self.ds.sizes[d]) for d in self.sample_dims)
@@ -1948,18 +1970,18 @@ class Timecourses:
         """Number of timecourses."""
         return int(np.prod(self.sample_shape, dtype=int)) if self.sample_shape else 1
 
-    @property
+    @cached_property
     def n_time(self) -> int:
         """Number of time points (the length of the padded grid for ragged data)."""
         return int(self.ds.sizes[TIME_DIM])
 
-    @property
+    @cached_property
     def time_unit(self) -> str:
         """Unit of the times."""
         time_var = self.ds[TIMES_VAR] if TIMES_VAR in self.ds else self.ds[TIME_DIM]
         return str(time_var.attrs["units"])
 
-    @property
+    @cached_property
     def unit(self) -> str:
         """Unit of the values."""
         return str(self.ds["value"].attrs["units"])
@@ -2125,7 +2147,7 @@ class Timecourses:
         """Whether `sd` or `se` is present."""
         return "sd" in self.ds or "se" in self.ds
 
-    @property
+    @cached_property
     def has_dose(self) -> bool:
         """Whether doses are present."""
         return "dose_amount" in self.ds
@@ -2136,14 +2158,14 @@ class Timecourses:
     def times(self) -> np.ndarray:
         """Times as an array of shape `(*sample_shape, n_time)`."""
         if TIMES_VAR in self.ds:
-            return self.ds[TIMES_VAR].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+            return self._ordered(TIMES_VAR, (*self.sample_dims, TIME_DIM))
         grid = self.ds[TIME_DIM].to_numpy().astype(np.float64)
         return np.broadcast_to(grid, (*self.sample_shape, grid.size)).copy()
 
     @property
     def values(self) -> np.ndarray:
         """Values as an array of shape `(*sample_shape, n_time)`."""
-        return self.ds["value"].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+        return self._ordered("value", (*self.sample_dims, TIME_DIM))
 
     @property
     def nominal_times(self) -> np.ndarray | None:
@@ -2167,6 +2189,43 @@ class Timecourses:
             da.transpose(*self.sample_dims, TIME_DIM).to_numpy(), dtype=np.float64
         )
 
+    def _ordered(self, name: str, order: tuple[str, ...]) -> np.ndarray:
+        """A stored variable as an array with its dimensions in `order`.
+
+        The same array as `self.ds[name].transpose(*order).to_numpy()`, read
+        from the stored variable instead: `Dataset.__getitem__` builds a
+        `DataArray` and `DataArray.transpose` replaces it and filters the
+        indexes of its coordinates, where the permutation itself is one numpy
+        view. A variable whose dimensions are not exactly `order` goes the
+        long way, so an unusual layout keeps the behaviour it had.
+
+        Args:
+            name: name of the variable.
+            order: the dimensions, in the order the array should carry them.
+
+        Returns:
+            The array, dimensions in `order`.
+        """
+        var = self.ds.variables[name]
+        dims = var.dims
+        # the dimensions have to be the same ones, as many of them, and each one
+        # once: a repeated dimension would index `perm` twice, which numpy
+        # refuses, and xarray does not support one either
+        if (
+            len(dims) != len(order)
+            or set(dims) != set(order)
+            or len(set(dims)) != len(dims)
+        ):
+            return self.ds[name].transpose(*order).to_numpy()
+        perm = tuple(dims.index(d) for d in order)
+        data = var.data
+        if type(data) is np.ndarray:
+            return data.transpose(perm)
+        # a pint quantity, a sparse or chunked array, an ndarray subclass: only
+        # `to_numpy` knows how to bring each of them across, and it costs about
+        # 4 us against the 0.25 us of the line above, so it runs for those alone
+        return var.to_numpy().transpose(perm)
+
     def _optional(self, name: str) -> np.ndarray | None:
         """Return a variable as an array transposed to `(*sample_dims[, time | dose])`, or `None` if absent.
 
@@ -2178,12 +2237,10 @@ class Timecourses:
         """
         if name not in self.ds:
             return None
-        da = self.ds[name]
         sample_dims = self.sample_dims
-        extra = [
-            d for d in (TIME_DIM, DOSE_DIM) if d in da.dims and d not in sample_dims
-        ]
-        return da.transpose(*sample_dims, *extra).to_numpy()
+        dims = self.ds.variables[name].dims
+        extra = [d for d in (TIME_DIM, DOSE_DIM) if d in dims and d not in sample_dims]
+        return self._ordered(name, (*sample_dims, *extra))
 
     @property
     def sd(self) -> np.ndarray | None:
@@ -2237,14 +2294,14 @@ class Timecourses:
         """Infusion durations of shape `(*sample_shape, n_dose)` (`NaN` without infusion), `None` without doses."""
         return self._optional("dose_duration")
 
-    @property
+    @cached_property
     def dose_unit(self) -> str | None:
         """Unit of the doses, `None` without doses."""
         if not self.has_dose:
             return None
         return str(self.ds["dose_amount"].attrs["units"])
 
-    @property
+    @cached_property
     def n_dose(self) -> int:
         """Size of the dose dimension, the longest protocol of the batch; 0 without doses."""
         return int(self.ds.sizes[DOSE_DIM]) if self.has_dose else 0
