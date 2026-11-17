@@ -345,8 +345,12 @@ def bolus_c0(
     method = np.where(has_point, C0_FIRST_VALUE, C0_NONE).astype(np.int64)
     if options.c0_method is not C0Method.LOG_BACK_EXTRAPOLATION:
         return first, method
-    t2 = np.where(n_valid > 1, tp[:, 1], np.nan)
-    c2 = np.where(n_valid > 1, cp[:, 1], np.nan)
+    if tp.shape[1] > 1:
+        t2 = np.where(n_valid > 1, tp[:, 1], np.nan)
+        c2 = np.where(n_valid > 1, cp[:, 1], np.nan)
+    else:
+        t2 = np.full(n_rows, np.nan)
+        c2 = np.full(n_rows, np.nan)
     with np.errstate(divide="ignore", invalid="ignore"):
         back = np.exp(np.log(c1) - (np.log(c2) - np.log(c1)) / (t2 - t1) * t1)
         usable = has_point & (c1 > 0) & (c2 > 0) & (c2 < c1) & (t2 > t1)

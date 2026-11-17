@@ -152,6 +152,36 @@ def test_no_data_sample() -> None:
     assert np.isnan(result.to_quantities()["cmax"].magnitude)
 
 
+@pytest.mark.parametrize("c0_method", list(C0Method))
+def test_a_single_time_point_batch_is_no_data_and_never_raises(
+    c0_method: C0Method,
+) -> None:
+    # a one point curve leaves `bolus_c0` no second point to regress through,
+    # and the back extrapolation used to read it anyway: `np.where` guards the
+    # value of `tp[:, 1]` and not the read, so a packed array one column wide
+    # raised `IndexError` under the default method while `FIRST_VALUE` and
+    # `NONE` already returned `NaN`. The row is `NO_DATA` whichever method is
+    # asked for, so every method has to agree on `NaN` rather than one of them
+    # crashing. `Timecourse` refuses a single point, so only a batch reaches
+    # this, which is right: one subject of an event table with a single sample
+    # must not refuse the whole batch.
+    batch = Timecourses.from_arrays(
+        time=np.array([2.0]),
+        values=np.array([[8.0]]),
+        time_unit="hr",
+        unit="mg/l",
+        dose=IV_DOSE,
+        dims=("individual",),
+    )
+    result = nca(batch, options=NCAOptions(c0_method=c0_method))
+    flags = result.flag_table()
+    assert flags["NO_DATA"].tolist() == [True]
+    others = [c for c in flags.columns if c != "NO_DATA"]
+    assert not flags[others].to_numpy().any()
+    for name in ("c0", "cmax", "auc_last"):
+        assert np.isnan(float(result[name].values[0])), name
+
+
 def test_lloq_handling() -> None:
     t = np.array([0.5, 1, 2, 4, 8, 12, 24])
     c = np.array([0.05, 2.0, 4.0, 3.0, 1.5, 0.5, 0.05])
