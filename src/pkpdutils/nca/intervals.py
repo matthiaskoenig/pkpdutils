@@ -289,6 +289,26 @@ def _with_bounds(
     return tq, cq, n_inside + offset + has_end.astype(np.int64)
 
 
+def _ordered_sum(a: np.ndarray) -> np.ndarray:
+    """Sum of every row from left to right, independent of the column position.
+
+    `np.sum` groups the terms by the alignment of the row, so the same samples
+    at another column give a result which differs in the last digit. The
+    sequential sum keeps the order of the samples. The padding must be exactly
+    0.0, which adds without error: a `NaN` or an infinity in it poisons the
+    row, so the caller masks with `np.where(selected, ..., 0.0)`.
+
+    Args:
+        a: values `(N, n)`
+
+    Returns:
+        The row sums `(N,)`, zero for a row of no columns.
+    """
+    if a.shape[1] == 0:
+        return np.zeros(a.shape[0])
+    return np.cumsum(a, axis=1)[:, -1]
+
+
 def _extrapolate_end(
     tp: np.ndarray,
     cp: np.ndarray,
@@ -325,15 +345,19 @@ def _extrapolate_end(
     from_end = counts[:, None] - np.cumsum(positive, axis=1)
     selected = positive & (from_end < max_points)
     n = selected.sum(axis=1).astype(np.float64)
-    t = np.where(selected, tp, 0.0)
     y = np.where(selected, np.log(np.where(selected, cp, 1.0)), 0.0)
-    sx, sy = t.sum(axis=1), y.sum(axis=1)
-    sxx, sxy = (t * t).sum(axis=1), (t * y).sum(axis=1)
+    # the line is fitted about the centroid of the selected samples: the
+    # normal equations on absolute times subtract two nearly equal sums and
+    # lose their digits once the times are large relative to their spread
     with np.errstate(divide="ignore", invalid="ignore"):
-        denominator = n * sxx - sx * sx
-        slope = (n * sxy - sx * sy) / denominator
-        intercept = (sy - slope * sx) / n
-        value = np.exp(intercept + slope * t_end)
+        t_bar = _ordered_sum(np.where(selected, tp, 0.0)) / n
+        y_bar = _ordered_sum(y) / n
+        dt = np.where(selected, tp - t_bar[:, None], 0.0)
+        denominator = _ordered_sum(dt * dt)
+        # centring y as well keeps the slope exact when t_bar carries a rounding error
+        dy = np.where(selected, y - y_bar[:, None], 0.0)
+        slope = _ordered_sum(dt * dy) / denominator
+        value = np.exp(y_bar + slope * (t_end - t_bar))
     return np.where((n >= 2) & (denominator > 0), value, np.nan)
 
 
@@ -413,10 +437,8 @@ def _interval_column(
         )
     extrapolated = np.zeros(n_rows, dtype=bool)
     if np.any(post_dose):
-        # the regression runs over the full row, not over the gathered block:
-        # its normal equations subtract two nearly equal sums, so the same
-        # samples at different column positions give a slope which differs by
-        # more than a rounding error of the trough
+        # the regression takes the row's own samples, the centred fit makes the
+        # column position irrelevant
         trough = _extrapolate_end(tp, cp, inside, t_end)
         c_end = np.where(post_dose, trough, c_end)
         extrapolated = post_dose & np.isfinite(trough)
