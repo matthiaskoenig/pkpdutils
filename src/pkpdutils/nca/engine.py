@@ -253,6 +253,47 @@ def _check_prepared(
     return prepared
 
 
+MIXED_ROUTE_DOSING_REASON: str = (
+    "a batch of several routes of which only some have a multiple dose row, "
+    "whose variables the python core reports per route"
+)
+"""The reason `unsupported_reason` gives for routes which differ in their dosing.
+
+The python core runs one group per route and reports the steady state variables
+of the groups which have a multiple dose row, so a batch of an oral arm of
+single doses and an intravenous arm of several has no `cl_ss_f`, where the
+kernel reports one union over the rows and carries it as a column of `NaN`. The
+variables of the two engines then differ and not only their order, which no
+host side sorting fixes, so such a batch takes the python path until the
+kernel reports the variables per route. A batch whose routes all have a
+multiple dose row, or none of them, is carried (`_python_order` puts its
+variables in the order of the core).
+"""
+
+
+def _routes_differ_in_dosing(timecourses: Timecourses, options: NCAOptions) -> bool:
+    """Whether some routes of a batch have a multiple dose row and others have not.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+
+    Returns:
+        `True` for a batch of several routes of which at least one has a
+        multiple dose row (`pkpdutils.nca.nca.is_multiple_dose`) and at least
+        one has none.
+    """
+    routes = timecourses.routes
+    if routes is None:
+        return False
+    rows = routes.ravel()
+    multiple = _multiple_rows(timecourses, options)
+    has = {
+        bool(multiple[rows == route].any()) for route in dict.fromkeys(rows.tolist())
+    }
+    return len(has) > 1
+
+
 def unsupported_reason(
     timecourses: Timecourses,
     options: NCAOptions,
@@ -271,8 +312,8 @@ def unsupported_reason(
     The host answers before it asks only what the kernel cannot see, which is
     a statement about the python objects and no refusal of the kernel's, and
     each of them is named rather than written here (`FORCED_REASON`,
-    `EMPTY_REASON`, `MIXED_LABELS_REASON`). `is_supported` itself accepts all
-    three: it says nothing about the python path being pinned, and it answers
+    `EMPTY_REASON`, `MIXED_LABELS_REASON`, `MIXED_ROUTE_DOSING_REASON`).
+    `is_supported` itself accepts all four of them: it says nothing about the python path being pinned, and it answers
     `None` for an empty batch and for a batch of mixed labels, whose analysis
     the kernel then answers with one column or rejects with a plain
     `ValueError`. One refusal of the kernel is invisible to `is_supported`
@@ -306,6 +347,8 @@ def unsupported_reason(
         and mixed_label_dim(timecourses) is not None
     ):
         return MIXED_LABELS_REASON
+    if _routes_differ_in_dosing(timecourses, options):
+        return MIXED_ROUTE_DOSING_REASON
     is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
     batch, kernel_options = prepared.dicts
     reason: str | None = is_supported(batch, kernel_options)
@@ -842,7 +885,10 @@ one dry run per batch and every other caller nothing.
 
 
 def _order_key(
-    routes: tuple[Route, ...], dosed: int, options: NCAOptions
+    routes: tuple[Route, ...],
+    dosed: int,
+    options: NCAOptions,
+    multiple: tuple[bool, ...] = (),
 ) -> tuple[Any, ...]:
     """The key of `_ORDER_CACHE`: the shape the variable order depends on.
 
@@ -857,15 +903,24 @@ def _order_key(
             appearance, every one of them once
         dosed: the number of doses per row of the protocol, 0 without one
         options: the options of the analysis
+        multiple: for every route, whether any of its rows is analysed as a
+            multiple dose row (`pkpdutils.nca.nca.is_multiple_dose`), which
+            adds the steady state and the `interval_*` variables to the
+            variables of its group and so moves it in the merge
 
     Returns:
         The key, a tuple of hashable values.
     """
-    return (routes, dosed, repr(options))
+    return (routes, dosed, repr(options), multiple)
 
 
 def _dry_order(
-    routes: tuple[Route, ...], *, dosed: int, n_time: int, options: NCAOptions
+    routes: tuple[Route, ...],
+    *,
+    dosed: int,
+    n_time: int,
+    options: NCAOptions,
+    multiple: tuple[bool, ...] = (),
 ) -> list[str]:
     """The variables of a batch of several routes, in the order the python core reports.
 
@@ -887,6 +942,11 @@ def _dry_order(
             without doses, whose rows report no dose dependent variable
         n_time: the number of time points of the batch
         options: the options of the analysis
+        multiple: for every route, whether its group has a multiple dose row.
+            The core decides that per row, so a group which has one is run on
+            a single row of `NaN` and a protocol of two doses (a run on no row
+            at all is never a multiple dose analysis and would leave the
+            steady state and `interval_*` variables out of the order)
 
     Returns:
         The names of the variables in the order `run_rows` reports them in.
@@ -895,21 +955,27 @@ def _dry_order(
     # is needed and not at the top
     from pkpdutils.nca.nca import merge_rows, run_rows
 
-    time = np.zeros((0, n_time))
-    amounts = np.zeros((0, dosed)) if dosed else None
-    durations = np.full((0, dosed), np.nan) if dosed else None
-    parts = [
-        run_rows(
-            time,
-            time,
-            dose_amount=amounts,
-            dose_time=amounts,
-            dose_duration=durations,
-            route=route,
-            options=options,
+    parts = []
+    for i, route in enumerate(routes):
+        # one row of two doses where the group has a multiple dose row, which a
+        # protocol of one dose would not be unless `tau` is given
+        rows = 1 if dosed and i < len(multiple) and multiple[i] else 0
+        width = max(dosed, 2) if rows else dosed
+        time = np.full((rows, n_time), np.nan)
+        amounts = np.ones((rows, width)) if dosed else None
+        dose_times = np.arange(width, dtype=np.float64) * np.ones((rows, 1))
+        durations = np.full((rows, width), np.nan) if dosed else None
+        parts.append(
+            run_rows(
+                time,
+                time,
+                dose_amount=amounts,
+                dose_time=dose_times if dosed else None,
+                dose_duration=durations,
+                route=route,
+                options=options,
+            )
         )
-        for route in routes
-    ]
     return list(merge_rows(parts, [0] * len(parts)))
 
 
@@ -920,6 +986,7 @@ def _python_order(
     *,
     dosed: int,
     n_time: int,
+    multiple: np.ndarray | None = None,
 ) -> list[str]:
     """The order the python core reports the variables of a batch of several routes in.
 
@@ -952,6 +1019,12 @@ def _python_order(
             0 for a batch without a protocol, exactly where `dose_arrays`
             reports an empty row)
         n_time: the number of time points of the batch
+        multiple: which rows are analysed as multiple dose rows
+            (`pkpdutils.nca.nca.is_multiple_dose`), `None` for none of them.
+            The python core runs one group per route and a group with a
+            multiple dose row reports the steady state and `interval_*`
+            variables the others do not, so the order of the merge depends on
+            which routes have one.
 
     Returns:
         The names in the order `run_rows` would report them in.
@@ -959,10 +1032,18 @@ def _python_order(
     # the routes of a batch are a handful of values repeated over its rows, so
     # they are deduplicated before they are read as routes and not after
     given = tuple(Route(value) for value in dict.fromkeys(routes.ravel().tolist()))
-    key = _order_key(given, dosed, options)
+    row_routes = routes.ravel()
+    has_multiple = (
+        tuple(False for _ in given)
+        if multiple is None
+        else tuple(bool(multiple.ravel()[row_routes == route].any()) for route in given)
+    )
+    key = _order_key(given, dosed, options, has_multiple)
     order = _ORDER_CACHE.get(key)
     if order is None:
-        order = _dry_order(given, dosed=dosed, n_time=n_time, options=options)
+        order = _dry_order(
+            given, dosed=dosed, n_time=n_time, options=options, multiple=has_multiple
+        )
         if len(_ORDER_CACHE) >= _ORDER_CACHE_MAX:
             _ORDER_CACHE.clear()
         _ORDER_CACHE[key] = order
@@ -971,6 +1052,29 @@ def _python_order(
     return [name for name in order if name in wanted] + [
         name for name in names if name not in named
     ]
+
+
+def _multiple_rows(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
+    """The rows of a batch which the python core analyses as multiple dose rows.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+
+    Returns:
+        The boolean mask `(N,)`, read by the very function of the core.
+    """
+    # `pkpdutils.nca.nca` imports this module
+    from pkpdutils.nca.nca import is_multiple_dose
+
+    amounts, times, _ = dose_arrays(timecourses)
+    dosed = amounts.shape[1] > 0
+    return is_multiple_dose(
+        amounts if dosed else None,
+        times if dosed else None,
+        options,
+        n_rows=timecourses.n_samples,
+    )
 
 
 def run_kernel(
@@ -1047,6 +1151,7 @@ def run_kernel(
         values,
         dosed=timecourses.n_dose,
         n_time=timecourses.n_time,
+        multiple=_multiple_rows(timecourses, options),
     )
     return {name: values[name] for name in order}
 

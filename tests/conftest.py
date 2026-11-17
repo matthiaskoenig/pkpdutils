@@ -282,6 +282,8 @@ class CrossCheck:
         """How many batches had no sample at all."""
         self.mixed: int = 0
         """How many batches the host refused for the types of their labels."""
+        self.dosing: int = 0
+        """How many batches the host refused for routes which differ in dosing."""
         self.refusals: list[str] = []
         """The kernel's refusals of a batch the host let through."""
         self.fallbacks: list[logging.LogRecord] = []
@@ -319,6 +321,26 @@ class CrossCheck:
             assert reason == engine.EMPTY_REASON, (
                 "a batch of no samples is the host's own refusal and the "
                 f"predicate answers {reason!r} instead of the empty reason"
+            )
+            return reason
+        if reason == engine.MIXED_ROUTE_DOSING_REASON:
+            # the host's fourth own refusal, a statement about how the python
+            # core groups a batch which the kernel's predicate does not make.
+            # As for the labels, the exemption is read from the answer and its
+            # necessary condition from the inputs: a batch of several routes
+            # with a protocol of more than one dose or a given `tau`
+            self.dosing += 1
+            routes = timecourses.routes
+            assert (
+                routes is not None
+                and len(set(routes.ravel().tolist())) > 1
+                and (timecourses.n_dose > 1 or options.tau is not None)
+            ), (
+                "the predicate refuses this batch for routes which differ in "
+                "their dosing, and the batch is not one of several routes with "
+                "a multiple dose analysis: a predicate which answers that "
+                "reason for any other batch sends it down the python path "
+                "for good."
             )
             return reason
         if reason == engine.MIXED_LABELS_REASON:
@@ -445,7 +467,9 @@ def engine_cross_check(
     finally:
         logger.removeHandler(watch)
         global _batches_seen
-        _batches_seen += check.compared + check.forced + check.empty + check.mixed
+        _batches_seen += (
+            check.compared + check.forced + check.empty + check.mixed + check.dosing
+        )
 
 
 @pytest.hookimpl(wrapper=True)

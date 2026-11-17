@@ -1115,6 +1115,50 @@ def test_the_tau_of_an_irregular_protocol_is_its_last_gap_in_both_engines() -> N
     assert_same_result(nca(timecourses, options=options), python)
 
 
+def mixed_route_dose_batch(
+    protocols: Sequence[tuple[Route, int]] = (
+        (Route.ORAL, 3),
+        (Route.IV_BOLUS, 3),
+        (Route.ORAL, 1),
+        (Route.IV_BOLUS, 4),
+    ),
+) -> Timecourses:
+    """Oral with 3 doses, bolus with 3, oral with 1 and bolus with 4, in one batch."""
+    curves = []
+    for route, n in protocols:
+        offsets = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 11.5])
+        t = np.concatenate([offsets + 12.0 * i for i in range(n)])
+        v = sum(
+            np.where(t >= 12.0 * i, C0 * np.exp(-K * (t - 12.0 * i)), 0.0)
+            for i in range(n)
+        )
+        curves.append(
+            Timecourse(
+                time=t,
+                value=np.asarray(v),
+                time_unit="hr",
+                unit="mg/l",
+                dosing=Dosing.regimen(
+                    Dose(amount=100.0, unit="mg", route=route), 12.0, n
+                ),
+                substance="x",
+            )
+        )
+    return Timecourses.from_timecourses(curves, dim="subject", labels=list("ABCD"))
+
+
+MIXED_ROUTE_BATCH = mixed_route_dose_batch()
+# a route which has no multiple dose row at all, first and last: the group which
+# reports the steady state variables is the other one, and the merge of the
+# groups follows which that is
+ONE_ROUTE_SINGLE_DOSE = mixed_route_dose_batch(
+    ((Route.ORAL, 1), (Route.ORAL, 1), (Route.IV_BOLUS, 3), (Route.IV_BOLUS, 3))
+)
+ONE_ROUTE_SINGLE_DOSE_LAST = mixed_route_dose_batch(
+    ((Route.IV_BOLUS, 3), (Route.IV_BOLUS, 3), (Route.ORAL, 1), (Route.ORAL, 1))
+)
+
+
 MULTIPLE_DOSE_CASES: list[tuple[str, Timecourses, NCAOptions]] = [
     ("bolus", mixed_dose_batch(), NCAOptions()),
     ("bolus without intervals", mixed_dose_batch(), NCAOptions(intervals=False)),
@@ -1125,6 +1169,16 @@ MULTIPLE_DOSE_CASES: list[tuple[str, Timecourses, NCAOptions]] = [
         "infusion",
         mixed_dose_batch(Route.IV_INFUSION, duration=0.5),
         NCAOptions(),
+    ),
+    # the routes differ per sample, so the python core runs one group per route
+    # and the kernel's variables have to be put in its order
+    ("mixed routes", MIXED_ROUTE_BATCH, NCAOptions()),
+    ("mixed routes a given tau", MIXED_ROUTE_BATCH, NCAOptions(tau=12.0)),
+    # `tau` puts every row of every route on the multiple dose path
+    (
+        "mixed routes, single dose rows with a given tau",
+        ONE_ROUTE_SINGLE_DOSE,
+        NCAOptions(tau=12.0),
     ),
     # a last sample short of the interval end, completed by the regression
     ("a last interval within the tolerance", mixed_dose_batch(last=11.0), NCAOptions()),
@@ -1151,15 +1205,38 @@ def test_a_multiple_dose_batch_gives_the_same_result_from_either_engine(
     assert_same_mapping(timecourses, options)
     assert_same_result(nca(timecourses, options=options), python)
     # the numbers of the python core, exactly where they are counted
-    assert python.ds["n_doses"].to_numpy().tolist() == [1, 3, 1, 3]
+    counts = np.isfinite(timecourses.dose_amount).sum(axis=1).tolist()
+    assert python.ds["n_doses"].to_numpy().tolist() == counts
     tau = python.ds["tau"].to_numpy()
     if options.tau is None:
-        assert np.isnan(tau[[0, 2]]).all()
-        assert tau[[1, 3]].tolist() == [12.0, 12.0]
+        single = [n == 1 for n in counts]
+        assert np.isnan(tau[single]).all()
+        assert (tau[[not one for one in single]] == 12.0).all()
     else:
         # a given interval makes every row a multiple dose row
         assert tau.tolist() == [12.0] * 4
     assert ("interval_auc" in python.ds.data_vars) == options.intervals
+
+
+@pytest.mark.parametrize(
+    "timecourses", [ONE_ROUTE_SINGLE_DOSE, ONE_ROUTE_SINGLE_DOSE_LAST]
+)
+def test_routes_which_differ_in_their_dosing_take_the_python_path(
+    timecourses: Timecourses, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the kernel reports one union of variables, the python core reports them
+    # per route, and the two differ in a variable (`cl_ss_f`), not in order
+    assert (
+        engine.unsupported_reason(timecourses, NCAOptions())
+        == engine.MIXED_ROUTE_DOSING_REASON
+    )
+    kernel = set(engine.run_kernel(timecourses, NCAOptions()))
+    assert kernel - set(python_result(timecourses).ds.data_vars) == {"cl_ss_f"}
+    # so `nca` answers from the python core, armed or not
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    before = engine.comparisons()
+    assert_same_result(nca(timecourses), python_result(timecourses))
+    assert engine.comparisons() == before
 
 
 def test_the_single_dose_rows_of_a_mixed_batch_have_no_interval_values() -> None:
