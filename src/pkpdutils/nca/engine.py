@@ -53,9 +53,8 @@ a mutation of `aumc_inf_pred` by 1e-5 for every batch of three samples or more
 fails 25 tests with the gate disarmed. The gate compares **every** batch the
 caller builds, and these are the parts of an answer no reference table of the
 suite reaches, the multiple dose analysis among them (the `interval_*` point
-variables, the steady state, `n_doses`, `tau` and the flags `INCOMPLETE_INTERVAL`
-and `EXTRAPOLATED_TROUGH`, and a last interval completed within
-`tau_tolerance`):
+variables, the steady state, `n_doses`, `tau`, the flags `INCOMPLETE_INTERVAL`
+and `EXTRAPOLATED_TROUGH`, and a last interval completed within `tau_tolerance`):
 
 - `flags` and `c0_method` as exact integers, which no table of another tool
   carries and which a tolerance would not compare anyway (`_compare_columns`),
@@ -72,8 +71,8 @@ and `EXTRAPOLATED_TROUGH`, and a last interval completed within
 What the gate does **not** reach is every analysis the dispatch refuses, since
 a batch which never goes to the kernel is held against nothing: the
 propagation of the uncertainty of a group curve, the acceptance criteria, the
-named partial areas, the effect curve and the unit conversion of a result (`unsupported_reason`, the
-table of `docs/benchmark.md`). The urine analysis is out of reach for another
+named partial areas, the effect curve and the unit conversion of a result
+(`unsupported_reason`, the table of `docs/benchmark.md`). The urine analysis is out of reach for another
 reason: `pkpdutils.nca.urine.nca_urine` calls `compute_parameters` of the
 python core directly and never passes through `nca`, so `rate` and `midpoint`
 are no answer of an engine at all. Every one of those is held to the python
@@ -130,7 +129,7 @@ except ImportError as missing:
 
 logger = logging.getLogger(__name__)
 
-# the wheel of `pkpdutils-core` 0.2.0 carries no stub beside its compiled
+# the wheel of `pkpdutils-core` (0.2.0 to 0.3.0) carries no stub beside its compiled
 # module, so a type checker sees none of its three names and every lookup of
 # one is suppressed by name
 UnsupportedError = pkpdutils_core.UnsupportedError  # ty: ignore[missing-attribute]
@@ -159,7 +158,7 @@ EMPTY_REASON: str = "a batch of no samples, whose variables the kernel does not 
 
 Together with `FORCED_REASON` the only reason of this module which is not the
 kernel's own, and the only one of the two about a real batch. `pkpdutils-core`
-0.2.0 derives the variables of its result from the routes of the rows it ran,
+(0.2.0 to 0.3.0) derives the variables of its result from the routes of the rows it ran,
 so a batch of no rows comes back with one column instead of with the empty
 column of every variable python reports (`docs/carry-forward.md` of the kernel
 names the fix, which belongs on its side). The host therefore answers an empty
@@ -1027,7 +1026,7 @@ COMPARE_ABS: float = 1e-12
 KERNEL_UNITLESS: frozenset[str] = frozenset({"flags"})
 """The variables of the mapping whose unit the kernel reports for nobody.
 
-`pkpdutils-core` 0.2.0 reports a unit for every parameter of its result and
+`pkpdutils-core` (0.2.0 to 0.3.0) reports a unit for every parameter of its result and
 none for its flags, which carry no unit on either side (`PARAMETER_UNITS`
 spells them `dimensionless`). A name of this set is left out of the unit
 comparison **only while the kernel really reports nothing for it**: the day it

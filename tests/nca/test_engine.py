@@ -897,6 +897,68 @@ def mixed_dose_batch(
     )
 
 
+def irregular_dose_batch() -> Timecourses:
+    """A subject of doses 0, 24, 30, 42 h of unequal amounts beside a regular one.
+
+    The gaps of the first are 24, 6 and 12 h, so that its last gap differs from
+    the maximum (24), the mean (14), the first gap (24) and the span over the
+    number of gaps (14) and `tau` discriminates every other rule than "the last
+    gap". The amounts differ within and across the rows.
+    """
+    protocols = [
+        (np.array([0.0, 24.0, 30.0, 42.0]), np.array([100.0, 50.0, 100.0, 75.0])),
+        (np.array([0.0, 12.0, 24.0]), np.array([80.0, 80.0, 80.0])),
+    ]
+    ends = [54.0, 36.0]
+    rows = []
+    for (dose_t, amount), end in zip(protocols, ends, strict=True):
+        t = np.unique(
+            np.concatenate(
+                [
+                    dose_t[i] + np.array([0.25, 1.0, 2.0, 4.0, 8.0])
+                    for i in range(dose_t.size)
+                ]
+                + [dose_t[1:] - 0.5, [end - 0.5]]
+            )
+        )
+        v = sum(
+            np.where(t >= d, a / 10.0 * np.exp(-K * (t - d)), 0.0)
+            for d, a in zip(dose_t, amount, strict=True)
+        )
+        rows.append((t, np.asarray(v)))
+    n_time = max(t.size for t, _ in rows)
+    times = np.full((2, n_time), np.nan)
+    values = np.full((2, n_time), np.nan)
+    amounts = np.full((2, 4), np.nan)
+    dose_times = np.full((2, 4), np.nan)
+    for i, ((t, v), (dose_t, amount)) in enumerate(zip(rows, protocols, strict=True)):
+        times[i, : t.size] = t
+        values[i, : t.size] = v
+        amounts[i, : amount.size] = amount
+        dose_times[i, : dose_t.size] = dose_t
+    return Timecourses.from_arrays(
+        times,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": ["A", "B"]},
+        dose={"amount": amounts, "unit": "mg", "time": dose_times},
+        route=Route.IV_BOLUS,
+    )
+
+
+def test_the_tau_of_an_irregular_protocol_is_its_last_gap_in_both_engines() -> None:
+    timecourses = irregular_dose_batch()
+    options = NCAOptions()
+    assert engine.unsupported_reason(timecourses, options) is None
+    python = python_result(timecourses, options)
+    assert python.ds["n_doses"].to_numpy().tolist() == [4, 3]
+    assert python.ds["tau"].to_numpy().tolist() == [12.0, 12.0]
+    assert_same_mapping(timecourses, options)
+    assert_same_result(nca(timecourses, options=options), python)
+
+
 MULTIPLE_DOSE_CASES: list[tuple[str, Timecourses, NCAOptions]] = [
     ("bolus", mixed_dose_batch(), NCAOptions()),
     ("bolus without intervals", mixed_dose_batch(), NCAOptions(intervals=False)),
