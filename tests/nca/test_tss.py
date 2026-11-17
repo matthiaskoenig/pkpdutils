@@ -246,6 +246,49 @@ def test_a_flat_series_has_no_estimate_whatever_the_starts_of_the_search(
     assert not searched
 
 
+def test_a_flat_series_on_an_irregular_grid_has_no_estimate_either(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the input which makes the guard load bearing rather than tidy, found by a differential
+    # sweep of 800 noise-free series against the kernel: 23 troughs of one and the same double
+    # on a grid whose first time is a twenty-fifth of its last. The cost at the high edge of
+    # the range is then not 0 but the rounding of the model there, about 1e-41, and the search
+    # stops at an interior point whose cost is 1.7 times lower, so the tie test does not fire
+    # and the series was answered with tss = 0.2783 - a number out of the rounding of a
+    # constant series. The tolerance is relative and cannot see that, the guard can
+    monkeypatch.setattr(engine, "_force_python", True)
+    time = np.array(
+        [
+            4.092234572961332,
+            9.732813207153443,
+            11.698375397332395,
+            11.706181166276703,
+            25.99456951343599,
+            26.16766364357455,
+            35.65941705776162,
+            41.17051631505455,
+            42.224812446843956,
+            44.794893663794916,
+            53.61523865561471,
+            54.62850377493503,
+            63.17089255769438,
+            66.97481332378435,
+            69.74969693177903,
+            78.2895045043537,
+            80.61200906800438,
+            83.20716595193569,
+            90.34865936268163,
+            94.16857840298161,
+            94.18081950382191,
+            95.15203857285773,
+            95.63239698232921,
+        ]
+    )
+    value = np.full(time.size, 1.5200989623303864e-06)
+    tss, plateau = tss_module._monoexponential_row(time, value, 0.9)
+    assert np.isnan(tss) and np.isnan(plateau)
+
+
 def test_a_rising_and_a_falling_series_have_no_estimate_whatever_the_starts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
