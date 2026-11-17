@@ -166,7 +166,8 @@ def _monoexponential_row(
         `1e-12` of the plateau: the cost of the whole region above the optimum
         is then zero to that resolution, the search stops anywhere in it and
         ties the edge, so python reports `NaN` where the kernel still recovers
-        `k` to a few parts in `1e4` (`release-notes/0.4.0.md` of the kernel).
+        `k` to a few parts in `1e4`; the release notes of the kernel describe
+        that corner from its own side.
     """
     if time.size < 3 or not np.all(value > 0.0) or time[-1] <= 0.0:
         return float("nan"), float("nan")
