@@ -286,6 +286,33 @@ def test_the_classification_stays_with_the_python_class(summary_engine: str) -> 
     assert {"k_median", "k_n", "plain_sd"} <= names
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param([-8.393, 9.699], id="8ulp"),
+        pytest.param([-6.882, 4.233], id="2ulp"),
+        pytest.param([-9.025, 9.984, 3.047, -5.31], id="four"),
+    ],
+)
+def test_the_median_is_percentile_50_in_both_engines(
+    values: list[float], summary_engine: str
+) -> None:
+    # `numpy.nanmedian` averages the two middle order statistics as `0.5 * (a + b)` while a
+    # percentile interpolates them as `a + 0.5 * (b - a)`: the two differ in the last bits on
+    # about 15 % of the groups of an even finite count. Positive NCA magnitudes never show it,
+    # a `FitResult.summarize` of a slope straddling zero does, and the kernel has only the
+    # percentile, so both engines go through `nan_percentile`
+    array = np.array(values)
+    summary = table(a=values).summarize("s")
+    assert scalar(summary, "a_median") == float(
+        result_module.nan_percentile(array, 50.0)
+    )
+    # these groups are the ones which discriminate: averaging the middle pair differs
+    assert float(np.nanmedian(array)) != float(
+        result_module.nan_percentile(array, 50.0)
+    )
+
+
 needs_kernel_summary = pytest.mark.skipif(
     not hasattr(pkpdutils_core, "summarize"),
     reason="this build of pkpdutils-core carries no `summarize`",

@@ -1429,8 +1429,13 @@ def _python_statistics(values: np.ndarray, alpha: float) -> dict[str, np.ndarray
         se = sd / np.sqrt(count)
         tq = student_t.isf(alpha / 2.0, np.maximum(count - 1.0, 1.0))
         low, high = mean - tq * se, mean + tq * se
-        median = np.nanmedian(filled, axis=-1)
-        q25, q75 = nan_percentile(filled, (25.0, 75.0))
+        # the median is percentile 50 and goes through the same helper as the
+        # quartiles: `numpy.nanmedian` averages the two middle order statistics
+        # as `0.5 * (a + b)` where `nan_percentile` interpolates them as
+        # `a + 0.5 * (b - a)`, which differ in the last bit on about 15 % of
+        # the groups of an even finite count, and the kernel's `summarize` is
+        # bit exact with `nan_percentile` (`nan_percentile_rows` of the kernel)
+        q25, median, q75 = nan_percentile(filled, (25.0, 50.0, 75.0))
         minimum = np.nanmin(filled, axis=-1)
         maximum = np.nanmax(filled, axis=-1)
         cv = sd / np.abs(mean)
