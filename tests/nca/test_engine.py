@@ -1205,7 +1205,7 @@ def test_a_multiple_dose_batch_gives_the_same_result_from_either_engine(
     assert_same_mapping(timecourses, options)
     assert_same_result(nca(timecourses, options=options), python)
     # the numbers of the python core, exactly where they are counted
-    counts = np.isfinite(timecourses.dose_amount).sum(axis=1).tolist()
+    counts = np.isfinite(engine.dose_arrays(timecourses)[0]).sum(axis=1).tolist()
     assert python.ds["n_doses"].to_numpy().tolist() == counts
     tau = python.ds["tau"].to_numpy()
     if options.tau is None:

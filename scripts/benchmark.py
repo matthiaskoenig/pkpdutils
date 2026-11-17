@@ -57,6 +57,7 @@ import pkpdutils
 from pkpdutils import (
     Acceptance,
     Dose,
+    Dosing,
     Kind,
     NCAOptions,
     NCAResult,
@@ -144,6 +145,30 @@ def multi_dose_batch(
         route=Route.IV_BOLUS,
         substance="drug",
     )
+
+
+def mixed_route_batch() -> Timecourses:
+    """An oral arm of single doses and an intravenous arm of three doses."""
+    t = np.linspace(0.25, 36.0, 24)
+    curves = []
+    for route, n_doses in [(Route.ORAL, 1), (Route.IV_BOLUS, 3)]:
+        values = sum(
+            np.where(t >= 12.0 * i, 5.0 * np.exp(-0.2 * (t - 12.0 * i)), 0.0)
+            for i in range(n_doses)
+        )
+        curves.append(
+            Timecourse(
+                time=t,
+                value=np.asarray(values),
+                time_unit="hr",
+                unit="mg/l",
+                dosing=Dosing.regimen(
+                    Dose(amount=100.0, unit="mg", route=route), 12.0, n_doses
+                ),
+                substance="drug",
+            )
+        )
+    return Timecourses.from_timecourses(curves, dim="individual", labels=["a", "b"])
 
 
 def case_nca_small() -> Case:
@@ -482,6 +507,11 @@ def refusal_rows() -> list[tuple[str, str]]:
             NCAOptions(partial_aucs={"auc_0_4": (0.0, 4.0)}),
         ),
         ("the uncertainty of a group curve", group, NCAOptions()),
+        (
+            "routes which differ in their dosing",
+            mixed_route_batch(),
+            NCAOptions(),
+        ),
         (
             "the reporting units of a result",
             batch,

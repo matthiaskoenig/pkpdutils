@@ -15,18 +15,18 @@ Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils
 
 | case | size | points | kernel ms | python ms | speedup | peak RSS MB |
 |---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 3.20 | 2.96 | 0.93x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 3.29 | 3.25 | 0.99x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 3.33 | 3.24 | 0.97x | 169 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 3.51 | 3.71 | 1.06x | 172 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.63 | 5.49 | 1.51x | 185 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 3.55 | 7.59 | 2.14x | 184 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.28 | 33.65 | 4.62x | 211 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 5.11 | 52.61 | 10.29x | 237 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 66.53 | 126.27 | 1.90x | 574 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 19.34 | 593.06 | 30.66x | 507 |
+| engine-1x12 | 1 curve x 12 points | 12 | 3.16 | 2.85 | 0.90x | 169 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 3.24 | 3.17 | 0.98x | 169 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 3.22 | 3.25 | 1.01x | 169 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 3.35 | 3.56 | 1.06x | 172 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.74 | 5.40 | 1.44x | 185 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 3.56 | 7.47 | 2.10x | 187 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.46 | 32.36 | 4.34x | 211 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 5.18 | 52.37 | 10.10x | 235 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 68.10 | 123.27 | 1.81x | 572 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 22.81 | 558.63 | 24.49x | 510 |
 
-The largest ratio of this run is 30.66x, at 10 000 curves x 200 points, and the smallest 0.93x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.97x and 250 curves x 12 points is 1.06x. Below the crossover the kernel path costs at most 0.23 ms more per call, and the ratios there run from 0.93x to 0.99x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.62x and 1 000 curves x 200 points at 10.29x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.51x.
+The largest ratio of this run is 24.49x, at 10 000 curves x 200 points, and the smallest 0.90x, at 1 curve x 12 points. The two engines cost the same between 1 200 and 2 000 points: 100 curves x 12 points is 0.98x and 10 curves x 200 points is 1.01x. Below the crossover the kernel path costs at most 0.31 ms more per call, and the ratios there run from 0.90x to 0.98x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.34x and 1 000 curves x 200 points at 10.10x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.44x.
 <!-- timings:end -->
 
 ## Where the crossover is
@@ -52,6 +52,7 @@ An analysis `pkpdutils-core` does not carry takes the python path, with the numb
 | the acceptance criteria of the terminal phase | the acceptance criteria (NcaOptions::acceptance) |
 | a named partial area | the named partial areas (NcaOptions::partial_aucs) |
 | the uncertainty of a group curve | the propagation of the uncertainty of a group curve |
+| routes which differ in their dosing | a batch of several routes of which only some have a multiple dose row, whose variables the python core reports per route |
 | the reporting units of a result | the unit conversion of a result (NcaOptions::units) |
 <!-- refusals:end -->
 
