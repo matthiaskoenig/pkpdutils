@@ -15,14 +15,14 @@ around:
 
 - `pkpdutils_core.is_supported` and the `pkpdutils_core.UnsupportedError` of
   `pkpdutils_core.analyze_batch` are the **authority** on what the kernel
-  analyses. `unsupported_reason` is an **optimization** which mirrors them, so
-  that a batch the kernel would refuse is never converted at all.
-- A mirror which is too narrow is the dangerous direction: the batch quietly
-  takes the python path, the numbers are right and nobody learns that the fast
-  path never fired. A mirror which is too wide corrects itself, since the
-  kernel refuses with `UnsupportedError` and the caller falls back. The reason
-  this module reports is therefore the kernel's own sentence, word for word,
-  and `tests/nca/test_engine.py` asserts the two agree on every refusal rather
+  analyses. `unsupported_reason` forwards to the first of them and holds no
+  refusal of its own, so a kernel release which changes one needs no change
+  here; the three conditions it does answer itself are about the python
+  objects and are no refusal of the kernel (see its docstring).
+- A batch which only `analyze_batch` refuses (a unit the registry of the
+  kernel cannot read) raises `UnsupportedError` and `nca` falls back, so the
+  reason is the kernel's own sentence, word for word, either way, and
+  `tests/nca/test_engine.py` asserts the two agree on every refusal rather
   than asserting a text of its own.
 
 The two engines report the same variables with the same numbers, and one
@@ -52,7 +52,9 @@ dense cover of those variables on those batches, and the measure of it is that
 a mutation of `aumc_inf_pred` by 1e-5 for every batch of three samples or more
 fails 25 tests with the gate disarmed. The gate compares **every** batch the
 caller builds, and these are the parts of an answer no reference table of the
-suite reaches:
+suite reaches, the multiple dose analysis among them (the `interval_*` point
+variables, the steady state, `n_doses`, `tau`, the flags `INCOMPLETE_INTERVAL`
+and `EXTRAPOLATED_TROUGH`, and a last interval completed within `tau_tolerance`):
 
 - `flags` and `c0_method` as exact integers, which no table of another tool
   carries and which a tolerance would not compare anyway (`_compare_columns`),
@@ -67,12 +69,10 @@ suite reaches:
   kernel reports for every variable, which the host neither adopts nor drops.
 
 What the gate does **not** reach is every analysis the dispatch refuses, since
-a batch which never goes to the kernel is held against nothing: the multiple
-dose analysis and with it the `interval_*` variables, the steady state and a
-last interval completed within `tau_tolerance`, the propagation of the
-uncertainty of a group curve, the acceptance criteria, the named partial areas,
-the effect curve and the unit conversion of a result (`unsupported_reason`, the
-table of `docs/benchmark.md`). The urine analysis is out of reach for another
+a batch which never goes to the kernel is held against nothing: the
+propagation of the uncertainty of a group curve, the acceptance criteria, the
+named partial areas, the effect curve and the unit conversion of a result
+(`unsupported_reason`, the table of `docs/benchmark.md`). The urine analysis is out of reach for another
 reason: `pkpdutils.nca.urine.nca_urine` calls `compute_parameters` of the
 python core directly and never passes through `nca`, so `rate` and `midpoint`
 are no answer of an engine at all. Every one of those is held to the python
@@ -109,9 +109,7 @@ from pkpdutils.nca.options import (
     SCALAR_KEY_TYPES,
     TEXT_KEY_TYPES,
     WINDOW_DEFAULT_KEY,
-    Kind,
     NCAOptions,
-    UncertaintyMethod,
     encode_window_key,
 )
 from pkpdutils.nca.result import parameter_unit
@@ -129,7 +127,7 @@ except ImportError as missing:
 
 logger = logging.getLogger(__name__)
 
-# the wheel of `pkpdutils-core` 0.2.0 carries no stub beside its compiled
+# the wheel of `pkpdutils-core` (0.2.0 to 0.3.0) carries no stub beside its compiled
 # module, so a type checker sees none of its three names and every lookup of
 # one is suppressed by name
 UnsupportedError = pkpdutils_core.UnsupportedError  # ty: ignore[missing-attribute]
@@ -158,7 +156,7 @@ EMPTY_REASON: str = "a batch of no samples, whose variables the kernel does not 
 
 Together with `FORCED_REASON` the only reason of this module which is not the
 kernel's own, and the only one of the two about a real batch. `pkpdutils-core`
-0.2.0 derives the variables of its result from the routes of the rows it ran,
+(0.2.0 to 0.3.0) derives the variables of its result from the routes of the rows it ran,
 so a batch of no rows comes back with one column instead of with the empty
 column of every variable python reports (`docs/carry-forward.md` of the kernel
 names the fix, which belongs on its side). The host therefore answers an empty
@@ -195,40 +193,155 @@ one of the host rather than adopted.
 """
 
 
-def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | None:
-    """Why the kernel would refuse this analysis, `None` when it would run it.
+class KernelInput:
+    """A batch and its options laid out once as the dicts of the abi.
 
-    The conditions are `unsupported_reason` of `crates/python/src/options.rs`
-    in its order, since an analysis may trip over several of them and only the
-    first is reported, and every sentence is the kernel's own (the `what` of
-    its `KernelError::Unsupported`), so that a reason of this module and a
-    reason of the kernel cannot drift apart unnoticed. Three reasons are the
-    host's own and are no refusal of the kernel, `FORCED_REASON`,
-    `EMPTY_REASON` and `MIXED_LABELS_REASON`, which is why they are named
-    rather than written here and are answered before the kernel's own
-    conditions are read:
+    `unsupported_reason` and `run_kernel` both need `batch_dict` and
+    `options_dict`, and the conversion copies the whole batch, so `nca` builds
+    one `KernelInput` and hands it to both rather than converting twice. The
+    dicts are built on first use, so an analysis the host answers itself
+    (`FORCED_REASON`, `EMPTY_REASON`, `MIXED_LABELS_REASON`) converts nothing.
+    """
 
-    - the analysis of an effect curve (`NCAOptions.kind`)
-    - a multiple dose analysis (`NCAOptions.tau`)
-    - a protocol of more than one dose in any row of the batch
-    - the acceptance criteria, whenever one of their four thresholds is set
-      (`NCAOptions.acceptance`)
-    - the named partial areas (`NCAOptions.partial_aucs`)
-    - the propagation of the uncertainty of a group curve, of what the options
-      *resolve* to and not of what they say: a batch with `sd` or `se` is
-      refused although the options name no method, and one is analysed
-      although it carries `sd` when they name `UncertaintyMethod.NONE`. The
-      counts `n` play no part in it, as they play none in
-      `NCAOptions.resolve_uncertainty`
-    - the unit conversion of a result (`NCAOptions.units`)
+    def __init__(self, timecourses: Timecourses, options: NCAOptions) -> None:
+        """Hold the batch and the options, converting nothing yet.
+
+        Args:
+            timecourses: the batch
+            options: the options of the analysis
+        """
+        self.timecourses = timecourses
+        self.options = options
+        self._dicts: tuple[dict[str, Any], dict[str, Any]] | None = None
+
+    @property
+    def dicts(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The batch and the options as the two dicts of the abi, built once."""
+        if self._dicts is None:
+            self._dicts = (
+                batch_dict(self.timecourses),
+                options_dict(self.options),
+            )
+        return self._dicts
+
+
+def _check_prepared(
+    timecourses: Timecourses, options: NCAOptions, prepared: KernelInput | None
+) -> KernelInput:
+    """The conversion of this batch: `prepared` if it belongs to it, else a new one.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+        prepared: the conversion the caller made, or `None`
+
+    Returns:
+        `prepared`, or a fresh `KernelInput` (nothing converted yet).
+
+    Raises:
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`, which would analyse another batch than
+            the one asked about.
+    """
+    if prepared is None:
+        return KernelInput(timecourses, options)
+    if prepared.timecourses is not timecourses or prepared.options is not options:
+        raise ValueError(
+            "`prepared` was built from another batch or other options than the "
+            "ones passed beside it"
+        )
+    return prepared
+
+
+MIXED_ROUTE_DOSING_REASON: str = (
+    "a batch of several routes of which only some have a multiple dose row, "
+    "whose variables the python core reports per route"
+)
+"""The reason `unsupported_reason` gives for routes which differ in their dosing.
+
+The python core runs one group per route and reports the steady state variables
+of the groups which have a multiple dose row, so a batch of an oral arm of
+single doses and an intravenous arm of several has no `cl_ss_f`, where the
+kernel reports one union over the rows and carries it as a column of `NaN`. The
+variables of the two engines then differ and not only their order, which no
+host side sorting fixes, so such a batch takes the python path until the
+kernel reports the variables per route. A batch whose routes all have a
+multiple dose row, or none of them, is carried (`_python_order` puts its
+variables in the order of the core).
+
+This refusal is a workaround and no permanent condition of the host, unlike the
+three before it: it exists because the kernel reports one union of variables
+instead of the variables of every route, and it goes when the kernel does.
+"""
+
+
+def _routes_differ_in_dosing(timecourses: Timecourses, options: NCAOptions) -> bool:
+    """Whether some routes of a batch have a multiple dose row and others have not.
 
     Args:
         timecourses: the batch
         options: the options of the analysis
 
     Returns:
-        The reason, or `None` for an analysis the kernel carries.
+        `True` for a batch of several routes of which at least one has a
+        multiple dose row (`pkpdutils.nca.nca.is_multiple_dose`) and at least
+        one has none.
     """
+    routes = timecourses.routes
+    if routes is None:
+        return False
+    rows = routes.ravel()
+    multiple = _multiple_rows(timecourses, options)
+    has = {
+        bool(multiple[rows == route].any()) for route in dict.fromkeys(rows.tolist())
+    }
+    return len(has) > 1
+
+
+def unsupported_reason(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    prepared: KernelInput | None = None,
+) -> str | None:
+    """Why the kernel would refuse this analysis, `None` when it would run it.
+
+    The kernel decides, the host forwards: every refusal of the kernel (an
+    effect curve, the acceptance criteria, the named partial areas, the
+    propagation of the uncertainty of a group curve, the unit conversion of a
+    result, and whatever a later release adds) is the answer of
+    `pkpdutils_core.is_supported`, text and order included, so that a release
+    which changes a refusal changes it here without a change of the host.
+
+    The host answers before it asks only what the kernel cannot see, which is
+    a statement about the python objects and no refusal of the kernel's, and
+    each of them is named rather than written here (`FORCED_REASON`,
+    `EMPTY_REASON`, `MIXED_LABELS_REASON`, `MIXED_ROUTE_DOSING_REASON`).
+    `is_supported` itself accepts all four of them: it says nothing about the python path being pinned, and it answers
+    `None` for an empty batch and for a batch of mixed labels, whose analysis
+    the kernel then answers with one column or rejects with a plain
+    `ValueError`. One refusal of the kernel is invisible to `is_supported`
+    too, a unit string its registry cannot read, and it is raised by
+    `run_kernel` as an `UnsupportedError`, which `nca` answers with the
+    fallback.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+
+    Keyword Args:
+        prepared: the conversion of this batch and these options which
+            `run_kernel` is given as well, so that it is made once; built here
+            when `None`; it must have been built from these very objects
+
+    Returns:
+        The reason, or `None` for an analysis the kernel carries.
+
+    Raises:
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`, whichever path answers.
+    """
+    prepared = _check_prepared(timecourses, options, prepared)
     if _force_python:
         return FORCED_REASON
     if timecourses.n_samples == 0:
@@ -238,56 +351,12 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
         and mixed_label_dim(timecourses) is not None
     ):
         return MIXED_LABELS_REASON
-    if options.kind is Kind.EFFECT:
-        return "the analysis of an effect curve (Kind::Effect)"
-    if options.tau is not None:
-        return "a multiple dose analysis (NcaOptions::tau)"
-    amounts, times, _ = dose_arrays(timecourses)
-    # the doses of a row are the columns whose amount and whose time are both a
-    # number, counted on the very arrays `batch_dict` sends, so that the
-    # predicate and the batch cannot read one protocol differently
-    if np.any((np.isfinite(amounts) & np.isfinite(times)).sum(axis=1) >= 2):
-        return "a protocol of more than one dose (the multiple dose analysis)"
-    acceptance = options.acceptance
-    if any(
-        threshold is not None
-        for threshold in (
-            acceptance.r2_adj_min,
-            acceptance.extrapolation_max,
-            acceptance.span_min,
-            acceptance.n_points_min,
-        )
-    ):
-        return "the acceptance criteria (NcaOptions::acceptance)"
-    if options.partial_aucs:
-        return "the named partial areas (NcaOptions::partial_aucs)"
-    if resolved_uncertainty(timecourses, options) is not UncertaintyMethod.NONE:
-        return "the propagation of the uncertainty of a group curve"
-    if options.units:
-        return "the unit conversion of a result (NcaOptions::units)"
-    return None
-
-
-def resolved_uncertainty(
-    timecourses: Timecourses, options: NCAOptions
-) -> UncertaintyMethod:
-    """The uncertainty the analysis would really propagate.
-
-    `resolved_uncertainty` of `crates/python/src/options.rs`, which is
-    `NCAOptions.resolve_uncertainty` of the spread the batch carries: the
-    bootstrap for a batch with `sd` or `se` per point, nothing for a batch of
-    individual curves. The counts `n` are no spread and play no part.
-
-    Args:
-        timecourses: the batch
-        options: the options of the analysis
-
-    Returns:
-        The method, `UncertaintyMethod.NONE` for an analysis which propagates
-        nothing.
-    """
-    spread = timecourses.sd is not None or timecourses.se is not None
-    return options.resolve_uncertainty(spread)
+    if _routes_differ_in_dosing(timecourses, options):
+        return MIXED_ROUTE_DOSING_REASON
+    is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
+    batch, kernel_options = prepared.dicts
+    reason: str | None = is_supported(batch, kernel_options)
+    return reason
 
 
 def dose_arrays(
@@ -684,7 +753,12 @@ def _interval(window: tuple[float, float]) -> tuple[float, float]:
     return float(start), float(end)
 
 
-def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, Any]:
+def kernel_result(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    prepared: KernelInput | None = None,
+) -> dict[str, Any]:
     """Run the kernel on a batch and give back its result as it comes.
 
     The six sections of the bindings: `parameters`, `units` over the variables
@@ -696,6 +770,11 @@ def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, An
         timecourses: the batch
         options: the options of the analysis
 
+    Keyword Args:
+        prepared: the conversion of the batch and the options, made once by the
+            caller which asked `unsupported_reason` as well; built here when
+            `None`, and it must have been built from these very objects
+
     Returns:
         The result of `pkpdutils_core.analyze_batch`.
 
@@ -703,12 +782,15 @@ def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, An
         UnsupportedError: if this build of the kernel does not carry the
             analysis, which `unsupported_reason` answers without running
             anything.
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`.
     """
     analyze = pkpdutils_core.analyze_batch  # ty: ignore[missing-attribute]
+    batch, kernel_options = _check_prepared(timecourses, options, prepared).dicts
     return dict(
         analyze(
-            batch_dict(timecourses),
-            options_dict(options),
+            batch,
+            kernel_options,
             n_workers=options.n_workers,
         )
     )
@@ -807,7 +889,10 @@ one dry run per batch and every other caller nothing.
 
 
 def _order_key(
-    routes: tuple[Route, ...], dosed: int, options: NCAOptions
+    routes: tuple[Route, ...],
+    dosed: int,
+    options: NCAOptions,
+    multiple: tuple[bool, ...] = (),
 ) -> tuple[Any, ...]:
     """The key of `_ORDER_CACHE`: the shape the variable order depends on.
 
@@ -822,15 +907,24 @@ def _order_key(
             appearance, every one of them once
         dosed: the number of doses per row of the protocol, 0 without one
         options: the options of the analysis
+        multiple: for every route, whether any of its rows is analysed as a
+            multiple dose row (`pkpdutils.nca.nca.is_multiple_dose`), which
+            adds the steady state and the `interval_*` variables to the
+            variables of its group and so moves it in the merge
 
     Returns:
         The key, a tuple of hashable values.
     """
-    return (routes, dosed, repr(options))
+    return (routes, dosed, repr(options), multiple)
 
 
 def _dry_order(
-    routes: tuple[Route, ...], *, dosed: int, n_time: int, options: NCAOptions
+    routes: tuple[Route, ...],
+    *,
+    dosed: int,
+    n_time: int,
+    options: NCAOptions,
+    multiple: tuple[bool, ...] = (),
 ) -> list[str]:
     """The variables of a batch of several routes, in the order the python core reports.
 
@@ -852,6 +946,17 @@ def _dry_order(
             without doses, whose rows report no dose dependent variable
         n_time: the number of time points of the batch
         options: the options of the analysis
+        multiple: for every route, whether its group has a multiple dose row.
+            Every batch `nca` sends to the kernel has the same answer for all
+            its routes (`MIXED_ROUTE_DOSING_REASON` refuses the others), so
+            the per-route form matters only for a direct call of `run_kernel`
+            on a refused batch and once that refusal is lifted, when the
+            groups of the core differ in their variables and `merge_rows` puts
+            the larger first. The core decides that per row, so a group which
+            has one is run on
+            a single row of `NaN` and a protocol of two doses (a run on no row
+            at all is never a multiple dose analysis and would leave the
+            steady state and `interval_*` variables out of the order)
 
     Returns:
         The names of the variables in the order `run_rows` reports them in.
@@ -860,21 +965,27 @@ def _dry_order(
     # is needed and not at the top
     from pkpdutils.nca.nca import merge_rows, run_rows
 
-    time = np.zeros((0, n_time))
-    amounts = np.zeros((0, dosed)) if dosed else None
-    durations = np.full((0, dosed), np.nan) if dosed else None
-    parts = [
-        run_rows(
-            time,
-            time,
-            dose_amount=amounts,
-            dose_time=amounts,
-            dose_duration=durations,
-            route=route,
-            options=options,
+    parts = []
+    for i, route in enumerate(routes):
+        # one row of two doses where the group has a multiple dose row, which a
+        # protocol of one dose would not be unless `tau` is given
+        rows = 1 if dosed and i < len(multiple) and multiple[i] else 0
+        width = max(dosed, 2) if rows else dosed
+        time = np.full((rows, n_time), np.nan)
+        amounts = np.ones((rows, width)) if dosed else None
+        dose_times = np.arange(width, dtype=np.float64) * np.ones((rows, 1))
+        durations = np.full((rows, width), np.nan) if dosed else None
+        parts.append(
+            run_rows(
+                time,
+                time,
+                dose_amount=amounts,
+                dose_time=dose_times if dosed else None,
+                dose_duration=durations,
+                route=route,
+                options=options,
+            )
         )
-        for route in routes
-    ]
     return list(merge_rows(parts, [0] * len(parts)))
 
 
@@ -885,6 +996,7 @@ def _python_order(
     *,
     dosed: int,
     n_time: int,
+    multiple: np.ndarray | None = None,
 ) -> list[str]:
     """The order the python core reports the variables of a batch of several routes in.
 
@@ -917,6 +1029,12 @@ def _python_order(
             0 for a batch without a protocol, exactly where `dose_arrays`
             reports an empty row)
         n_time: the number of time points of the batch
+        multiple: which rows are analysed as multiple dose rows
+            (`pkpdutils.nca.nca.is_multiple_dose`), `None` for none of them.
+            The python core runs one group per route and a group with a
+            multiple dose row reports the steady state and `interval_*`
+            variables the others do not, so the order of the merge depends on
+            which routes have one.
 
     Returns:
         The names in the order `run_rows` would report them in.
@@ -924,10 +1042,18 @@ def _python_order(
     # the routes of a batch are a handful of values repeated over its rows, so
     # they are deduplicated before they are read as routes and not after
     given = tuple(Route(value) for value in dict.fromkeys(routes.ravel().tolist()))
-    key = _order_key(given, dosed, options)
+    row_routes = routes.ravel()
+    has_multiple = (
+        tuple(False for _ in given)
+        if multiple is None
+        else tuple(bool(multiple.ravel()[row_routes == route].any()) for route in given)
+    )
+    key = _order_key(given, dosed, options, has_multiple)
     order = _ORDER_CACHE.get(key)
     if order is None:
-        order = _dry_order(given, dosed=dosed, n_time=n_time, options=options)
+        order = _dry_order(
+            given, dosed=dosed, n_time=n_time, options=options, multiple=has_multiple
+        )
         if len(_ORDER_CACHE) >= _ORDER_CACHE_MAX:
             _ORDER_CACHE.clear()
         _ORDER_CACHE[key] = order
@@ -938,11 +1064,35 @@ def _python_order(
     ]
 
 
+def _multiple_rows(timecourses: Timecourses, options: NCAOptions) -> np.ndarray:
+    """The rows of a batch which the python core analyses as multiple dose rows.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+
+    Returns:
+        The boolean mask `(N,)`, read by the very function of the core.
+    """
+    # `pkpdutils.nca.nca` imports this module
+    from pkpdutils.nca.nca import is_multiple_dose
+
+    amounts, times, _ = dose_arrays(timecourses)
+    dosed = amounts.shape[1] > 0
+    return is_multiple_dose(
+        amounts if dosed else None,
+        times if dosed else None,
+        options,
+        n_rows=timecourses.n_samples,
+    )
+
+
 def run_kernel(
     timecourses: Timecourses,
     options: NCAOptions,
     *,
     units: dict[str, str] | None = None,
+    prepared: KernelInput | None = None,
 ) -> dict[str, np.ndarray]:
     """Run the kernel on a batch, as `run_rows` runs the python core.
 
@@ -969,6 +1119,9 @@ def run_kernel(
             (`compare_with_python`), so that the kernel's units are compared
             without the analysis running twice; `None` outside the gate, which
             is every ordinary call.
+        prepared: the conversion of the batch and the options, see
+            `unsupported_reason`; built here when `None`, and it must have been
+            built from these very objects
 
     Returns:
         One array per variable, `flags` among the keys.
@@ -977,8 +1130,10 @@ def run_kernel(
         UnsupportedError: if this build of the kernel does not carry the
             analysis, which `unsupported_reason` answers without running
             anything.
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`.
     """
-    result = kernel_result(timecourses, options)
+    result = kernel_result(timecourses, options, prepared=prepared)
     if units is not None:
         units.update(result["units"])
     n_rows = timecourses.n_samples
@@ -1006,6 +1161,7 @@ def run_kernel(
         values,
         dosed=timecourses.n_dose,
         n_time=timecourses.n_time,
+        multiple=_multiple_rows(timecourses, options),
     )
     return {name: values[name] for name in order}
 
@@ -1036,7 +1192,7 @@ COMPARE_ABS: float = 1e-12
 KERNEL_UNITLESS: frozenset[str] = frozenset({"flags"})
 """The variables of the mapping whose unit the kernel reports for nobody.
 
-`pkpdutils-core` 0.2.0 reports a unit for every parameter of its result and
+`pkpdutils-core` (0.2.0 to 0.3.0) reports a unit for every parameter of its result and
 none for its flags, which carry no unit on either side (`PARAMETER_UNITS`
 spells them `dimensionless`). A name of this set is left out of the unit
 comparison **only while the kernel really reports nothing for it**: the day it

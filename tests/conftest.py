@@ -2,12 +2,13 @@
 
 The analysis runs in the rust kernel of `pkpdutils.nca.engine` where that
 build carries it and in the python core otherwise, and the decision is taken
-by a predicate of the host which mirrors the kernel's own
-(`engine.unsupported_reason` against `pkpdutils_core.is_supported`). The
-mirror is an optimization and the kernel is the authority, which makes one
-direction of a drift silent and permanent: a predicate which stops accepting
-some shape sends it down the python path, the numbers are still right, and
-nothing ever complains.
+by a predicate of the host which forwards to the kernel's own
+(`engine.unsupported_reason` and `pkpdutils_core.is_supported`) and answers
+itself only the three conditions about the python objects. The forwarding is
+the authority and the host's own conditions are the part which can drift
+silently and permanently: a condition which stops accepting some shape sends
+it down the python path, the numbers are still right, and nothing ever
+complains.
 
 That is measured rather than feared. A predicate mutated to refuse every
 batch whose unit is not `mg/l` leaves `tests/nca/test_engine.py` green at 57
@@ -211,7 +212,7 @@ def pytest_configure(config: pytest.Config) -> None:
 # at every call of it
 is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
 
-Predicate = Callable[[Timecourses, NCAOptions], str | None]
+Predicate = Callable[..., str | None]
 """The signature of `engine.unsupported_reason`, which the hook stands in for."""
 
 Kernel = Callable[..., dict[str, np.ndarray]]
@@ -235,6 +236,32 @@ def _object_labels(timecourses: Timecourses) -> bool:
         for dim in timecourses.sample_dims
         if dim in timecourses.ds.coords
     )
+
+
+def _routes_differ_in_dosing(timecourses: Timecourses, options: NCAOptions) -> bool:
+    """Whether some routes of a batch have a multiple dose row and others have not.
+
+    The necessary condition of `engine.MIXED_ROUTE_DOSING_REASON`, derived from
+    the dose arrays on its own and not from the function of the engine which
+    answers the reason, so that the two cannot agree by being the same code.
+
+    Args:
+        timecourses: the batch.
+        options: the options of the analysis.
+
+    Returns:
+        Whether the routes of the batch differ in having a protocol of two or
+        more doses, `False` when `tau` is given (every row is then a multiple
+        dose row).
+    """
+    routes = timecourses.routes
+    if routes is None or options.tau is not None:
+        return False
+    amounts, times, _ = engine.dose_arrays(timecourses)
+    doses = (np.isfinite(amounts) & np.isfinite(times)).sum(axis=1)
+    rows = routes.ravel()
+    has = {bool((doses[rows == route] >= 2).any()) for route in set(rows.tolist())}
+    return len(has) > 1
 
 
 def _named_window(options: NCAOptions) -> bool:
@@ -281,13 +308,19 @@ class CrossCheck:
         """How many batches had no sample at all."""
         self.mixed: int = 0
         """How many batches the host refused for the types of their labels."""
+        self.dosing: int = 0
+        """How many batches the host refused for routes which differ in dosing."""
         self.refusals: list[str] = []
         """The kernel's refusals of a batch the host let through."""
         self.fallbacks: list[logging.LogRecord] = []
         """The fallback warnings logged while this test ran."""
 
     def unsupported_reason(
-        self, timecourses: Timecourses, options: NCAOptions
+        self,
+        timecourses: Timecourses,
+        options: NCAOptions,
+        *,
+        prepared: engine.KernelInput | None = None,
     ) -> str | None:
         """Why the kernel would refuse this analysis, checked against the kernel.
 
@@ -298,7 +331,7 @@ class CrossCheck:
         Returns:
             Whatever the host's predicate answers, unchanged.
         """
-        reason = self._predicate(timecourses, options)
+        reason = self._predicate(timecourses, options, prepared=prepared)
         # the two conditions are read from the inputs and never from `reason`,
         # so that a predicate which answers one of these reasons for every
         # batch does not make the check vacuous
@@ -314,6 +347,21 @@ class CrossCheck:
             assert reason == engine.EMPTY_REASON, (
                 "a batch of no samples is the host's own refusal and the "
                 f"predicate answers {reason!r} instead of the empty reason"
+            )
+            return reason
+        if reason == engine.MIXED_ROUTE_DOSING_REASON:
+            # the host's fourth own refusal, a statement about how the python
+            # core groups a batch which the kernel's predicate does not make.
+            # As for the labels, the exemption is read from the answer and its
+            # necessary condition from the inputs: a batch of several routes
+            # with a protocol of more than one dose or a given `tau`
+            self.dosing += 1
+            assert _routes_differ_in_dosing(timecourses, options), (
+                "the predicate refuses this batch for routes which differ in "
+                "their dosing, and the routes of the batch either all have a "
+                "multiple dose row or none has one (or `tau` is given): a "
+                "predicate which answers that reason for any other batch "
+                "sends it down the python path for good."
             )
             return reason
         if reason == engine.MIXED_LABELS_REASON:
@@ -356,6 +404,7 @@ class CrossCheck:
         options: NCAOptions,
         *,
         units: dict[str, str] | None = None,
+        prepared: engine.KernelInput | None = None,
     ) -> dict[str, np.ndarray]:
         """Run the kernel, counting a refusal of a batch the host let through.
 
@@ -377,7 +426,7 @@ class CrossCheck:
             UnsupportedError: as the kernel raised it.
         """
         try:
-            return self._kernel(timecourses, options, units=units)
+            return self._kernel(timecourses, options, units=units, prepared=prepared)
         except engine.UnsupportedError as refusal:
             self.refusals.append(str(refusal))
             raise
@@ -439,7 +488,9 @@ def engine_cross_check(
     finally:
         logger.removeHandler(watch)
         global _batches_seen
-        _batches_seen += check.compared + check.forced + check.empty + check.mixed
+        _batches_seen += (
+            check.compared + check.forced + check.empty + check.mixed + check.dosing
+        )
 
 
 @pytest.hookimpl(wrapper=True)

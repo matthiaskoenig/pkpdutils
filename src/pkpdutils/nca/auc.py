@@ -207,7 +207,9 @@ def interpolate_at(
     # number of valid points at or before the query time
     count = ((tp <= tq) & valid).sum(axis=1)
     out = np.full(tp.shape[0], np.nan)
-    with np.errstate(invalid="ignore"):
+    # `divide` as well: a row whose query lies outside its points has the same
+    # time on both sides of its clipped bracket, and its value is masked below
+    with np.errstate(invalid="ignore", divide="ignore"):
         # exactly on the last point
         last_idx = np.clip(n_valid - 1, 0, n - 1)
         t_last = take_rows(tp, last_idx)

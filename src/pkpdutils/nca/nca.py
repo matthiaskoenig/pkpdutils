@@ -1591,7 +1591,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     The analysis runs in the rust kernel of `pkpdutils.nca.engine` where that
     build carries it and in the python core of this module otherwise. The
     decision is taken once per batch (`pkpdutils.nca.engine.unsupported_reason`
-    names what the kernel does not carry: a multiple dose analysis, an effect
+    names what the kernel does not carry: an effect
     curve, the acceptance criteria, the named partial areas, the propagation of
     an uncertainty and the unit conversion of a result), the two engines
     compute the same numbers and the result is assembled from the same mapping
@@ -1704,7 +1704,8 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     # compute the same numbers and the result is assembled from the same
     # mapping either way
     values: dict[str, np.ndarray] | None = None
-    reason = engine.unsupported_reason(timecourses, options)
+    prepared = engine.KernelInput(timecourses, options)
+    reason = engine.unsupported_reason(timecourses, options, prepared=prepared)
     if reason is None:
         # the differential gate, armed by the environment and a no-op
         # otherwise: an ordinary analysis pays one lookup of the environment
@@ -1712,7 +1713,9 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         comparing = engine.comparing()
         units_kernel: dict[str, str] | None = {} if comparing else None
         try:
-            values = engine.run_kernel(timecourses, options, units=units_kernel)
+            values = engine.run_kernel(
+                timecourses, options, units=units_kernel, prepared=prepared
+            )
         except engine.UnsupportedError as refusal:
             # the predicate let a batch through which the kernel does not
             # carry, which is a defect of the predicate and not of the

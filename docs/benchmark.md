@@ -11,22 +11,22 @@ That the two compute the same numbers is measured and not assumed: with `PKPDUTI
 One batch of single dose intravenous bolus curves, analysed through `nca()` with the defaults, is timed through both engines by `scripts/benchmark.py`. Every case runs in a fresh interpreter and alternates the two engines run after run in that one process, kernel, python, kernel, python: the two halves are measured in the same window, so a ratio is not an artefact of whatever else the machine did between two blocks of runs. The python column is the python core of the same installation, reached through the switch `pkpdutils.nca.engine._force_python`. Before anything is timed the benchmark asks four questions a published ratio cannot be read back from, and fails the case rather than answering any of them with a plausible number: whether the dispatch sends this batch to the kernel at all, whether the forced python path is really forced, whether the differential gate is armed (which would run the python core inside the kernel half and halve the ratio) and whether the kernel accepts the batch when it is really called, since a refusal would be answered with a warning and the python path. `points` is the work of the analysis, the curves times the points per curve; `speedup` is the python median over the kernel median, so a number above 1 is the factor the kernel saves and a number below 1 the factor it costs.
 
 <!-- timings:start -->
-Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils` 1.4.0 with `pkpdutils-core` 0.2.0, 9 timed runs per engine and case after one warm-up run each.
+Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils` 1.4.0 with `pkpdutils-core` 0.3.0, 9 timed runs per engine and case after one warm-up run each.
 
 | case | size | points | kernel ms | python ms | speedup | peak RSS MB |
 |---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 4.36 | 3.73 | 0.86x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 4.43 | 4.21 | 0.95x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 4.53 | 4.23 | 0.94x | 169 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 4.54 | 4.63 | 1.02x | 172 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 4.75 | 6.76 | 1.42x | 187 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 4.69 | 9.39 | 2.00x | 187 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 9.85 | 41.50 | 4.21x | 209 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 7.57 | 66.06 | 8.73x | 239 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 89.15 | 175.52 | 1.97x | 553 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 32.14 | 625.48 | 19.46x | 508 |
+| engine-1x12 | 1 curve x 12 points | 12 | 3.16 | 2.85 | 0.90x | 169 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 3.24 | 3.17 | 0.98x | 169 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 3.22 | 3.25 | 1.01x | 169 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 3.35 | 3.56 | 1.06x | 172 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.74 | 5.40 | 1.44x | 185 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 3.56 | 7.47 | 2.10x | 187 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.46 | 32.36 | 4.34x | 211 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 5.18 | 52.37 | 10.10x | 235 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 68.10 | 123.27 | 1.81x | 572 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 22.81 | 558.63 | 24.49x | 510 |
 
-The largest ratio of this run is 19.46x, at 10 000 curves x 200 points, and the smallest 0.86x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.94x and 250 curves x 12 points is 1.02x. Below the crossover the kernel path costs at most 0.63 ms more per call, and the ratios there run from 0.86x to 0.95x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.21x and 1 000 curves x 200 points at 8.73x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.42x.
+The largest ratio of this run is 24.49x, at 10 000 curves x 200 points, and the smallest 0.90x, at 1 curve x 12 points. The two engines cost the same between 1 200 and 2 000 points: 100 curves x 12 points is 0.98x and 10 curves x 200 points is 1.01x. Below the crossover the kernel path costs at most 0.31 ms more per call, and the ratios there run from 0.90x to 0.98x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.34x and 1 000 curves x 200 points at 10.10x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.44x.
 <!-- timings:end -->
 
 ## Where the crossover is
@@ -43,17 +43,16 @@ The sweep is not monotone in its ratio, and that is a property of the defaults r
 
 ## What the kernel does not carry
 
-An analysis `pkpdutils-core` 0.2.0 does not carry takes the python path, with the numbers and the timings it always had, and no table of this page covers it: the two columns would be the same engine twice. The dispatch decides once per batch, and the reason it gives is the kernel's own sentence:
+An analysis `pkpdutils-core` does not carry takes the python path, with the numbers and the timings it always had, and no table of this page covers it: the two columns would be the same engine twice. The dispatch decides once per batch, and the reason it gives is the kernel's own sentence:
 
 <!-- refusals:start -->
 | analysis | the reason the dispatch gives |
 |---|---|
 | an effect curve | the analysis of an effect curve (Kind::Effect) |
-| a given dosing interval | a multiple dose analysis (NcaOptions::tau) |
-| a protocol of several doses | a protocol of more than one dose (the multiple dose analysis) |
 | the acceptance criteria of the terminal phase | the acceptance criteria (NcaOptions::acceptance) |
 | a named partial area | the named partial areas (NcaOptions::partial_aucs) |
 | the uncertainty of a group curve | the propagation of the uncertainty of a group curve |
+| routes which differ in their dosing | a batch of several routes of which only some have a multiple dose row, whose variables the python core reports per route |
 | the reporting units of a result | the unit conversion of a result (NcaOptions::units) |
 <!-- refusals:end -->
 

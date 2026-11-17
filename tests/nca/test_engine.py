@@ -2,6 +2,7 @@ import importlib
 import os
 import subprocess
 import sys
+import warnings
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -20,6 +21,7 @@ from pkpdutils.nca import (
     BootstrapSpread,
     C0Method,
     Kind,
+    NCAFlag,
     NCAOptions,
     NCAResult,
     TerminalPhase,
@@ -188,10 +190,11 @@ def test_a_single_dose_batch_is_eligible() -> None:
     assert engine.unsupported_reason(batch(), NCAOptions()) is None
 
 
-def test_a_multiple_dose_batch_is_not() -> None:
-    reason = engine.unsupported_reason(multiple_dose_batch(), NCAOptions())
-    assert reason is not None
-    assert "more than one dose" in reason
+def test_a_multiple_dose_batch_is_eligible() -> None:
+    assert engine.unsupported_reason(multiple_dose_batch(), NCAOptions()) is None
+    assert (
+        engine.unsupported_reason(multiple_dose_batch(), NCAOptions(tau=12.0)) is None
+    )
 
 
 def test_a_group_batch_is_not() -> None:
@@ -246,7 +249,6 @@ def test_a_batch_without_a_spread_and_an_explicit_method_is_not() -> None:
 
 REFUSED: list[tuple[str, NCAOptions]] = [
     ("effect curve", NCAOptions(kind=Kind.EFFECT, effect_threshold=1.0)),
-    ("tau", NCAOptions(tau=12.0)),
     ("acceptance", NCAOptions(acceptance=Acceptance(span_min=3.0))),
     ("partial_aucs", NCAOptions(partial_aucs={"auc_0_4": (0.0, 4.0)})),
     ("units", NCAOptions(units={"auc_last": "mg*min/l"})),
@@ -283,6 +285,7 @@ AGREEMENT: list[tuple[str, Timecourses, NCAOptions]] = [
         NCAOptions(uncertainty=UncertaintyMethod.DELTA),
     ),
     ("a multiple dose batch", multiple_dose_batch(), NCAOptions()),
+    ("a given dosing interval", batch(), NCAOptions(tau=12.0)),
     *[(what, batch(), options) for what, options in REFUSED],
     (
         "the acceptance exclusion",
@@ -311,6 +314,162 @@ def test_the_reason_is_the_kernels_own(
     reason = engine.unsupported_reason(timecourses, options)
     kernel = is_supported(engine.batch_dict(timecourses), engine.options_dict(options))
     assert reason == kernel, what
+
+
+COMBINED: list[tuple[str, Timecourses, NCAOptions]] = [
+    (
+        "effect curve and units, the kernel's first",
+        batch(),
+        NCAOptions(
+            kind=Kind.EFFECT, effect_threshold=1.0, units={"auc_last": "mg*min/l"}
+        ),
+    ),
+    (
+        "partial areas and units, the kernel's first",
+        batch(),
+        NCAOptions(
+            partial_aucs={"auc_0_4": (0.0, 4.0)}, units={"auc_last": "mg*min/l"}
+        ),
+    ),
+    (
+        "a group batch and units, the kernel's first",
+        group_batch(),
+        NCAOptions(units={"auc_last": "mg*min/l"}),
+    ),
+    (
+        "a multiple dose batch with a threshold of the acceptance",
+        multiple_dose_batch(),
+        NCAOptions(tau=12.0, acceptance=Acceptance(r2_adj_min=0.9)),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "timecourses", "options"), COMBINED, ids=[c[0] for c in COMBINED]
+)
+def test_the_host_agrees_with_the_kernel_on_several_refusals_at_once(
+    what: str, timecourses: Timecourses, options: NCAOptions
+) -> None:
+    # the host holds no order of refusals of its own: an analysis which trips
+    # over several is answered with the one the kernel names first, which is
+    # compared against the kernel on the real batch and not against a table
+    kernel = is_supported(engine.batch_dict(timecourses), engine.options_dict(options))
+    assert kernel is not None, what
+    assert engine.unsupported_reason(timecourses, options) == kernel, what
+
+
+def test_the_host_does_not_decide_what_the_kernel_refuses(
+    engine_cross_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the host predicate forwards to the kernel's `is_supported` and holds no
+    # condition of its own about the options, so a refusal added in, or lifted
+    # from, a kernel release needs no change here. Asked through the original
+    # predicate, since the cross-check of the suite stands in for the name
+    # `engine.unsupported_reason` and holds it against the unpatched kernel
+    host = engine_cross_check._predicate
+    refused = [options for _, options in REFUSED]
+    seen: list[tuple[Any, Any]] = []
+
+    def says(answer: str | None) -> Any:
+        def stand_in(batch_dict: Any, options_dict: Any) -> str | None:
+            seen.append((batch_dict, options_dict))
+            return answer
+
+        return stand_in
+
+    # a refusal the kernel invents, for an analysis the host has never heard of
+    monkeypatch.setattr(pkpdutils_core, "is_supported", says("a refusal of 9.9"))
+    assert host(batch(), NCAOptions()) == "a refusal of 9.9"
+    assert len(seen) == 1
+    # and every refusal the kernel lifts, which a restating host would still make
+    monkeypatch.setattr(pkpdutils_core, "is_supported", says(None))
+    for options in refused:
+        assert host(batch(), options) is None
+    assert host(group_batch(), NCAOptions()) is None
+    # an ordinary batch asks the kernel exactly once
+    seen.clear()
+    assert host(batch(), NCAOptions()) is None
+    assert len(seen) == 1
+
+
+def test_the_host_s_own_answers_neither_ask_nor_convert(
+    engine_cross_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the forced path, an empty batch and a batch of mixed labels are answered
+    # before the kernel is asked and before anything is converted for it
+    host = engine_cross_check._predicate
+    asked: list[str] = []
+    monkeypatch.setattr(
+        pkpdutils_core, "is_supported", lambda *args: asked.append("kernel")
+    )
+    for name in ("batch_dict", "options_dict"):
+        real = getattr(engine, name)
+        monkeypatch.setattr(
+            engine, name, lambda *a, _n=name, _r=real: (asked.append(_n), _r(*a))[1]
+        )
+    empty = Timecourses.from_arrays(
+        TIMES,
+        np.zeros((0, TIMES.size)),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array([], dtype=object)},
+    )
+    mixed = labelled_batch([1, "a"])
+    named = NCAOptions(terminal=TerminalPhase(windows={1: (2.0, 8.0)}))
+    assert host(empty, NCAOptions()) == engine.EMPTY_REASON
+    assert host(mixed, named) == engine.MIXED_LABELS_REASON
+    monkeypatch.setattr(engine, "_force_python", True)
+    assert host(batch(), NCAOptions()) == engine.FORCED_REASON
+    assert asked == []
+    # and the same batches do reach the kernel when the host does not answer
+    monkeypatch.setattr(engine, "_force_python", False)
+    host(mixed, NCAOptions())
+    assert asked == ["batch_dict", "options_dict", "kernel"]
+
+
+def test_a_conversion_of_another_batch_is_refused() -> None:
+    other = engine.KernelInput(group_batch(), NCAOptions())
+    same_options = NCAOptions()
+    for call in (engine.unsupported_reason, engine.kernel_result, engine.run_kernel):
+        with pytest.raises(ValueError, match="another batch"):
+            call(batch(), same_options, prepared=other)
+    shared = engine.KernelInput(batch(), same_options)
+    with pytest.raises(ValueError, match="another batch"):
+        engine.unsupported_reason(shared.timecourses, NCAOptions(), prepared=shared)
+
+
+def test_the_source_of_the_host_predicate_names_no_refusal_of_the_kernel(
+    engine_cross_check: Any,
+) -> None:
+    # the structural half of the same claim: nothing of the function body reads
+    # the option or the spread of the batch a refusal of the kernel is about.
+    # The only conditions it holds are the three the host answers itself
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(engine_cross_check._predicate)))
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    body = function.body[1:]  # without the docstring
+    read = {
+        node.attr
+        for stmt in body
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Attribute)
+    }
+    strings = {
+        node.value
+        for stmt in body
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert strings == set()
+    assert read.isdisjoint(
+        {"kind", "acceptance", "partial_aucs", "units", "sd", "se", "uncertainty"}
+    ), read
+    assert read <= {"terminal", "windows", "n_samples", "is_supported", "dicts"}, read
 
 
 def test_the_forced_python_path_is_no_refusal_of_the_kernel() -> None:
@@ -844,10 +1003,310 @@ def test_a_normalized_unit_is_converted_once() -> None:
     assert_same_mapping(nanomolar)
 
 
+def mixed_dose_batch(
+    route: Route = Route.IV_BOLUS,
+    *,
+    last: float = 11.5,
+    at_dose: bool = False,
+    duration: float | None = None,
+) -> Timecourses:
+    """Four subjects of 1, 3, 1 and 3 doses twelve hours apart, in one batch.
+
+    `last` is the last offset sampled in every interval (a value short of the
+    interval completes by the terminal regression or is flagged) and `at_dose`
+    adds a sample at every dose time, which a bolus carries post-dose.
+    """
+    protocols = (1, 3, 1, 3)
+    offsets = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, last])
+    if at_dose:
+        offsets = np.concatenate([[0.0], offsets])
+    curves = []
+    for n in protocols:
+        t = np.concatenate([offsets + 12.0 * i for i in range(n)])
+        v = sum(
+            np.where(t >= 12.0 * i, C0 * np.exp(-K * (t - 12.0 * i)), 0.0)
+            for i in range(n)
+        )
+        curves.append((t, np.asarray(v)))
+    n_time = max(t.size for t, _ in curves)
+    times = np.full((4, n_time), np.nan)
+    values = np.full((4, n_time), np.nan)
+    amounts = np.full((4, 3), np.nan)
+    dose_times = np.full((4, 3), np.nan)
+    for i, ((t, v), n) in enumerate(zip(curves, protocols, strict=True)):
+        times[i, : t.size] = t
+        values[i, : t.size] = v
+        amounts[i, :n] = 100.0
+        dose_times[i, :n] = 12.0 * np.arange(n)
+    dose: dict[str, Any] = {"amount": amounts, "unit": "mg", "time": dose_times}
+    if duration is not None:
+        dose["duration"] = np.where(np.isfinite(amounts), duration, np.nan)
+    return Timecourses.from_arrays(
+        times,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": list("ABCD")},
+        dose=dose,
+        route=route,
+    )
+
+
+def irregular_dose_batch() -> Timecourses:
+    """A subject of doses 0, 24, 30, 42 h of unequal amounts beside a regular one.
+
+    The gaps of the first are 24, 6 and 12 h, so that its last gap differs from
+    the maximum (24), the mean (14), the first gap (24) and the span over the
+    number of gaps (14) and `tau` discriminates every other rule than "the last
+    gap". The amounts differ within and across the rows.
+    """
+    protocols = [
+        (np.array([0.0, 24.0, 30.0, 42.0]), np.array([100.0, 50.0, 100.0, 75.0])),
+        (np.array([0.0, 12.0, 24.0]), np.array([80.0, 80.0, 80.0])),
+    ]
+    ends = [54.0, 36.0]
+    rows = []
+    for (dose_t, amount), end in zip(protocols, ends, strict=True):
+        t = np.unique(
+            np.concatenate(
+                [
+                    dose_t[i] + np.array([0.25, 1.0, 2.0, 4.0, 8.0])
+                    for i in range(dose_t.size)
+                ]
+                + [dose_t[1:] - 0.5, [end - 0.5]]
+            )
+        )
+        v = sum(
+            np.where(t >= d, a / 10.0 * np.exp(-K * (t - d)), 0.0)
+            for d, a in zip(dose_t, amount, strict=True)
+        )
+        rows.append((t, np.asarray(v)))
+    n_time = max(t.size for t, _ in rows)
+    times = np.full((2, n_time), np.nan)
+    values = np.full((2, n_time), np.nan)
+    amounts = np.full((2, 4), np.nan)
+    dose_times = np.full((2, 4), np.nan)
+    for i, ((t, v), (dose_t, amount)) in enumerate(zip(rows, protocols, strict=True)):
+        times[i, : t.size] = t
+        values[i, : t.size] = v
+        amounts[i, : amount.size] = amount
+        dose_times[i, : dose_t.size] = dose_t
+    return Timecourses.from_arrays(
+        times,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": ["A", "B"]},
+        dose={"amount": amounts, "unit": "mg", "time": dose_times},
+        route=Route.IV_BOLUS,
+    )
+
+
+def test_the_tau_of_an_irregular_protocol_is_its_last_gap_in_both_engines() -> None:
+    timecourses = irregular_dose_batch()
+    options = NCAOptions()
+    assert engine.unsupported_reason(timecourses, options) is None
+    python = python_result(timecourses, options)
+    assert python.ds["n_doses"].to_numpy().tolist() == [4, 3]
+    assert python.ds["tau"].to_numpy().tolist() == [12.0, 12.0]
+    assert_same_mapping(timecourses, options)
+    assert_same_result(nca(timecourses, options=options), python)
+
+
+def mixed_route_dose_batch(
+    protocols: Sequence[tuple[Route, int]] = (
+        (Route.ORAL, 3),
+        (Route.IV_BOLUS, 3),
+        (Route.ORAL, 1),
+        (Route.IV_BOLUS, 4),
+    ),
+) -> Timecourses:
+    """Oral with 3 doses, bolus with 3, oral with 1 and bolus with 4, in one batch."""
+    curves = []
+    for route, n in protocols:
+        offsets = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 11.5])
+        t = np.concatenate([offsets + 12.0 * i for i in range(n)])
+        v = sum(
+            np.where(t >= 12.0 * i, C0 * np.exp(-K * (t - 12.0 * i)), 0.0)
+            for i in range(n)
+        )
+        curves.append(
+            Timecourse(
+                time=t,
+                value=np.asarray(v),
+                time_unit="hr",
+                unit="mg/l",
+                dosing=Dosing.regimen(
+                    Dose(amount=100.0, unit="mg", route=route), 12.0, n
+                ),
+                substance="x",
+            )
+        )
+    return Timecourses.from_timecourses(curves, dim="subject", labels=list("ABCD"))
+
+
+MIXED_ROUTE_BATCH = mixed_route_dose_batch()
+# a route which has no multiple dose row at all, first and last: the group which
+# reports the steady state variables is the other one, and the merge of the
+# groups follows which that is
+ONE_ROUTE_SINGLE_DOSE = mixed_route_dose_batch(
+    ((Route.ORAL, 1), (Route.ORAL, 1), (Route.IV_BOLUS, 3), (Route.IV_BOLUS, 3))
+)
+ONE_ROUTE_SINGLE_DOSE_LAST = mixed_route_dose_batch(
+    ((Route.IV_BOLUS, 3), (Route.IV_BOLUS, 3), (Route.ORAL, 1), (Route.ORAL, 1))
+)
+
+
+MULTIPLE_DOSE_CASES: list[tuple[str, Timecourses, NCAOptions]] = [
+    ("bolus", mixed_dose_batch(), NCAOptions()),
+    ("bolus without intervals", mixed_dose_batch(), NCAOptions(intervals=False)),
+    ("bolus a given tau", mixed_dose_batch(), NCAOptions(tau=12.0)),
+    ("bolus at the dose times", mixed_dose_batch(at_dose=True), NCAOptions()),
+    ("oral", mixed_dose_batch(Route.ORAL), NCAOptions()),
+    (
+        "infusion",
+        mixed_dose_batch(Route.IV_INFUSION, duration=0.5),
+        NCAOptions(),
+    ),
+    # the routes differ per sample, so the python core runs one group per route
+    # and the kernel's variables have to be put in its order
+    ("mixed routes", MIXED_ROUTE_BATCH, NCAOptions()),
+    ("mixed routes a given tau", MIXED_ROUTE_BATCH, NCAOptions(tau=12.0)),
+    # `tau` puts every row of every route on the multiple dose path
+    (
+        "mixed routes, single dose rows with a given tau",
+        ONE_ROUTE_SINGLE_DOSE,
+        NCAOptions(tau=12.0),
+    ),
+    # a last sample short of the interval end, completed by the regression
+    ("a last interval within the tolerance", mixed_dose_batch(last=11.0), NCAOptions()),
+    # and one too short for it, which is flagged
+    ("an incomplete last interval", mixed_dose_batch(last=8.0), NCAOptions()),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "timecourses", "options"),
+    MULTIPLE_DOSE_CASES,
+    ids=[c[0] for c in MULTIPLE_DOSE_CASES],
+)
+def test_a_multiple_dose_batch_gives_the_same_result_from_either_engine(
+    what: str, timecourses: Timecourses, options: NCAOptions
+) -> None:
+    # the differential gate covers this for every batch the suite sends through
+    # nca(), but this test names the case directly: every interval_* variable,
+    # every steady state variable and the flags agree within rel=1e-6
+    assert engine.unsupported_reason(timecourses, options) is None, what
+    python = python_result(timecourses, options)
+    # the layer below `nca` as well, since the result of `nca` alone would
+    # compare the python core with itself if the kernel had refused the batch
+    assert_same_mapping(timecourses, options)
+    assert_same_result(nca(timecourses, options=options), python)
+    # the numbers of the python core, exactly where they are counted
+    counts = np.isfinite(engine.dose_arrays(timecourses)[0]).sum(axis=1).tolist()
+    assert python.ds["n_doses"].to_numpy().tolist() == counts
+    tau = python.ds["tau"].to_numpy()
+    if options.tau is None:
+        single = [n == 1 for n in counts]
+        assert np.isnan(tau[single]).all()
+        assert (tau[[not one for one in single]] == 12.0).all()
+    else:
+        # a given interval makes every row a multiple dose row
+        assert tau.tolist() == [12.0] * 4
+    assert ("interval_auc" in python.ds.data_vars) == options.intervals
+
+
+@pytest.mark.parametrize(
+    "timecourses", [ONE_ROUTE_SINGLE_DOSE, ONE_ROUTE_SINGLE_DOSE_LAST]
+)
+def test_routes_which_differ_in_their_dosing_take_the_python_path(
+    timecourses: Timecourses, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the kernel reports one union of variables, the python core reports them
+    # per route, and the two differ in a variable (`cl_ss_f`), not in order
+    assert (
+        engine.unsupported_reason(timecourses, NCAOptions())
+        == engine.MIXED_ROUTE_DOSING_REASON
+    )
+    kernel = set(engine.run_kernel(timecourses, NCAOptions()))
+    assert kernel - set(python_result(timecourses).ds.data_vars) == {"cl_ss_f"}
+    # so `nca` answers from the python core, armed or not
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    before = engine.comparisons()
+    assert_same_result(nca(timecourses), python_result(timecourses))
+    assert engine.comparisons() == before
+
+
+def test_the_order_cache_tells_a_padded_protocol_from_a_real_one() -> None:
+    # the same width, routes and options: two doses per row, once with the
+    # second amount missing (no multiple dose row) and once with it. `dosed`
+    # cannot tell them apart, only the multiplicity in the key can
+    real = mixed_route_dose_batch(
+        ((Route.ORAL, 2), (Route.IV_BOLUS, 2), (Route.ORAL, 2), (Route.IV_BOLUS, 2))
+    )
+    ds = real.ds.copy(deep=True)
+    ds["dose_amount"][..., 1:] = np.nan
+    padded = Timecourses(ds)
+    assert engine._multiple_rows(padded, NCAOptions()).tolist() == [False] * 4
+    assert engine._multiple_rows(real, NCAOptions()).tolist() == [True] * 4
+    assert padded.n_dose == real.n_dose
+    for first, second in [(padded, real), (real, padded)]:
+        engine._ORDER_CACHE.clear()
+        assert_same_mapping(first)
+        assert_same_mapping(second)
+
+
+def test_the_order_cache_tells_a_multiple_dose_batch_from_a_single_dose_one() -> None:
+    # the same routes in the same order and the same options, once with no
+    # multiple dose row and once with one in every route: the cached order of
+    # the first must not be served for the second
+    single = mixed_route_dose_batch(
+        ((Route.ORAL, 1), (Route.IV_BOLUS, 1), (Route.ORAL, 1), (Route.IV_BOLUS, 1))
+    )
+    multiple = mixed_route_dose_batch(
+        ((Route.ORAL, 3), (Route.IV_BOLUS, 3), (Route.ORAL, 3), (Route.IV_BOLUS, 3))
+    )
+    engine._ORDER_CACHE.clear()
+    assert_same_mapping(single)
+    assert_same_mapping(multiple)
+    engine._ORDER_CACHE.clear()
+    assert_same_mapping(multiple)
+    assert_same_mapping(single)
+
+
+def test_the_single_dose_rows_of_a_mixed_batch_have_no_interval_values() -> None:
+    result = nca(mixed_dose_batch())
+    for name in result.ds.data_vars:
+        if str(name).startswith("interval_") or name in {"auc_tau", "cl_ss", "tau"}:
+            column = result.ds[name].to_numpy()
+            single = column[[0, 2]]
+            assert np.isnan(single).all(), name
+            if name != "tau":
+                assert np.isfinite(column[[1, 3]]).any(), name
+    assert result.ds["interval_auc"].dims == ("subject", "interval")
+
+
+def test_the_flags_of_a_multiple_dose_batch_are_raised_by_the_kernel() -> None:
+    # the flags are read from the kernel alone (`run_kernel`), and are raised
+    # whether or not the intervals are part of the result
+    for intervals in (True, False):
+        options = NCAOptions(intervals=intervals)
+        short = engine.run_kernel(mixed_dose_batch(last=8.0), options)["flags"]
+        assert (short & int(NCAFlag.INCOMPLETE_INTERVAL)).tolist() == [0, 256, 0, 256]
+        post = engine.run_kernel(mixed_dose_batch(at_dose=True), options)["flags"]
+        assert (post & int(NCAFlag.EXTRAPOLATED_TROUGH)).tolist() == [0, 512, 0, 512]
+        clean = engine.run_kernel(mixed_dose_batch(), options)["flags"]
+        assert (clean & 768).tolist() == [0, 0, 0, 0]
+
+
 def test_an_ineligible_batch_takes_the_python_path() -> None:
-    result = nca(multiple_dose_batch())
-    assert "cl_ss" in result.ds.data_vars
-    assert np.isfinite(result.ds["cl_ss"].to_numpy()).all()
+    # the acceptance criteria are an analysis the kernel does not carry
+    options = NCAOptions(acceptance=Acceptance(span_min=3.0))
+    assert engine.unsupported_reason(batch(), options) is not None
+    result = nca(batch(), options=options)
+    assert_same_result(result, python_result(batch(), options))
 
 
 def test_a_zero_sample_batch_matches() -> None:
@@ -1168,8 +1627,9 @@ def changing_kernel(
         options: NCAOptions,
         *,
         units: dict[str, str] | None = None,
+        prepared: engine.KernelInput | None = None,
     ) -> dict[str, np.ndarray]:
-        values = real(timecourses, options, units=units)
+        values = real(timecourses, options, units=units, prepared=prepared)
         return change(values, units)
 
     return run
@@ -1274,9 +1734,22 @@ def test_the_armed_gate_compares_nothing_on_a_batch_of_the_python_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    options = NCAOptions(acceptance=Acceptance(span_min=3.0))
+    assert engine.unsupported_reason(batch(), options) is not None
+    before = engine.comparisons()
+    nca(batch(), options=options)
+    assert engine.comparisons() == before
+
+
+def test_the_armed_gate_compares_a_multiple_dose_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
     many = multiple_dose_batch()
-    assert engine.unsupported_reason(many, NCAOptions()) is not None
+    assert engine.unsupported_reason(many, NCAOptions()) is None
+    before = engine.comparisons()
     assert np.isfinite(nca(many).ds["cl_ss"].to_numpy()).all()
+    assert engine.comparisons() == before + 1
 
 
 def blq_batch() -> Timecourses:
@@ -1475,7 +1948,9 @@ def test_the_cross_check_counts_the_batches_of_the_three_host_reasons(
 def test_the_cross_check_catches_a_predicate_which_refuses_too_much(
     monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
 ) -> None:
-    def narrow(timecourses: Timecourses, options: NCAOptions) -> str | None:
+    def narrow(
+        timecourses: Timecourses, options: NCAOptions, **kwargs: Any
+    ) -> str | None:
         # the mutation the review measured: a predicate which refuses every
         # batch whose unit is not `mg/l` leaves this file green and the
         # analyses of those batches never reach the kernel again
@@ -1489,15 +1964,17 @@ def test_the_cross_check_catches_a_predicate_which_refuses_too_much(
 def test_the_cross_check_catches_a_predicate_which_refuses_too_little(
     monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
 ) -> None:
-    def wide(timecourses: Timecourses, options: NCAOptions) -> str | None:
+    def wide(
+        timecourses: Timecourses, options: NCAOptions, **kwargs: Any
+    ) -> str | None:
         return None
 
     monkeypatch.setattr(engine_cross_check, "_predicate", wide)
     with pytest.raises(AssertionError, match="the two predicates disagree"):
-        # a multiple dose analysis the kernel does not carry: the predicate of
-        # the host is the only thing between it and an `UnsupportedError` at
-        # the call site of a user
-        nca(multiple_dose_batch())
+        # an analysis the kernel does not carry: the predicate of the host is
+        # the only thing between it and an `UnsupportedError` at the call site
+        # of a user
+        nca(batch(), options=NCAOptions(acceptance=Acceptance(span_min=3.0)))
 
 
 def unit_batch(*, time_unit: str = "hr", unit: str = "mg/l") -> Timecourses:
@@ -1583,3 +2060,10 @@ def test_a_window_key_of_another_numeric_type_matches_on_the_kernel(
     row = 0
     assert result.ds["lambda_z_t_first"].to_numpy()[row] == pytest.approx(2.0)
     assert_same_result(result, expected)
+
+
+def test_the_python_core_interpolates_outside_its_points_without_a_warning() -> None:
+    # a row whose last interval is not covered queries a time beyond its points
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        python_result(mixed_dose_batch(last=8.0))
