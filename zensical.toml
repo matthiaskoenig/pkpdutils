@@ -46,6 +46,7 @@ nav = [
     { "Validation against published results" = "validation.md" },
     { "Benchmark datasets" = "benchmark_datasets.md" },
   ] },
+  { "Performance" = "benchmark.md" },
   { "Glossary" = "glossary.md" },
   { "References" = "references.md" },
   { "API reference" = [
@@ -64,6 +65,7 @@ nav = [
     ] },
     { "pkpdutils.nca" = [
       { "nca" = "api/nca.md" },
+      { "engine" = "api/nca.engine.md" },
       { "options" = "api/nca.options.md" },
       { "result" = "api/nca.result.md" },
       { "auc" = "api/nca.auc.md" },

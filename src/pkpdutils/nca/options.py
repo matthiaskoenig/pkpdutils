@@ -561,7 +561,10 @@ class NCAOptions(BaseModel):
             at once, `min(n_workers, n_chunks) * chunk_rows` rows. The chunks
             are mapped in order; how many there are follows from the rows, the
             workers and this bound (`pkpdutils.parallel.split_rows`), so a
-            serial run of a small batch is one chunk whatever `n_workers` says
+            serial run of a small batch is one chunk whatever `n_workers` says.
+            It has no effect on a batch the rust kernel analyses
+            (`pkpdutils.nca.engine`), which bounds the memory of its own row
+            loop and reads `n_workers` alone
         uncertainty: propagation of `sd`/`se` to the parameters; `None` selects
             `BOOTSTRAP` when the batch carries an uncertainty and `NONE` otherwise
         n_boot: number of bootstrap replicates
@@ -654,10 +657,56 @@ class NCAOptions(BaseModel):
         )
 
 
-def _encode_window_key(key: Any) -> dict[str, Any]:
-    """Encode scalar or tuple sample labels without JSON's string key coercion."""
+SCALAR_KEY_TYPES: tuple[tuple[str, type], ...] = (
+    ("bool", bool),
+    ("str", str),
+    ("int", int),
+    ("float", float),
+)
+"""The scalar types a sample label travels under, in the order they are read.
+
+A truth value is an instance of `int` in python and the text of a number is no
+number, so the order is part of the answer: `bool` before `int` and `str`
+before both. `encode_window_key` reads the key of a terminal window with this
+table and `pkpdutils.nca.engine._object_tag` the values of a coordinate, so
+that the label of a sample and the key which names it cannot be spelled by two
+different rules.
+"""
+
+TEXT_KEY_TYPES: frozenset[str] = frozenset({"str", "date", "datetime"})
+"""The records of `encode_window_key` which are the text of the label itself.
+
+A string travels as itself and a date and a datetime as their isoformat, which
+is also what `pkpdutils.nca.engine._label_text` writes for such a value of a
+coordinate, so a label of one of these types and a key which names it meet as
+the same text however the column of the batch is tagged. Every other record
+(`int`, `float`, `bool`, `none`, `tuple`) is no text, so a key of that type
+and a column which travelled as text name different things.
+"""
+
+
+def encode_window_key(key: Any) -> dict[str, Any]:
+    """Encode scalar or tuple sample labels without JSON's string key coercion.
+
+    The label of a sample is a string, a number, a truth value, a date, a
+    tuple of those or nothing, and a mapping key says no more about which of
+    them it is than a JSON key does, so the key of a terminal window travels
+    as the record `{"type": ..., "value": ...}` wherever it leaves python:
+    into the options a result carries (`serialize_nca_options`) and into the
+    options of the rust kernel (`pkpdutils.nca.engine.options_dict`).
+
+    Args:
+        key: the label of a sample, a key of `TerminalPhase.windows`.
+
+    Returns:
+        The type of the label and its value, the value of a tuple being the
+        records of its items.
+
+    Raises:
+        ValueError: if the label is of a type which no record spells.
+    """
     if isinstance(key, tuple):
-        return {"type": "tuple", "value": [_encode_window_key(item) for item in key]}
+        return {"type": "tuple", "value": [encode_window_key(item) for item in key]}
     if isinstance(key, np.generic):
         key = key.item()
     if key is None:
@@ -666,7 +715,7 @@ def _encode_window_key(key: Any) -> dict[str, Any]:
         return {"type": "datetime", "value": key.isoformat()}
     if isinstance(key, date):
         return {"type": "date", "value": key.isoformat()}
-    for kind, cls in (("bool", bool), ("str", str), ("int", int), ("float", float)):
+    for kind, cls in SCALAR_KEY_TYPES:
         if isinstance(key, cls):
             return {"type": kind, "value": key}
     raise ValueError(
@@ -705,7 +754,7 @@ def serialize_nca_options(options: NCAOptions) -> str:
         None
         if windows is None
         else [
-            {"key": _encode_window_key(key), "window": list(window)}
+            {"key": encode_window_key(key), "window": list(window)}
             for key, window in windows.items()
         ]
     )

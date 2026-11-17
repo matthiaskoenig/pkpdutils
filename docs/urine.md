@@ -10,7 +10,7 @@ A urine study does not sample a concentration over time. The urine of a subject 
 
 The value at the dose follows the route, as it does for a concentration curve: 0 after an extravascular dose, the back-extrapolated rate after an intravenous bolus (`NCAOptions.c0_method`) and none without a dose, in which case the area starts at the first midpoint.
 
-**What was recovered.** The rate curve is a model of the excretion; the amount recovered is not. `amount_recovered` is the plain sum \(A_e = \sum_k A_k\) of the collections, `percent_recovered` that amount as a percentage of the dose and `vol_ur` the volume collected. EMA CPMP/EWP/QWP/1401/98 Rev. 1[^ema_be] asks for exactly this: "When using urinary data, Ae(0-t) and, if applicable, Rmax should be determined", both analysed against the 80.00 to 125.00 % interval of a [bioequivalence](bioequivalence.md) study.
+**What was recovered.** The rate curve is a model of the excretion; the amount recovered is not. `amount_recovered` is the plain sum \(A_e = \sum_k A_k\) of the collections, `percent_recovered` that amount as a percentage of the dose and `vol_ur` the volume collected. EMA CPMP/EWP/QWP/1401/98 Rev. 1[^ema_be] asks for exactly this: "When using urinary data, Ae(0-t) and, if applicable, Rmax should be determined", both analysed against the 80.00 to 125.00 % interval of a [bioequivalence](bioequivalence.md) study. A placebo arm carries a dose of 0: what was collected is reported as it was measured and `percent_recovered` is `NaN`, the way every parameter which divides by the dose reports such an arm.
 
 **Renal clearance.** With the plasma curve of the same subject the renal clearance is the recovered amount over the plasma exposure of the window it was recovered in. Giving the plasma curve integrates it over the collection span \([s_1, e_K]\) (`partial_auc`), which is the window the amount belongs to; giving the `NCAResult` of that curve takes its `auc_last` instead, which is the same window only when the curve ends with the last collection.
 
@@ -54,7 +54,7 @@ V_\mathrm{ur} = \sum_k V_k, \qquad \mathrm{CL}_R = \frac{A_e}{\mathrm{AUC}_{s_1\
 | `aurc_inf_obs`, `aurc_inf_pred` | \(\mathrm{AURC}_{0\text{-}\infty}\) | area extrapolated to infinity, from the observed or the predicted last rate | amount |
 | `lambda_z`, `thalf` | \(\lambda_z\), \(t_{1/2}\) | the terminal rate constant of the rate curve and its half-life, with the regression diagnostics `lambda_z_*` of every analysis | 1/time, time |
 | `amount_recovered` | \(A_e\) | the amount collected over every interval | amount |
-| `percent_recovered` | | that amount as a percentage of the dose | % |
+| `percent_recovered` | | that amount as a percentage of the dose, `NaN` for a dose of 0 | % |
 | `vol_ur` | \(V_\mathrm{ur}\) | the volume collected over every interval | l |
 | `clr` | \(\mathrm{CL}_R\) | renal clearance, only with a plasma curve or result | l/h |
 

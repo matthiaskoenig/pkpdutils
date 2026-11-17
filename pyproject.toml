@@ -36,6 +36,13 @@ keywords = [
     "meta-analysis",
 ]
 dependencies = [
+    # the rust kernel of the non-compartmental analysis, which `pkpdutils.nca`
+    # sends an eligible batch to (`pkpdutils.nca.engine`). The cap is part of
+    # the contract and not caution: the host resolves a unit expression for
+    # every column the kernel reports, so one new parameter of a future release
+    # raises for every eligible batch. It is lifted by the pull request which
+    # raises the floor to that release, see docs/development.md#kernel-floor
+    "pkpdutils-core>=0.2.1,<0.3",
     # numerics, data structures and units
     "numpy>=2.2.2",
     "scipy>=1.15.0",
@@ -57,7 +64,7 @@ dev = [
     "bump-my-version>=1.5.1",
     "ruff>=0.16.6",
     "pre-commit>=4.6.2",
-    "ty>=0.0.79",
+    "ty>=0.0.104",
     # 4.67.5 refuses its package staging directory when it was created under
     # umask 002, tox-dev/tox#4357
     "tox>=4.61.2,!=4.67.5",
@@ -91,6 +98,7 @@ addopts = "-n auto"
 markers = [
     "docs: runs the python snippets of a page of `docs/`",
     "examples: runs an example script of `examples/`",
+    "engine_fallback: makes the rust kernel refuse a batch on purpose, see tests/conftest.py",
 ]
 
 [tool.ty.environment]

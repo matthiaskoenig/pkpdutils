@@ -56,21 +56,76 @@ jobs:
       run: uvx --with tox-uv tox -e "${TOX_ENV}" -- --durations=15 -m "${MARKERS}"
       shell: bash
 
+  engines:
+    # the differential gate: every batch the rust kernel analyses is analysed
+    # by the python core as well and the two answers are compared, names,
+    # order, NaN positions, numbers and units (pkpdutils.nca.engine, armed by
+    # PKPDUTILS_COMPARE_ENGINES). One platform is enough, the two engines
+    # compute the same numbers everywhere; the documentation snippets and the
+    # examples are left out, they start an interpreter each and build no batch
+    # the suite does not
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # the one place this job names the variable, and the step below inherits
+    # it. Named twice, a misspelling of the suite's copy alone would leave the
+    # suite unarmed with nothing to say about it
+    env:
+      PKPDUTILS_COMPARE_ENGINES: "1"
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - name: Install uv and set the python version
+      # astral-sh/setup-uv publishes no floating major tag beyond v7
+      uses: astral-sh/setup-uv@v10.3.3
+      with:
+        python-version: "3.14"
+        # a release run restores no cache, which zizmor cannot tell from the
+        # expression; the distributions are built without one, see `release`
+        enable-cache: ${{ !startsWith(github.ref, 'refs/tags/') }}  # zizmor: ignore[cache-poisoning]
+        cache-python: ${{ !startsWith(github.ref, 'refs/tags/') }}  # zizmor: ignore[cache-poisoning]
+    # one step, and the arming is required rather than hoped for:
+    # `--require-engine-gate` makes the session refuse to run unless the gate
+    # is armed (tests/conftest.py), so the requirement arrives on the command
+    # line while the variable arrives through the `passenv` of tox.ini. A
+    # `passenv` which stops forwarding it, or a job which stops setting it,
+    # leaves the flag behind and fails here instead of turning this job into a
+    # second copy of `test`; a misspelling of the flag is an unrecognized
+    # argument and fails just as loudly. The suite's own sentinel covers the
+    # rest: a gate which stops being reached, a variable the library renamed
+    # and a distributed run whose workers report nothing.
+    #
+    # It was a second step until the gate of PR #128 measured what that step
+    # really did: `tox exec` installs no package, so its `python -c "...
+    # engine.comparing() ..."` exited 1 for a disarmed gate and exited 1 for
+    # the missing import just as well, and it had only ever passed where an
+    # earlier `tox r` had left a wheel in the environment
+    - name: Compare the two engines on every batch of the suite
+      run: >
+        uvx --with tox-uv tox -e py3.14 --
+        -m "not docs and not examples" --require-engine-gate
+
   tests:
     # the one check the branch protection requires; the names of the matrix
     # jobs change with the matrix, this name does not, see .github/rulesets/
     name: tests
-    needs: test
+    needs: [test, engines]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Check the result of the test matrix
+    - name: Check the result of the test matrix and of the differential gate
       env:
         RESULT: ${{ needs.test.result }}
+        # the gate is required rather than advisory: a job which is not a
+        # required check is a job a merge can ignore, and a gate nobody has to
+        # pass is a gate which is believed and does not hold
+        GATE: ${{ needs.engines.result }}
       run: |
         echo "test matrix: $RESULT"
+        echo "differential gate: $GATE"
         test "$RESULT" = "success"
+        test "$GATE" = "success"
 
   release:
     needs: tests

@@ -104,7 +104,8 @@ class Excretion(BaseModel):
         volume_unit: unit of `volume`, e.g. `"ml"`; required with a volume
         dose: the dose the collections follow, whose amount `percent_recovered`
             refers to and whose route decides the value of the rate curve at
-            the dose time
+            the dose time; a dose of 0, the placebo arm of a study, gives
+            `percent_recovered` as `NaN`
         substance: name of the substance
         label: label of the subject or of the profile
     """
@@ -370,8 +371,10 @@ def nca_urine(
 
     What was collected is reported as it was measured:
     \(A_e = \sum_k A_k\) (`amount_recovered`), \(100\,A_e/D\)
-    (`percent_recovered`) and \(\sum_k V_k\) (`vol_ur`). With the plasma curve
-    of the same subject the renal clearance
+    (`percent_recovered`, `NaN` for a dose of 0, the placebo arm of a study, as
+    every parameter which divides by the dose, see
+    `pkpdutils.nca.nca.positive_dose`) and \(\sum_k V_k\) (`vol_ur`). With the
+    plasma curve of the same subject the renal clearance
 
     $$\mathrm{CL}_R = \frac{A_e}{\mathrm{AUC}_{s_1\text{-}e_K}}$$
 
@@ -452,17 +455,33 @@ def nca_urine(
 
     percent = np.nan
     if excretion.dose is not None:
+        # the recovered amount in multiples of **one** unit of the dose, which
+        # is the unit check and carries the factor between the two units; the
+        # amount of the dose is divided out afterwards and not here, so that a
+        # dose of 0 does not divide at all
         try:
-            fraction = (
+            recovered = (
                 Q_(excretion.total_amount, excretion.unit)
-                / Q_(excretion.dose.amount, excretion.dose.unit)
+                / Q_(1.0, excretion.dose.unit)
             ).to("dimensionless")
         except Exception as error:  # pint raises several exception types
             raise ValueError(
                 f"the recovered amount in '{excretion.unit}' cannot be compared "
                 f"with the dose in '{excretion.dose.unit}'"
             ) from error
-        percent = 100.0 * float(fraction.magnitude)
+        if excretion.dose.amount > 0.0:
+            percent = 100.0 * float(recovered.magnitude) / excretion.dose.amount
+        else:
+            # a dose of 0 is the encoding of a placebo arm (`Dose.amount` is
+            # non-negative) and the fraction of the dose recovered is not
+            # defined for it, so it is `NaN`, as every parameter which divides
+            # by the dose (`pkpdutils.nca.nca.positive_dose`). It is no error:
+            # the units are compatible, which the conversion above asserted,
+            # and a placebo arm is an arm of a study and not a malformed one
+            logger.debug(
+                "urine analysis of %s: a dose of 0, so 'percent_recovered' is NaN",
+                excretion.label or excretion.substance,
+            )
     write("percent_recovered", percent, PARAMETER_UNITS["percent_recovered"])
 
     if plasma is not None:
