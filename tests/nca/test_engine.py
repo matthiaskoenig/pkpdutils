@@ -422,7 +422,7 @@ def test_the_source_of_the_host_predicate_names_no_refusal_of_the_kernel(
     assert read.isdisjoint(
         {"kind", "acceptance", "partial_aucs", "units", "sd", "se", "uncertainty"}
     ), read
-    assert read <= {"terminal", "windows", "n_samples", "is_supported"}, read
+    assert read <= {"terminal", "windows", "n_samples", "is_supported", "dicts"}, read
 
 
 def test_the_forced_python_path_is_no_refusal_of_the_kernel() -> None:
@@ -1466,8 +1466,9 @@ def changing_kernel(
         options: NCAOptions,
         *,
         units: dict[str, str] | None = None,
+        prepared: engine.KernelInput | None = None,
     ) -> dict[str, np.ndarray]:
-        values = real(timecourses, options, units=units)
+        values = real(timecourses, options, units=units, prepared=prepared)
         return change(values, units)
 
     return run
@@ -1786,7 +1787,9 @@ def test_the_cross_check_counts_the_batches_of_the_three_host_reasons(
 def test_the_cross_check_catches_a_predicate_which_refuses_too_much(
     monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
 ) -> None:
-    def narrow(timecourses: Timecourses, options: NCAOptions) -> str | None:
+    def narrow(
+        timecourses: Timecourses, options: NCAOptions, **kwargs: Any
+    ) -> str | None:
         # the mutation the review measured: a predicate which refuses every
         # batch whose unit is not `mg/l` leaves this file green and the
         # analyses of those batches never reach the kernel again
@@ -1800,7 +1803,9 @@ def test_the_cross_check_catches_a_predicate_which_refuses_too_much(
 def test_the_cross_check_catches_a_predicate_which_refuses_too_little(
     monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
 ) -> None:
-    def wide(timecourses: Timecourses, options: NCAOptions) -> str | None:
+    def wide(
+        timecourses: Timecourses, options: NCAOptions, **kwargs: Any
+    ) -> str | None:
         return None
 
     monkeypatch.setattr(engine_cross_check, "_predicate", wide)

@@ -193,7 +193,44 @@ one of the host rather than adopted.
 """
 
 
-def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | None:
+class KernelInput:
+    """A batch and its options laid out once as the dicts of the abi.
+
+    `unsupported_reason` and `run_kernel` both need `batch_dict` and
+    `options_dict`, and the conversion copies the whole batch, so `nca` builds
+    one `KernelInput` and hands it to both rather than converting twice. The
+    dicts are built on first use, so an analysis the host answers itself
+    (`FORCED_REASON`, `EMPTY_REASON`, `MIXED_LABELS_REASON`) converts nothing.
+    """
+
+    def __init__(self, timecourses: Timecourses, options: NCAOptions) -> None:
+        """Hold the batch and the options, converting nothing yet.
+
+        Args:
+            timecourses: the batch
+            options: the options of the analysis
+        """
+        self.timecourses = timecourses
+        self.options = options
+        self._dicts: tuple[dict[str, Any], dict[str, Any]] | None = None
+
+    @property
+    def dicts(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The batch and the options as the two dicts of the abi, built once."""
+        if self._dicts is None:
+            self._dicts = (
+                batch_dict(self.timecourses),
+                options_dict(self.options),
+            )
+        return self._dicts
+
+
+def unsupported_reason(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    prepared: KernelInput | None = None,
+) -> str | None:
     """Why the kernel would refuse this analysis, `None` when it would run it.
 
     The kernel decides, the host forwards: every refusal of the kernel (an
@@ -219,6 +256,11 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
         timecourses: the batch
         options: the options of the analysis
 
+    Keyword Args:
+        prepared: the conversion of this batch and these options which
+            `run_kernel` is given as well, so that it is made once; built here
+            when `None`
+
     Returns:
         The reason, or `None` for an analysis the kernel carries.
     """
@@ -232,7 +274,8 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
     ):
         return MIXED_LABELS_REASON
     is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
-    reason: str | None = is_supported(batch_dict(timecourses), options_dict(options))
+    batch, kernel_options = (prepared or KernelInput(timecourses, options)).dicts
+    reason: str | None = is_supported(batch, kernel_options)
     return reason
 
 
@@ -630,7 +673,12 @@ def _interval(window: tuple[float, float]) -> tuple[float, float]:
     return float(start), float(end)
 
 
-def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, Any]:
+def kernel_result(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    prepared: KernelInput | None = None,
+) -> dict[str, Any]:
     """Run the kernel on a batch and give back its result as it comes.
 
     The six sections of the bindings: `parameters`, `units` over the variables
@@ -642,6 +690,11 @@ def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, An
         timecourses: the batch
         options: the options of the analysis
 
+    Keyword Args:
+        prepared: the conversion of the batch and the options, made once by the
+            caller which asked `unsupported_reason` as well; built here when
+            `None`
+
     Returns:
         The result of `pkpdutils_core.analyze_batch`.
 
@@ -651,10 +704,11 @@ def kernel_result(timecourses: Timecourses, options: NCAOptions) -> dict[str, An
             anything.
     """
     analyze = pkpdutils_core.analyze_batch  # ty: ignore[missing-attribute]
+    batch, kernel_options = (prepared or KernelInput(timecourses, options)).dicts
     return dict(
         analyze(
-            batch_dict(timecourses),
-            options_dict(options),
+            batch,
+            kernel_options,
             n_workers=options.n_workers,
         )
     )
@@ -889,6 +943,7 @@ def run_kernel(
     options: NCAOptions,
     *,
     units: dict[str, str] | None = None,
+    prepared: KernelInput | None = None,
 ) -> dict[str, np.ndarray]:
     """Run the kernel on a batch, as `run_rows` runs the python core.
 
@@ -915,6 +970,8 @@ def run_kernel(
             (`compare_with_python`), so that the kernel's units are compared
             without the analysis running twice; `None` outside the gate, which
             is every ordinary call.
+        prepared: the conversion of the batch and the options, see
+            `unsupported_reason`; built here when `None`
 
     Returns:
         One array per variable, `flags` among the keys.
@@ -924,7 +981,7 @@ def run_kernel(
             analysis, which `unsupported_reason` answers without running
             anything.
     """
-    result = kernel_result(timecourses, options)
+    result = kernel_result(timecourses, options, prepared=prepared)
     if units is not None:
         units.update(result["units"])
     n_rows = timecourses.n_samples

@@ -212,7 +212,7 @@ def pytest_configure(config: pytest.Config) -> None:
 # at every call of it
 is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
 
-Predicate = Callable[[Timecourses, NCAOptions], str | None]
+Predicate = Callable[..., str | None]
 """The signature of `engine.unsupported_reason`, which the hook stands in for."""
 
 Kernel = Callable[..., dict[str, np.ndarray]]
@@ -288,7 +288,11 @@ class CrossCheck:
         """The fallback warnings logged while this test ran."""
 
     def unsupported_reason(
-        self, timecourses: Timecourses, options: NCAOptions
+        self,
+        timecourses: Timecourses,
+        options: NCAOptions,
+        *,
+        prepared: engine.KernelInput | None = None,
     ) -> str | None:
         """Why the kernel would refuse this analysis, checked against the kernel.
 
@@ -299,7 +303,7 @@ class CrossCheck:
         Returns:
             Whatever the host's predicate answers, unchanged.
         """
-        reason = self._predicate(timecourses, options)
+        reason = self._predicate(timecourses, options, prepared=prepared)
         # the two conditions are read from the inputs and never from `reason`,
         # so that a predicate which answers one of these reasons for every
         # batch does not make the check vacuous
@@ -357,6 +361,7 @@ class CrossCheck:
         options: NCAOptions,
         *,
         units: dict[str, str] | None = None,
+        prepared: engine.KernelInput | None = None,
     ) -> dict[str, np.ndarray]:
         """Run the kernel, counting a refusal of a batch the host let through.
 
@@ -378,7 +383,7 @@ class CrossCheck:
             UnsupportedError: as the kernel raised it.
         """
         try:
-            return self._kernel(timecourses, options, units=units)
+            return self._kernel(timecourses, options, units=units, prepared=prepared)
         except engine.UnsupportedError as refusal:
             self.refusals.append(str(refusal))
             raise
