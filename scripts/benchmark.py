@@ -70,7 +70,7 @@ from pkpdutils.fit.models import MonoExp
 from pkpdutils.fit.options import FitOptions
 from pkpdutils.nca import engine
 from pkpdutils.nca.options import UncertaintyMethod
-from pkpdutils.parallel import worker_pool
+from pkpdutils.parallel import NCA_WORKER_THRESHOLD, worker_pool
 
 #: set in the environment of the child process which runs one case
 CHILD_ENV = "PKPDUTILS_BENCHMARK_CHILD"
@@ -686,10 +686,18 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
     sentences are computed from the very rows the table is formatted from, so
     the two cannot disagree.
 
-    Four figures: the largest and the smallest ratio of the run, the two
-    shapes the crossover lies between, the largest amount the kernel path
-    costs below it, and the shape the clear wins start at (`CLEAR_WIN`, far
-    enough from 1 to survive the few percent a rerun moves a ratio by).
+    The figures: the largest and the smallest ratio of the run, the two shapes
+    the crossover lies between, the largest amount the kernel path costs below
+    it, the range the ratios below it span, the two shapes of nearly equal work
+    whose ratios differ most (`shape_pair`) and the shape the clear wins start
+    at (`CLEAR_WIN`, far enough from 1 to survive the few percent a rerun moves
+    a ratio by).
+
+    The last two are here because the prose of the page claimed them by hand
+    twice and was falsified by a `--write` twice: "within a few percent of each
+    other up to the crossover" and "the same few percent apart" on two shapes
+    of nearly the same work are both figures of a run, and a figure of a run
+    belongs in this region or nowhere.
 
     The two shapes and the clear win are read by walking the sweep in the order
     of the work (`crossover`, `clear_win`) and not off the two sorted halves of
@@ -731,12 +739,25 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
             "above the largest one measured."
         )
     elif crossed is None:
+        changes = sign_changes(ordered)
+        if len(changes) == 1:
+            left, right = changes[0]
+            crossing = (
+                f"The ratio of this run crosses 1.00x downwards, from "
+                f"{left['size']} at {left['speedup']:.2f}x to {right['size']} "
+                f"at {right['speedup']:.2f}x, so the sweep names no crossover"
+            )
+        else:
+            crossing = (
+                f"The ratio of this run crosses 1.00x at {len(changes)} shapes "
+                "of the sweep rather than at one, so it names no single "
+                "crossover"
+            )
         sentences.append(
-            f"The ratio of this run crosses 1.00x at "
-            f"{len(sign_changes(ordered))} shapes of the sweep rather than at "
-            "one, so it names no single crossover; the shapes below 1.00x are "
+            crossing
+            + "; the shapes below 1.00x are "
             + ", ".join(f"{row['size']} at {row['speedup']:.2f}x" for row in below)
-            + f", and on those the kernel path costs at most "
+            + ", and on those the kernel path costs at most "
             f"{1e3 * max(row['kernel_s'] - row['python_s'] for row in below):.2f} "
             "ms more per call."
         )
@@ -748,14 +769,21 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
             f"{last['speedup']:.2f}x and {first['size']} is "
             f"{first['speedup']:.2f}x.".replace(",", " ")
         )
-        cost = max(
-            row["kernel_s"] - row["python_s"]
-            for row in ordered
-            if engine_points(row) <= engine_points(last)
-        )
+        up_to = [row for row in ordered if engine_points(row) <= engine_points(last)]
+        cost = max(row["kernel_s"] - row["python_s"] for row in up_to)
         sentences.append(
             f"Below the crossover the kernel path costs at most "
-            f"{1e3 * cost:.2f} ms more per call."
+            f"{1e3 * cost:.2f} ms more per call, and the ratios there run from "
+            f"{min(row['speedup'] for row in up_to):.2f}x to "
+            f"{max(row['speedup'] for row in up_to):.2f}x."
+        )
+    pair = shape_pair(ordered)
+    if pair is not None:
+        apart, together = pair
+        sentences.append(
+            f"Of two shapes of nearly equal work the ratios differ most "
+            f"between {apart['size']} at {apart['speedup']:.2f}x and "
+            f"{together['size']} at {together['speedup']:.2f}x."
         )
     win = clear_win(ordered)
     if win is not None:
@@ -807,6 +835,49 @@ def crossover(
         return None
     last, first = changes[0]
     return None if last["speedup"] >= 1.0 else (last, first)
+
+
+#: how far the work of two shapes may differ for them to be the sparse and the
+#: dense case of one size of the sweep (`shape_pair`)
+NEARLY_EQUAL: float = 2.0
+
+
+def shape_pair(
+    ordered: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The two shapes of nearly equal work whose ratios differ most.
+
+    The figure behind "what crosses over is the work and not the shape": the
+    sweep carries a sparse and a dense case at every size, within
+    `NEARLY_EQUAL` of each other in points, and this is the pair of them the
+    claim holds least well for, so the page states how far it holds instead of
+    asserting that it does.
+
+    A pair which straddles `pkpdutils.parallel.NCA_WORKER_THRESHOLD` is left
+    out, and the threshold is read from the library rather than written here:
+    such a pair holds a batch both engines run in parallel against one both run
+    serially, which is a figure about the worker pools and no figure about the
+    shape of a batch.
+
+    Args:
+        ordered: the results of the engine cases, sorted by `engine_points`.
+
+    Returns:
+        The pair in the order of the work, or `None` when no two shapes of the
+        sweep are near enough in work and on one side of the threshold.
+    """
+    pairs = [
+        (left, right)
+        for left, right in itertools.pairwise(ordered)
+        if engine_points(right) <= NEARLY_EQUAL * engine_points(left)
+        and (
+            (ENGINE_SHAPES[left["case"]][0] < NCA_WORKER_THRESHOLD)
+            == (ENGINE_SHAPES[right["case"]][0] < NCA_WORKER_THRESHOLD)
+        )
+    ]
+    if not pairs:
+        return None
+    return max(pairs, key=lambda pair: abs(pair[0]["speedup"] - pair[1]["speedup"]))
 
 
 def clear_win(ordered: list[dict[str, Any]]) -> dict[str, Any] | None:

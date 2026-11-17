@@ -1100,9 +1100,12 @@ def comparisons() -> int:
     this gate that nothing else can see - every test passes, in the ordinary
     way, and the evidence is a job that was never armed.
 
-    A floor rather than an exact count: `importlib.reload` of this module sets
-    it back to zero, which one test of `tests/nca/test_engine.py` does on
-    purpose.
+    Read as a floor and not as an exact count: nothing is asserted against the
+    number itself, only against its being above zero. `importlib.reload` of
+    this module sets it back to zero, which one test of
+    `tests/nca/test_engine.py` does on purpose and repairs afterwards by
+    replaying the count through `note_comparison`, so an armed run whose last
+    comparison came before that test still reports what it compared.
 
     Returns:
         The number of batches `pkpdutils.nca.nca.nca` compared.

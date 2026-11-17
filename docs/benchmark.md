@@ -15,27 +15,27 @@ Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils
 
 | case | size | points | kernel ms | python ms | speedup | peak RSS MB |
 |---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 4.21 | 3.67 | 0.87x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 5.91 | 4.37 | 0.74x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 4.80 | 4.64 | 0.97x | 170 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 4.44 | 4.60 | 1.03x | 172 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 5.51 | 7.39 | 1.34x | 188 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 4.87 | 9.29 | 1.91x | 184 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 10.87 | 44.40 | 4.09x | 209 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 7.74 | 67.46 | 8.72x | 236 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 78.76 | 180.14 | 2.29x | 556 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 32.72 | 627.63 | 19.18x | 508 |
+| engine-1x12 | 1 curve x 12 points | 12 | 4.36 | 3.73 | 0.86x | 169 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 4.43 | 4.21 | 0.95x | 169 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 4.53 | 4.23 | 0.94x | 169 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 4.54 | 4.63 | 1.02x | 172 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 4.75 | 6.76 | 1.42x | 187 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 4.69 | 9.39 | 2.00x | 187 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 9.85 | 41.50 | 4.21x | 209 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 7.57 | 66.06 | 8.73x | 239 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 89.15 | 175.52 | 1.97x | 553 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 32.14 | 625.48 | 19.46x | 508 |
 
-The largest ratio of this run is 19.18x, at 10 000 curves x 200 points, and the smallest 0.74x, at 100 curves x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.97x and 250 curves x 12 points is 1.03x. Below the crossover the kernel path costs at most 1.54 ms more per call. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.34x.
+The largest ratio of this run is 19.46x, at 10 000 curves x 200 points, and the smallest 0.86x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.94x and 250 curves x 12 points is 1.02x. Below the crossover the kernel path costs at most 0.63 ms more per call, and the ratios there run from 0.86x to 0.95x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.21x and 1 000 curves x 200 points at 8.73x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.42x.
 <!-- timings:end -->
 
 ## Where the crossover is
 
-The two engines cost within a few percent of each other from one curve up to the crossover named under the table, and the kernel is the slower of the two over most of that range. The loss is bounded rather than a factor: the kernel path pays the conversion of the batch and the call into the kernel whatever the shape, which is a fixed cost and no multiple of the analysis, and the sentence under the table names the largest it reached in this run in milliseconds. A ratio below 1 is that fixed cost against an analysis which is itself a few milliseconds, so which of the small shapes carries the smallest ratio of a run is noise and no property of the sweep. The ratio right at the crossover is worth no more than its first digit: it moves by a few percent between runs, and the sentence to read instead is the shape the clear wins start at, which is far enough above 1 to survive a rerun. From there the gain grows with the work, by about an order of magnitude every order of magnitude of points.
+Below the crossover named under the table the kernel is the slower of the two, which is what lying below it means, and the sentence there names the range those ratios span and the largest amount the kernel path costs in milliseconds. The loss is bounded rather than a factor: the kernel path pays the conversion of the batch and the call into the kernel whatever the shape, which is a fixed cost and no multiple of the analysis. A ratio below 1 is that fixed cost against an analysis which is itself a few milliseconds, so which of the small shapes carries the smallest ratio of a run is noise and no property of the sweep. The ratio right at the crossover is worth no more than its first digit: it moves by a few percent between runs, and the sentence to read instead is the shape the clear wins start at, which is far enough above 1 to survive a rerun. From there the gain grows with the work, which the `points` and the `speedup` columns of the table show side by side.
 
-What crosses over is the work and not the shape: 10 curves of 200 points and 100 curves of 12 points are two different studies of nearly the same size in points, and the two engines are the same few percent apart on both of them, which is why the sweep carries a sparse and a dense case at every size rather than rows alone. The practical reading is that a bioequivalence study of two arms of 24 subjects notices neither engine, and that a simulation sweep or a population of thousands of profiles is the case the kernel was written for.
+What crosses over is the work rather than the shape of a batch, which is why the sweep carries a sparse and a dense case at every size - 10 curves of 200 points next to 100 curves of 12 points - rather than rows alone. How far that holds is a figure of the run and no claim of this paragraph: the sentence under the table names the two shapes of nearly equal work whose ratios differ most, which is the pair it holds least well for. The practical reading is that a bioequivalence study of two arms of 24 subjects pays the fixed cost that sentence bounds in milliseconds and nothing else, and that a simulation sweep or a population of thousands of profiles is the case the kernel was written for.
 
-The sweep is not monotone in its ratio, and that is a property of the defaults rather than of this run: a batch is spread over several threads by **both** engines, by the python core above `NCA_WORKER_THRESHOLD` (20 000 rows, `pkpdutils.parallel`) and by the kernel under its own shard plan, so every shape above that many rows holds two parallel analyses against each other where every shape below it holds two serial ones. The ratio of such a shape need not follow the trend of the smaller ones and can fall below any of them, which is why the sentences under the table are read off the sweep in the order of the work: a run which crosses 1.00x at more than one shape names no single crossover and says so, instead of naming the largest and the smallest shape of the run as if they were neighbours. The ratios of the defaults are what a caller gets; `NCAOptions(n_workers=1)` on both sides is a different and larger ratio.
+The sweep is not monotone in its ratio, and that is a property of the defaults rather than of this run: a batch is spread over several threads by **both** engines, by the python core above `NCA_WORKER_THRESHOLD` (20 000 rows, `pkpdutils.parallel`) and by the kernel under its own shard plan, so every shape above that many rows holds two parallel analyses against each other where every shape below it holds two serial ones. The ratio of such a shape need not follow the trend of the smaller ones and can fall below any of them, which is why the sentences under the table are read off the sweep in the order of the work: a run which crosses 1.00x at more than one shape names no single crossover and says so, instead of naming the largest and the smallest shape of the run as if they were neighbours. It is also why the pair of nearly equal work under the table leaves out the pair which straddles that threshold, however far apart its two ratios are: a parallel analysis against a serial one is a figure about the worker pools and none about the shape of a batch. The ratios of the defaults are what a caller gets; `NCAOptions(n_workers=1)` on both sides is a different and larger ratio.
 
 ## What the memory column says
 

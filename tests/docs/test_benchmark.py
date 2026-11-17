@@ -14,9 +14,11 @@ in parallel by both engines - and a sweep which crosses 1.00x more than once
 names no crossover at all (`scripts.benchmark.summary_sentences`).
 """
 
+import itertools
 from pathlib import Path
 from typing import Any
 
+from pkpdutils.parallel import NCA_WORKER_THRESHOLD
 from scripts.benchmark import (
     ENGINE_SHAPES,
     PAGE_PATH,
@@ -25,6 +27,7 @@ from scripts.benchmark import (
     engine_points,
     engine_size,
     page_complaints,
+    shape_pair,
     sign_changes,
     summary_sentences,
 )
@@ -83,6 +86,13 @@ MONOTONE: dict[str, float] = {
 #: magnitude of points away from the shapes the crossover really lies between
 NON_MONOTONE: dict[str, float] = {**MONOTONE, "engine-100000x12": 0.98}
 
+#: a sweep which crosses 1.00x once and downwards, the shape of a build in
+#: which the kernel lost its advantage on the large batches: no crossover of
+#: the page's kind, and the one input class whose count is 1
+DOWNWARD: dict[str, float] = {
+    name: (1.50 if index < 4 else 0.90) for index, name in enumerate(ENGINE_SHAPES)
+}
+
 
 def test_the_crossover_is_the_one_sign_change_of_the_sweep() -> None:
     rows = sweep(MONOTONE)
@@ -100,6 +110,61 @@ def test_the_crossover_is_the_one_sign_change_of_the_sweep() -> None:
     # the bound is read from the shapes below the crossover, which is what the
     # sentence says, and not from every shape of the run below 1.00x
     assert "Below the crossover the kernel path costs at most 0.39 ms" in sentences
+    # and the range of those ratios, which the prose of the page claimed by
+    # hand as "within a few percent of each other" until a rerun put a shape
+    # of that range at 0.74x
+    assert "the ratios there run from 0.87x to 0.97x" in sentences
+
+
+def test_a_sweep_which_crosses_once_downwards_names_no_crossover() -> None:
+    rows = sweep(DOWNWARD)
+    ordered = sorted(rows, key=engine_points)
+    assert len(sign_changes(ordered)) == 1
+    assert crossover(ordered) is None
+    sentences = summary_sentences(rows)
+    # one sign change and no crossover is the input class whose count is 1, so
+    # the sentence names the two shapes instead of counting them
+    assert (
+        "crosses 1.00x downwards, from 250 curves x 12 points at 1.50x to "
+        "1 000 curves x 12 points at 0.90x, so the sweep names no crossover"
+    ) in sentences
+    assert "rather than at one" not in sentences
+    assert "cost the same between" not in sentences
+
+
+def test_the_shapes_of_nearly_equal_work_are_named_with_their_ratios() -> None:
+    # the other figure the prose claimed by hand, that two shapes of nearly the
+    # same work are "the same few percent apart": it is a figure of the run, so
+    # the sentence names the pair it holds least well for
+    rows = sweep(MONOTONE)
+    pair = shape_pair(sorted(rows, key=engine_points))
+    assert pair is not None
+    assert [row["size"] for row in pair] == [
+        "10 000 curves x 12 points",
+        "1 000 curves x 200 points",
+    ]
+    assert (
+        "Of two shapes of nearly equal work the ratios differ most between "
+        "10 000 curves x 12 points at 4.43x and 1 000 curves x 200 points at 9.79x."
+    ) in summary_sentences(rows)
+
+
+def test_a_pair_which_straddles_the_worker_threshold_is_no_pair() -> None:
+    # 1 200 000 and 2 000 000 points are within a factor of two of each other
+    # and the first of them is the one shape the python core runs in parallel,
+    # so that pair holds a parallel analysis against a serial one: a figure
+    # about the worker pools and no figure about the shape of a batch, although
+    # it is the pair whose ratios differ most of the whole sweep
+    straddling = ("engine-100000x12", "engine-10000x200")
+    curves = [ENGINE_SHAPES[name][0] for name in straddling]
+    assert curves[0] >= NCA_WORKER_THRESHOLD > curves[1]
+    ordered = sorted(sweep(MONOTONE), key=engine_points)
+    widest = max(
+        itertools.pairwise(ordered),
+        key=lambda pair: abs(pair[0]["speedup"] - pair[1]["speedup"]),
+    )
+    assert tuple(row["case"] for row in widest) == straddling
+    assert shape_pair(ordered) != widest
 
 
 def test_a_sweep_which_crosses_twice_names_no_crossover() -> None:
