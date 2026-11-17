@@ -65,6 +65,39 @@ class TerminalFit:
     candidates: pd.DataFrame | None = None
 
 
+RESIDUAL_FLOOR: float = 16.0 * float(np.finfo(np.float64).eps)
+"""Multiple of `n * eps * syy` below which a residual sum of squares is zero.
+
+The residual of a window is `syy_c - slope * sxy_c`, a difference of two
+quantities which are equal for a perfect fit, so what is left there is the
+rounding of the sums themselves and its sign is arbitrary: clamping it at zero
+reports either 0 or the square root of that noise, and which one depends on the
+platform and on whether the python core or the rust kernel computed it.
+
+The floor is taken against the **uncentred** `syy` and not against `syy_c`,
+because every window of a row shares one origin, the row's first sample, so
+`window_statistics` can evaluate them all from one set of suffix sums. For a
+short window late in the curve that makes `syy` and `sy * sy / n` both large,
+of the order of the whole drop of the curve, while their difference `syy_c` is
+small - the cancellation, and therefore the noise, is set by the uncentred sums
+and not by the centred one. A floor written against `syy_c` leaves the three
+and four point windows of a noise free curve reporting a standard error of up
+to 4e-08, which is what measurement showed.
+
+The multiple is 16 rather than tighter or looser from measurement over 120 000
+windows of 20 000 curves. The ratio `|ss_res| / (n * eps * syy)` reaches 1.20
+for a noise free curve, at three points and falling with the window, while a
+curve with 1 % noise stays above 1.9e+05 from four points up. The two regimes
+therefore overlap only at three points, where a window has one degree of
+freedom and three noisy samples can fall nearly collinear by chance: at this
+floor that zeroes 2 windows in 120 000 of a noisy batch, whose residual really
+is at the rounding floor, and leaves no exact fit reporting a standard error.
+A multiple of 4 would do the same with a margin of only 3x over the worst
+exact fit measured, so 16 buys robustness to another time grid for the same
+cost.
+"""
+
+
 def _suffix_sum(a: np.ndarray) -> np.ndarray:
     """Sum of every row from each index to the end."""
     return np.cumsum(a[:, ::-1], axis=1)[:, ::-1]
@@ -107,10 +140,17 @@ def window_statistics(
         syy_c = syy - sy * sy / n
         slope = sxy_c / sxx_c
         intercept = (sy - slope * sx) / n + y_origin - slope * x_origin
+        # the residual sum of squares subtracts two nearly equal sums, so an
+        # exact fit leaves rounding noise whose sign is arbitrary: clamping it
+        # at zero would report either 0 or `sqrt` of that noise, which differs
+        # between platforms and between this core and the rust kernel. Below
+        # the rounding of its own operands the residual is not a small number
+        # but no number, and the fit is exact.
         ss_res = syy_c - slope * sxy_c
+        ss_res = np.where(ss_res < RESIDUAL_FLOOR * n * syy, 0.0, ss_res)
         r2 = np.clip(1.0 - ss_res / syy_c, 0.0, 1.0)
         r2_adj = 1.0 - (1.0 - r2) * (n - 1.0) / (n - 2.0)
-        se_slope = np.sqrt(np.maximum(ss_res, 0.0) / (n - 2.0) / sxx_c)
+        se_slope = np.sqrt(ss_res / (n - 2.0) / sxx_c)
     enough = (n >= 3) & (sxx_c > 0) & (syy_c > 0)
     nan = np.nan
     return {
