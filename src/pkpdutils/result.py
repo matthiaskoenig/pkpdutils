@@ -465,15 +465,19 @@ class ParameterResult:
         """
         if "flags" not in ds:
             raise ValueError("The dataset needs a 'flags' variable")
+        # `ds.variables[name]` is the stored `Variable`, where `ds[name]` builds a
+        # `DataArray` around it and filters the indexes of its coordinates. The
+        # attrs and the dims are the same either way, and a result carries about
+        # fifty variables, so the loop below cost fifty of those constructions
         for name in ds.data_vars:
-            if "units" not in ds[name].attrs:
+            if "units" not in ds.variables[name].attrs:
                 raise ValueError(f"'{name}' needs attrs['units']")
         self.ds: xr.Dataset = ds
 
     @property
     def sample_dims(self) -> tuple[str, ...]:
         """The sample dimensions."""
-        return tuple(str(d) for d in self.ds["flags"].dims)
+        return tuple(str(d) for d in self.ds.variables["flags"].dims)
 
     @property
     def point_variables(self) -> list[str]:
@@ -482,7 +486,7 @@ class ParameterResult:
         return [
             str(name)
             for name in self.ds.data_vars
-            if not set(self.ds[name].dims) <= sample_dims
+            if not set(self.ds.variables[name].dims) <= sample_dims
         ]
 
     @property
@@ -580,7 +584,7 @@ class ParameterResult:
         Returns:
             The unit string of the parameter.
         """
-        return str(self.ds[name].attrs["units"])
+        return str(self.ds.variables[name].attrs["units"])
 
     def _companions(self, name: str) -> list[str]:
         """The variables derived from one parameter, in the order of the dataset.
@@ -640,7 +644,7 @@ class ParameterResult:
         for name, target in units.items():
             if name not in ds.data_vars:
                 raise KeyError(f"'{name}' is not a variable of the result")
-            current = str(ds[name].attrs["units"])
+            current = str(ds.variables[name].attrs["units"])
             normalized = self.dose_normalized_names.get(name, f"{name}_dn")
             family = [name, *self._companions(name)]
             if normalized in family:
@@ -1271,7 +1275,8 @@ class ParameterResult:
             *(
                 name
                 for name in self.point_variables
-                if name in self.summarized_point_variables and dim in self.ds[name].dims
+                if name in self.summarized_point_variables
+                and dim in self.ds.variables[name].dims
             ),
         ]
         prepared: dict[str, tuple[tuple[str, ...], np.ndarray]] = {}
@@ -1364,7 +1369,7 @@ class ParameterResult:
         extra = {
             str(d)
             for name in summarized
-            for d in self.ds[name].dims
+            for d in self.ds.variables[name].dims
             if str(d) != dim and str(d) not in remaining
         }
         coords = {
@@ -1576,7 +1581,9 @@ def _table_groups(
                 "and names its value in a column of its own; 'by' groups the "
                 f"samples of '{dim}' by one of its coordinates {along}"
             )
-        if name not in result.ds.coords or tuple(result.ds[name].dims) != (dim,):
+        if name not in result.ds.coords or tuple(result.ds.variables[name].dims) != (
+            dim,
+        ):
             raise ValueError(f"'{name}' is not a coordinate along '{dim}': {along}")
     columns = [result.ds[name].to_numpy() for name in by]
     keys = list(zip(*columns, strict=True))
@@ -1727,7 +1734,9 @@ def summary_table(
         raise ValueError(f"{missing} are no variables of the result")
     sample_dims = set(result.sample_dims)
     extra = [
-        name for name in names if not set(map(str, result.ds[name].dims)) <= sample_dims
+        name
+        for name in names
+        if not set(map(str, result.ds.variables[name].dims)) <= sample_dims
     ]
     if extra:
         raise ValueError(
