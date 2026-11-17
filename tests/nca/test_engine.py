@@ -794,8 +794,11 @@ def test_an_error_which_is_no_refusal_propagates(
         nca(batch())
 
 
+@pytest.mark.engine_fallback
 def test_a_refusal_of_the_kernel_falls_back_to_the_python_path(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    engine_cross_check: Any,
 ) -> None:
     def refuse(*args: Any, **kwargs: Any) -> dict[str, np.ndarray]:
         raise engine.UnsupportedError("an analysis of a later build")
@@ -809,6 +812,14 @@ def test_a_refusal_of_the_kernel_falls_back_to_the_python_path(
     assert any(
         "an analysis of a later build" in record.message for record in caplog.records
     )
+    # the only test of the suite which makes the kernel refuse a batch on
+    # purpose, and therefore the one which proves that the watch of
+    # `tests/conftest.py` sees a real fallback: every other test fails if this
+    # record is logged, and the marker is what exempts this one
+    assert [record.getMessage() for record in engine_cross_check.fallbacks] == [
+        record.getMessage() for record in caplog.records if "refused" in record.message
+    ]
+    assert engine_cross_check.fallbacks
 
 
 def test_the_forced_python_path_reaches_the_python_core(
@@ -824,3 +835,448 @@ def test_the_forced_python_path_reaches_the_python_core(
 
 def test_the_mapping_of_the_kernel_is_the_mapping_of_the_rows() -> None:
     assert_same_mapping(batch())
+
+
+# --- the differential gate ----------------------------------------------------
+
+
+def two_mappings() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Two equal mappings of one analysis, as the two engines report them."""
+    python: dict[str, np.ndarray] = {
+        "cmax": np.array([8.0, 4.0]),
+        "tmax": np.array([0.25, 0.5]),
+        "flags": np.array([0, 2], dtype=np.int64),
+    }
+    return python, {name: column.copy() for name, column in python.items()}
+
+
+# the unit of every variable of `two_mappings` both engines name; `flags` is
+# named by neither, as the kernel of 0.2.0 reports none for it
+MAPPING_UNITS: dict[str, str] = {"cmax": "milligram / liter", "tmax": "hour"}
+
+
+def disagreements(
+    python: dict[str, np.ndarray],
+    kernel: dict[str, np.ndarray],
+    *,
+    units_python: dict[str, str] | None = None,
+    units_kernel: dict[str, str] | None = None,
+) -> list[str]:
+    """`compare_engines` of two mappings, the units of both engines by default."""
+    return engine.compare_engines(
+        python,
+        kernel,
+        units_python=MAPPING_UNITS if units_python is None else units_python,
+        units_kernel=MAPPING_UNITS if units_kernel is None else units_kernel,
+    )
+
+
+def test_agreement_is_reported_as_empty() -> None:
+    python, kernel = two_mappings()
+    assert disagreements(python, kernel) == []
+
+
+def test_a_value_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    kernel["cmax"][1] += 1e-3
+    (said,) = disagreements(python, kernel)
+    # the variable and both numbers, so that a mismatch is read without a
+    # second run
+    assert "'cmax'" in said
+    assert "4.0" in said
+    assert "4.001" in said
+
+
+def test_a_difference_inside_the_tolerance_is_no_disagreement() -> None:
+    python, kernel = two_mappings()
+    # the last bits of `x * f / f`, which `_as_computed` divides the unit
+    # factor back out with
+    kernel["cmax"][1] *= 1.0 + 1e-9
+    assert disagreements(python, kernel) == []
+
+
+def test_a_nan_position_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    kernel["tmax"][0] = np.nan
+    (said,) = disagreements(python, kernel)
+    assert "'tmax'" in said
+    assert "NaN" in said
+    assert "0.25" in said
+
+
+def test_a_missing_variable_is_reported() -> None:
+    python, kernel = two_mappings()
+    del kernel["tmax"]
+    (said,) = disagreements(python, kernel)
+    assert "kernel reports none" in said
+    assert "tmax" in said
+
+
+def test_a_variable_of_the_kernel_alone_is_reported() -> None:
+    python, kernel = two_mappings()
+    del python["tmax"]
+    (said,) = disagreements(python, kernel)
+    assert "python core reports none" in said
+    assert "tmax" in said
+
+
+def test_a_unit_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    (said,) = disagreements(
+        python, kernel, units_kernel={**MAPPING_UNITS, "cmax": "mg/l"}
+    )
+    assert "'cmax'" in said
+    assert "'milligram / liter'" in said
+    assert "'mg/l'" in said
+
+
+def test_a_unit_only_one_engine_names_is_reported() -> None:
+    python, kernel = two_mappings()
+    (said,) = disagreements(python, kernel, units_kernel={"cmax": "milligram / liter"})
+    assert "'tmax'" in said
+    assert "None" in said
+
+
+def test_a_flag_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    kernel["flags"][1] = 3
+    (said,) = disagreements(python, kernel)
+    assert "'flags'" in said
+    assert "counted values" in said
+    assert "2" in said
+    assert "3" in said
+
+
+def test_a_flag_word_differing_in_a_high_bit_is_reported() -> None:
+    python, kernel = two_mappings()
+    python["flags"] = np.array([2**40, 0], dtype=np.int64)
+    kernel["flags"] = np.array([2**40 + 1, 0], dtype=np.int64)
+    # the reason a counted variable is compared exactly: the relative
+    # tolerance of the values would call these two bit fields equal
+    assert np.isclose(
+        float(2**40), float(2**40 + 1), rtol=engine.COMPARE_REL, atol=engine.COMPARE_ABS
+    )
+    (said,) = disagreements(python, kernel)
+    assert "'flags'" in said
+    assert "1099511627776" in said
+    assert "1099511627777" in said
+
+
+def test_an_order_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    reordered = {name: kernel[name] for name in reversed(list(kernel))}
+    (said,) = disagreements(python, reordered)
+    # the order of the variables is the order of the columns of
+    # `NCAResult.to_dataframe`, so a swap is observable to a caller
+    assert "different order" in said
+    assert "'cmax'" in said
+    assert "'flags'" in said
+
+
+def test_a_shape_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    kernel["cmax"] = np.array([8.0, 4.0, 1.0])
+    (said,) = disagreements(python, kernel)
+    assert "'cmax'" in said
+    assert "shape" in said
+
+
+def test_a_dtype_difference_is_reported() -> None:
+    python, kernel = two_mappings()
+    # the same numbers, counted as doubles: `to_dataframe` reports the column
+    # of a flag word as a float and `NCAResult.flag_table` reads bits of it
+    kernel["flags"] = kernel["flags"].astype(np.float64)
+    (said,) = disagreements(python, kernel)
+    assert "'flags'" in said
+    assert "dtype" in said
+
+
+def test_a_mismatch_is_no_value_error() -> None:
+    # `nca` answers a `ValueError` of the kernel by taking the python path; a
+    # disagreement of the two engines must reach whoever armed the gate
+    assert not issubclass(engine.EngineMismatch, ValueError)
+
+
+@pytest.mark.parametrize(
+    ("value", "armed"),
+    [
+        ("1", True),
+        ("true", True),
+        ("True", True),
+        ("yes", True),
+        ("on", True),
+        ("", False),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+    ],
+)
+def test_the_gate_is_armed_by_the_environment(
+    monkeypatch: pytest.MonkeyPatch, value: str, armed: bool
+) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, value)
+    assert engine.comparing() is armed
+
+
+def test_the_gate_is_disarmed_without_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(engine.COMPARE_VARIABLE, raising=False)
+    assert engine.comparing() is False
+
+
+def changing_kernel(
+    change: Any,
+) -> Any:
+    """A `run_kernel` which runs the kernel and then changes its answer."""
+    real = engine.run_kernel
+
+    def run(
+        timecourses: Timecourses,
+        options: NCAOptions,
+        *,
+        units: dict[str, str] | None = None,
+    ) -> dict[str, np.ndarray]:
+        values = real(timecourses, options, units=units)
+        return change(values, units)
+
+    return run
+
+
+def scaled_cmax(
+    values: dict[str, np.ndarray], units: dict[str, str] | None
+) -> dict[str, np.ndarray]:
+    """The answer of the kernel with `cmax` off by a thousandth."""
+    values["cmax"] = values["cmax"] * 1.001
+    return values
+
+
+def test_the_armed_gate_raises_on_a_value_difference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    monkeypatch.setattr(engine, "run_kernel", changing_kernel(scaled_cmax))
+    with pytest.raises(engine.EngineMismatch, match="'cmax'"):
+        nca(batch())
+
+
+def test_the_gate_lets_a_difference_through_when_it_is_not_armed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the gate costs an ordinary analysis one lookup of the environment and
+    # compares nothing, which is what makes this test the proof that the gate
+    # above is what raises
+    monkeypatch.delenv(engine.COMPARE_VARIABLE, raising=False)
+    monkeypatch.setattr(engine, "run_kernel", changing_kernel(scaled_cmax))
+    one = batch()
+    expected = python_result(one).ds["cmax"].to_numpy() * 1.001
+    assert nca(one).ds["cmax"].to_numpy() == pytest.approx(expected)
+
+
+def test_the_armed_gate_raises_on_a_different_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reversed_order(
+        values: dict[str, np.ndarray], units: dict[str, str] | None
+    ) -> dict[str, np.ndarray]:
+        return {name: values[name] for name in reversed(list(values))}
+
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    monkeypatch.setattr(engine, "run_kernel", changing_kernel(reversed_order))
+    with pytest.raises(engine.EngineMismatch, match="different order"):
+        nca(batch())
+
+
+def test_the_armed_gate_raises_on_a_unit_of_the_kernel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def shortened_unit(
+        values: dict[str, np.ndarray], units: dict[str, str] | None
+    ) -> dict[str, np.ndarray]:
+        assert units is not None, "the armed gate collects the units of the kernel"
+        units["cmax"] = "mg/l"
+        return values
+
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    monkeypatch.setattr(engine, "run_kernel", changing_kernel(shortened_unit))
+    # the numbers of the two engines agree and their units do not, which is the
+    # defect class of a kernel computing a parameter in another unit than the
+    # host believes
+    with pytest.raises(engine.EngineMismatch, match="mg/l"):
+        nca(batch())
+
+
+def test_the_armed_gate_names_the_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    monkeypatch.setattr(engine, "run_kernel", changing_kernel(scaled_cmax))
+    with pytest.raises(engine.EngineMismatch, match="2 sample") as raised:
+        nca(batch())
+    assert "mg/l" in str(raised.value)
+    assert "iv_bolus" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("what", "timecourses", "options"), AGREEMENT, ids=[a[0] for a in AGREEMENT]
+)
+def test_the_armed_gate_agrees_on_every_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+    what: str,
+    timecourses: Timecourses,
+    options: NCAOptions,
+) -> None:
+    if options.resolve_uncertainty(timecourses.has_uncertainty) is not (
+        UncertaintyMethod.NONE
+    ):
+        # a bootstrap draws its replicates and the delta method needs a spread
+        # the batch of this case does not carry; both run in the python core
+        pytest.skip("the propagation of an uncertainty is the python core's own")
+    # the gate itself as the comparison, on the analyses of `AGREEMENT`: it
+    # raises on a name, an order, a shape, a dtype, a NaN position, a number or
+    # a unit the two engines do not share
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    assert engine.comparing()
+    nca(timecourses, options=options)
+
+
+def test_the_armed_gate_compares_nothing_on_a_batch_of_the_python_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    many = multiple_dose_batch()
+    assert engine.unsupported_reason(many, NCAOptions()) is not None
+    assert np.isfinite(nca(many).ds["cl_ss"].to_numpy()).all()
+
+
+def blq_batch() -> Timecourses:
+    """One row entirely below its limit of quantification, beside a measured one."""
+    return Timecourses.from_timecourses(
+        [
+            Timecourse(
+                time=TIMES,
+                value=C0 * np.exp(-K * TIMES),
+                time_unit="hr",
+                unit="mg/l",
+                dose=IV_DOSE,
+                substance="x",
+                lloq=20.0,
+            ),
+            curve(),
+        ],
+        dim="subject",
+        labels=["blq", "measured"],
+    )
+
+
+def test_an_all_blq_row_agrees(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(engine.COMPARE_VARIABLE, "1")
+    assert engine.comparing()
+    below = blq_batch()
+    # the gate compares the two engines on this batch, the positions of NaN
+    # exactly
+    result = nca(below)
+    for name in ("cmax", "tmax", "auc_last", "lambda_z", "clast", "cl"):
+        values = result.ds[name].to_numpy()
+        assert np.isnan(values[0]), name
+        assert np.isfinite(values[1]), name
+    assert_same_mapping(below)
+    assert_same_result(result, python_result(below))
+
+
+def test_the_kernel_reports_the_units_the_host_derives() -> None:
+    # the units are the one part of the kernel's answer the host neither adopts
+    # nor drops: a result is labelled by pint either way, so a kernel which
+    # computed a parameter in another unit would be a wrong number with a right
+    # label. They are therefore compared, which is only worth anything while
+    # the two spell a unit the same way
+    units: dict[str, str] = {}
+    nanomolar = Timecourses.from_arrays(
+        TIMES,
+        (C0 * np.exp(-K * TIMES))[None, :],
+        time_unit="min",
+        unit="nmol/l",
+        dims=("subject",),
+        dose={"amount": [1.0], "unit": "nmol"},
+        route=Route.IV_BOLUS,
+    )
+    engine.run_kernel(nanomolar, NCAOptions(), units=units)
+    assert len(units) > 40
+    assert engine.host_units(units, nanomolar) == units
+
+
+def test_the_kernel_reports_a_unit_for_every_variable_but_the_flags() -> None:
+    units: dict[str, str] = {}
+    options = NCAOptions(terminal=TerminalPhase(keep_candidates=True))
+    values = engine.run_kernel(batch(), options, units=units)
+    # the exemption of the unit comparison is pinned to what the kernel really
+    # does: the day it reports a unit for its flags this goes red and
+    # `KERNEL_UNITLESS` is removed, and the day it stops reporting one for a
+    # parameter the gate reports that parameter rather than passing
+    assert set(values) - set(units) == engine.KERNEL_UNITLESS
+
+
+# --- the cross-check of the two predicates ------------------------------------
+
+
+def test_the_cross_check_sees_every_batch_of_a_test(
+    engine_cross_check: Any,
+) -> None:
+    # the hook of `tests/conftest.py` is armed for every test of the suite and
+    # asks both predicates about every batch which reaches `nca`; a test which
+    # trusted it without looking would pass under a hook which was never armed
+    before = engine_cross_check.compared
+    nca(batch())
+    nca(multiple_dose_batch())
+    assert engine_cross_check.compared == before + 2
+
+
+def test_the_cross_check_counts_the_batches_of_the_two_host_reasons(
+    engine_cross_check: Any,
+) -> None:
+    empty = Timecourses.from_arrays(
+        TIMES,
+        np.zeros((0, TIMES.size)),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array([], dtype=object)},
+    )
+    before = engine_cross_check.compared, engine_cross_check.empty
+    nca(empty)
+    # a batch of no samples is the host's own refusal and no question of the
+    # kernel, which is read from the batch and not from the answer
+    assert (engine_cross_check.compared, engine_cross_check.empty) == (
+        before[0],
+        before[1] + 1,
+    )
+    forced = engine_cross_check.forced
+    python_result(batch())
+    assert engine_cross_check.forced == forced + 1
+
+
+def test_the_cross_check_catches_a_predicate_which_refuses_too_much(
+    monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
+) -> None:
+    def narrow(timecourses: Timecourses, options: NCAOptions) -> str | None:
+        # the mutation the review measured: a predicate which refuses every
+        # batch whose unit is not `mg/l` leaves this file green and the
+        # analyses of those batches never reach the kernel again
+        return "a unit the kernel does not carry"
+
+    monkeypatch.setattr(engine_cross_check, "_predicate", narrow)
+    with pytest.raises(AssertionError, match="the two predicates disagree"):
+        nca(batch())
+
+
+def test_the_cross_check_catches_a_predicate_which_refuses_too_little(
+    monkeypatch: pytest.MonkeyPatch, engine_cross_check: Any
+) -> None:
+    def wide(timecourses: Timecourses, options: NCAOptions) -> str | None:
+        return None
+
+    monkeypatch.setattr(engine_cross_check, "_predicate", wide)
+    with pytest.raises(AssertionError, match="the two predicates disagree"):
+        # a multiple dose analysis the kernel does not carry: the predicate of
+        # the host is the only thing between it and an `UnsupportedError` at
+        # the call site of a user
+        nca(multiple_dose_batch())

@@ -33,6 +33,48 @@ reports the union in its canonical order. Nothing of the result but the order
 of its variables differs, and the order of the kernel does not depend on which
 route the batch names first.
 
+Because the two engines are held to one answer rather than trusted to agree,
+this module also carries the comparison itself: `compare_engines` is every way
+in which two mappings of one analysis can disagree and `compare_with_python`
+is the gate `pkpdutils.nca.nca.nca` runs it from, armed by the environment
+variable `COMPARE_VARIABLE`. The gate compares the answer of a batch which
+reached the kernel, so by construction it cannot see the other direction, a
+batch which quietly never got there; that one is covered by the cross-check of
+`tests/conftest.py`, which asks both predicates about every batch of the test
+suite. The two are complements, not alternatives.
+
+What the gate adds over the reference comparisons of the suite is the argument
+for having it, so it is named here rather than left to a judgement.
+`tests/nca/test_benchmark_datasets.py` and `tests/nca/test_validation.py` hold
+the main parameters of theophylline and indomethacin against WinNonlin, PKNCA
+and NonCompart within 1e-8, single dose, bolus, infusion and extravascular:
+dense cover of those variables on those batches, and the measure of it is that
+a mutation of `aumc_inf_pred` by 1e-5 for every batch of three samples or more
+fails 25 tests with the gate disarmed. The gate compares **every** batch the
+caller builds, and these are the parts of an answer no reference table of the
+suite reaches:
+
+- `flags` and `c0_method` as exact integers, which no table of another tool
+  carries and which a tolerance would not compare anyway (`_compare_columns`),
+- the point variables (`candidate_*` of a kept candidate table, `rate` and
+  `midpoint` of a urine analysis) and the `interval_*` variables of a multiple
+  dose analysis, which are no column of a parameter table,
+- multiple dose, steady state, a last interval completed within
+  `tau_tolerance`, a limit of quantification and a terminal window given by
+  hand, none of which the benchmark scenarios exercise,
+- group data with uncertainty, whose replicate rows run through the engine the
+  batch was dispatched to,
+- a batch of several routes and the order of its variables, which is the order
+  of the columns of `NCAResult.to_dataframe` and of every rendered table,
+- the positions of `NaN`, the dtype of every column and the unit string the
+  kernel reports for every variable, which the host neither adopts nor drops.
+
+Where a reference table does cover a variable, the gate's value is breadth and
+diagnosis rather than a sensitivity the suite lacks: of that `aumc_inf_pred`
+mutation the armed run says which variable, which batch and both numbers in
+its first failure, where the disarmed run says that 25 published numbers no
+longer match.
+
 `UnsupportedError` is the one exception a caller answers by taking its own
 path, and it is re-exported here so that `nca` catches it without importing
 the kernel itself. Every other exception of the bindings is a disagreement
@@ -45,7 +87,8 @@ path for good.
 """
 
 import logging
-from collections.abc import Iterable
+import os
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -743,7 +786,12 @@ def _python_order(
     ]
 
 
-def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.ndarray]:
+def run_kernel(
+    timecourses: Timecourses,
+    options: NCAOptions,
+    *,
+    units: dict[str, str] | None = None,
+) -> dict[str, np.ndarray]:
     """Run the kernel on a batch, as `run_rows` runs the python core.
 
     The parameters of the kernel, its point variables as `(N, K)` arrays and
@@ -761,6 +809,15 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
         timecourses: the batch
         options: the options of the analysis
 
+    Keyword Args:
+        units: a dict the unit the kernel reports for every variable of its
+            result is written into, the one part of its answer which
+            `run_kernel` neither adopts nor drops. The differential gate reads
+            them from here and holds them against pint's own derivation
+            (`compare_with_python`), so that the kernel's units are compared
+            without the analysis running twice; `None` outside the gate, which
+            is every ordinary call.
+
     Returns:
         One array per variable, `flags` among the keys.
 
@@ -770,6 +827,8 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
             anything.
     """
     result = kernel_result(timecourses, options)
+    if units is not None:
+        units.update(result["units"])
     n_rows = timecourses.n_samples
     values: dict[str, np.ndarray] = {
         name: np.asarray(column, dtype=np.float64)
@@ -797,3 +856,409 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
         n_time=timecourses.n_time,
     )
     return {name: values[name] for name in order}
+
+
+# --- the differential gate ----------------------------------------------------
+
+COMPARE_VARIABLE: str = "PKPDUTILS_COMPARE_ENGINES"
+"""The environment variable which arms the differential gate.
+
+Set to anything but an empty string, `0`, `false`, `no` or `off`, every batch
+the kernel analyses is analysed by the python core as well and the two answers
+are compared, which costs more than either engine alone and is meant for a
+test run and for a bisection, never for production. The suite runs with it in
+continuous integration (`.github/workflows/ci-cd.yml`), which is the acceptance
+evidence that the two engines agree on every batch the tests build.
+"""
+
+COMPARE_REL: float = 1e-6
+"""The relative tolerance the values of the two engines are compared with.
+
+The tolerance of `tests/nca/test_reference.py`, which the analysis is held to
+against `pkdb_analysis` 0.3.1; the two engines are held to the same one.
+"""
+
+COMPARE_ABS: float = 1e-12
+"""The absolute tolerance the values of the two engines are compared with."""
+
+KERNEL_UNITLESS: frozenset[str] = frozenset({"flags"})
+"""The variables of the mapping whose unit the kernel reports for nobody.
+
+`pkpdutils-core` 0.2.0 reports a unit for every parameter of its result and
+none for its flags, which carry no unit on either side (`PARAMETER_UNITS`
+spells them `dimensionless`). A name of this set is left out of the unit
+comparison **only while the kernel really reports nothing for it**: the day it
+reports one, the comparison takes it like any other, so the exemption cannot go
+stale. Every other variable of the mapping is compared, which is what makes a
+unit the kernel stops reporting a disagreement rather than a silence.
+"""
+
+FALSE_WORDS: frozenset[str] = frozenset({"", "0", "false", "no", "off"})
+"""The values of `COMPARE_VARIABLE` which leave the gate disarmed."""
+
+
+class EngineMismatch(RuntimeError):
+    """The two engines disagreed on a batch while the differential gate was armed.
+
+    No `ValueError`, so that nothing on the dispatch of `pkpdutils.nca.nca.nca`
+    can mistake it for the refusal of an analysis and answer it by taking the
+    python path: a disagreement is reported to whoever armed the gate and
+    never swallowed.
+    """
+
+
+def comparing() -> bool:
+    """Whether the differential gate is armed (`COMPARE_VARIABLE`).
+
+    One lookup of the environment per analysis, which is what an ordinary run
+    of `pkpdutils.nca.nca.nca` pays for the gate. The value is read every time
+    rather than once at import, so that a test arms and disarms it with
+    `monkeypatch.setenv`.
+
+    Returns:
+        Whether the two engines are to be compared.
+    """
+    return os.environ.get(COMPARE_VARIABLE, "").strip().lower() not in FALSE_WORDS
+
+
+_comparisons: int = 0
+"""How many batches the gate has compared, see `comparisons`."""
+
+
+def note_comparison() -> None:
+    """Record that the gate compared the two engines on one batch.
+
+    Called by the dispatch of `pkpdutils.nca.nca.nca` after a comparison and
+    deliberately **not** by `compare_with_python` itself: the tests of the gate
+    call that function directly with `COMPARE_VARIABLE` set by `monkeypatch`,
+    so a counter kept inside it could never be zero and the sentinel which
+    reads it would be satisfied by the gate's own unit tests instead of by the
+    batch of an analysis.
+    """
+    global _comparisons
+    _comparisons += 1
+
+
+def comparisons() -> int:
+    """How many batches the gate compared since this module was imported.
+
+    The witness `tests/conftest.py` fails a test session on: a run which says
+    it armed the gate and compared nothing took the whole suite through one
+    engine while reporting the agreement of two, which is the one failure of
+    this gate that nothing else can see - every test passes, in the ordinary
+    way, and the evidence is a job that was never armed.
+
+    A floor rather than an exact count: `importlib.reload` of this module sets
+    it back to zero, which one test of `tests/nca/test_engine.py` does on
+    purpose.
+
+    Returns:
+        The number of batches `pkpdutils.nca.nca.nca` compared.
+    """
+    return _comparisons
+
+
+def compare_engines(
+    python: Mapping[str, np.ndarray],
+    kernel: Mapping[str, np.ndarray],
+    *,
+    units_python: Mapping[str, str],
+    units_kernel: Mapping[str, str],
+) -> list[str]:
+    """Every way in which two mappings of the same analysis disagree.
+
+    The mappings are the ones the two engines report
+    (`pkpdutils.nca.nca.run_analysis_rows` and `run_kernel`), in the layout the
+    result is assembled from, and the two unit mappings are the unit of every
+    variable as each engine spells it.
+
+    What is compared, and how:
+
+    - **the names**, in both directions: a variable one engine reports and the
+      other does not is named rather than skipped, which is the one way a
+      comparison of two mappings can pass by looking at nothing
+    - **the order** of the variables they share, since it is the order of the
+      columns of `NCAResult.to_dataframe` and of every table rendered from a
+      result, so a swap is observable to a user
+    - **the shape and the dtype** of every column, a counted variable being an
+      integer on both sides and a measured one a double
+    - **the positions of `NaN`**, exactly: a parameter which is `NaN` in one
+      engine and a number in the other is a disagreement about whether the
+      analysis has an answer at all, and a tolerance must never hide it
+    - **the numbers**, within `COMPARE_REL` and `COMPARE_ABS`, except a column
+      which counts rather than measures: a flag word and the rule of
+      `c0_method` are compared exactly, since a relative tolerance on a bit
+      field would let a high bit differ unnoticed
+    - **the units**, as strings, exactly
+
+    Args:
+        python: one array per variable, as the python core reports them
+        kernel: one array per variable, as the kernel reports them
+
+    Keyword Args:
+        units_python: the unit of every variable as the host derives it with
+            pint
+        units_kernel: the unit of every variable as the kernel reports it
+
+    Returns:
+        One sentence per disagreement, naming the variable and both values;
+        empty when the two engines agree.
+    """
+    disagreements: list[str] = []
+    missing = [name for name in python if name not in kernel]
+    if missing:
+        disagreements.append(f"the kernel reports none of the variables {missing}")
+    extra = [name for name in kernel if name not in python]
+    if extra:
+        disagreements.append(f"the python core reports none of the variables {extra}")
+    shared = [name for name in python if name in kernel]
+    if shared != [name for name in kernel if name in python]:
+        disagreements.append(_order_disagreement(python, kernel))
+    for name in shared:
+        disagreements.extend(_compare_columns(name, python[name], kernel[name]))
+    for name in dict.fromkeys([*units_python, *units_kernel]):
+        left, right = units_python.get(name), units_kernel.get(name)
+        if left != right:
+            disagreements.append(
+                f"'{name}': the python core reports the unit {left!r} and the "
+                f"kernel {right!r}"
+            )
+    return disagreements
+
+
+def _order_disagreement(
+    python: Mapping[str, np.ndarray], kernel: Mapping[str, np.ndarray]
+) -> str:
+    """The first position at which the two engines name a different variable.
+
+    The names they share, in the order of each mapping; a variable only one of
+    them reports is left out, since it is reported on its own and would
+    otherwise shift every name behind it.
+
+    Args:
+        python: the mapping of the python core
+        kernel: the mapping of the kernel
+
+    Returns:
+        The sentence.
+    """
+    left = [name for name in python if name in kernel]
+    right = [name for name in kernel if name in python]
+    for position, (first, second) in enumerate(zip(left, right, strict=True)):
+        if first != second:
+            return (
+                f"the variables are in a different order: at position "
+                f"{position} the python core reports '{first}' and the kernel "
+                f"'{second}'"
+            )
+    # unreachable: the caller compares the two lists before it asks
+    return "the variables are in a different order"
+
+
+def _compare_columns(name: str, python: np.ndarray, kernel: np.ndarray) -> list[str]:
+    """The disagreements about one variable of the two mappings.
+
+    Args:
+        name: the name of the variable
+        python: its column as the python core reports it
+        kernel: its column as the kernel reports it
+
+    Returns:
+        One sentence per disagreement, empty when the two agree.
+    """
+    if python.shape != kernel.shape:
+        return [
+            f"'{name}': the python core reports the shape {python.shape} and "
+            f"the kernel {kernel.shape}"
+        ]
+    disagreements: list[str] = []
+    if python.dtype != kernel.dtype:
+        disagreements.append(
+            f"'{name}': the python core reports the dtype {python.dtype} and "
+            f"the kernel {kernel.dtype}"
+        )
+    if python.dtype.kind in "iub" and kernel.dtype.kind in "iub":
+        # a counted variable is exact on both sides: a flag word differing in a
+        # high bit alone passes any relative tolerance
+        if not np.array_equal(python, kernel):
+            disagreements.append(_exact_disagreement(name, python, kernel))
+        return disagreements
+    left = np.asarray(python, dtype=np.float64)
+    right = np.asarray(kernel, dtype=np.float64)
+    nan_left, nan_right = np.isnan(left), np.isnan(right)
+    if not np.array_equal(nan_left, nan_right):
+        disagreements.append(
+            _position_disagreement(
+                name,
+                left,
+                right,
+                np.flatnonzero((nan_left != nan_right).ravel()),
+                "are NaN in one engine and a number in the other",
+            )
+        )
+    both = np.flatnonzero(~(nan_left | nan_right).ravel())
+    flat_left, flat_right = left.ravel()[both], right.ravel()[both]
+    apart = both[~np.isclose(flat_left, flat_right, rtol=COMPARE_REL, atol=COMPARE_ABS)]
+    if apart.size:
+        disagreements.append(
+            _position_disagreement(
+                name,
+                left,
+                right,
+                apart,
+                f"differ by more than rel={COMPARE_REL:g}, abs={COMPARE_ABS:g}",
+                worst=True,
+            )
+        )
+    return disagreements
+
+
+def _exact_disagreement(name: str, python: np.ndarray, kernel: np.ndarray) -> str:
+    """The sentence of a counted variable whose values are not equal.
+
+    Args:
+        name: the name of the variable
+        python: its column as the python core reports it
+        kernel: its column as the kernel reports it
+
+    Returns:
+        The sentence, naming the first value which differs.
+    """
+    apart = np.flatnonzero((python != kernel).ravel())
+    first = int(apart[0])
+    return (
+        f"'{name}': {apart.size} of {python.size} counted values are not "
+        f"equal, the first at the flat index {first}, where the python core "
+        f"reports {python.ravel()[first].item()!r} and the kernel "
+        f"{kernel.ravel()[first].item()!r}"
+    )
+
+
+def _position_disagreement(
+    name: str,
+    python: np.ndarray,
+    kernel: np.ndarray,
+    positions: np.ndarray,
+    what: str,
+    *,
+    worst: bool = False,
+) -> str:
+    """The sentence of a variable whose values disagree at the given positions.
+
+    Args:
+        name: the name of the variable
+        python: its column as the python core reports it, as doubles
+        kernel: its column as the kernel reports it, as doubles
+        positions: the flat indices at which the two disagree
+        what: how they disagree, read after the count
+        worst: whether to name the position of the largest relative difference
+            rather than the first; for a difference of two numbers, where the
+            largest one is what says whether a tolerance is nearly met or
+            missed by a mile
+
+    Returns:
+        The sentence, naming the count, one position and both values there.
+    """
+    flat_left, flat_right = python.ravel()[positions], kernel.ravel()[positions]
+    at = 0
+    if worst:
+        scale = np.maximum(np.abs(flat_left), np.abs(flat_right))
+        error = np.abs(flat_left - flat_right) / np.where(scale > 0.0, scale, 1.0)
+        at = int(np.argmax(error))
+    return (
+        f"'{name}': {positions.size} of {python.size} values {what}, at the "
+        f"flat index {int(positions[at])} the python core reports "
+        f"{float(flat_left[at])!r} and the kernel {float(flat_right[at])!r}"
+    )
+
+
+def host_units(names: Iterable[str], timecourses: Timecourses) -> dict[str, str]:
+    """The unit of every named variable as the host derives it with pint.
+
+    `pkpdutils.nca.nca._to_result` derives the unit of every variable of a
+    result this way, whichever engine computed the numbers, so these are the
+    units a caller of `nca` really sees. A name the host knows no expression
+    for is left out rather than raising: it is a variable of the kernel alone,
+    which `compare_engines` reports by name.
+
+    Args:
+        names: the variables to derive the units of
+        timecourses: the analysed batch, which carries the units
+
+    Returns:
+        The unit of every name, in the order of the names.
+    """
+    # `pkpdutils.nca.nca` imports this module, so the table of the unit
+    # expressions is read where it is needed and not at the top
+    from pkpdutils.nca.nca import unit_expression
+
+    units: dict[str, str] = {}
+    for name in names:
+        try:
+            expression = unit_expression(name)
+        except KeyError:
+            continue
+        units[name] = parameter_unit(
+            expression,
+            unit=timecourses.unit,
+            time_unit=timecourses.time_unit,
+            dose_unit=timecourses.dose_unit,
+        )[0]
+    return units
+
+
+def compare_with_python(
+    timecourses: Timecourses,
+    *,
+    kernel: Mapping[str, np.ndarray],
+    python: Mapping[str, np.ndarray],
+    units_kernel: Mapping[str, str],
+) -> None:
+    """Hold the kernel's answer against the python core's, and raise if they differ.
+
+    The gate of `pkpdutils.nca.nca.nca`, armed by `COMPARE_VARIABLE`: the two
+    mappings are the answers of the two engines to one batch and the units are
+    the kernel's own, which are held against pint's derivation (`host_units`) -
+    the one part of the kernel's answer the host does not adopt, so a kernel
+    which computed a parameter in another unit than the host believes is a
+    disagreement here rather than a wrong number nobody can see.
+
+    Args:
+        timecourses: the analysed batch, which carries the units and names the
+            shape in the message
+
+    Keyword Args:
+        kernel: the mapping of the kernel
+        python: the mapping of the python core on the same batch
+        units_kernel: the unit of every variable as the kernel reports it
+            (`run_kernel(..., units=)`)
+
+    Raises:
+        EngineMismatch: if the two engines disagree in any way
+            `compare_engines` compares.
+    """
+    # a variable the kernel reports no unit for is left out of the unit
+    # comparison only while that is really so, see `KERNEL_UNITLESS`
+    names = [
+        name
+        for name in dict.fromkeys([*python, *kernel])
+        if name in units_kernel or name not in KERNEL_UNITLESS
+    ]
+    disagreements = compare_engines(
+        python,
+        kernel,
+        units_python=host_units(names, timecourses),
+        units_kernel={
+            name: units_kernel[name] for name in names if name in units_kernel
+        },
+    )
+    if not disagreements:
+        return
+    routes = timecourses.routes
+    raise EngineMismatch(
+        "the two engines disagree on a batch of "
+        f"{timecourses.n_samples} sample(s) by {timecourses.n_time} time "
+        f"point(s) in {timecourses.unit!r} over {timecourses.time_unit!r}, "
+        f"{'several routes' if routes is not None else timecourses.route}:\n"
+        + "\n".join(f"- {sentence}" for sentence in disagreements)
+    )

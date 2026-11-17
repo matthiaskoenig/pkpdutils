@@ -96,6 +96,18 @@ from pkpdutils.timecourse import Route, Timecourse, Timecourses
 
 logger = logging.getLogger(__name__)
 
+#: the warning of a batch the kernel refused although the predicate of
+#: `pkpdutils.nca.engine.unsupported_reason` let it through, which is a defect
+#: of that predicate and not of the analysis: the batch is analysed by the
+#: python core and the answer is right either way, so the line is the only way
+#: to learn of it. It is named rather than written in place so that a test can
+#: watch for exactly this record and not for a wording
+#: (`tests/conftest.py`, which fails any test of the suite it is logged in).
+FALLBACK_WARNING: str = (
+    "NCA: the kernel refused a batch the engine let through (%s); "
+    "the python core runs it"
+)
+
 #: half-lives the terminal phase must cover for `lambda_z_span` to be accepted;
 #: below it the row is flagged `NCAFlag.SPAN_LOW`
 SPAN_MINIMUM: float = 2.0
@@ -1649,6 +1661,34 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     dose_amount = flat(timecourses.dose_amount)
     dose_time = flat(timecourses.dose_time)
     dose_duration = flat(timecourses.dose_duration)
+
+    def python_rows() -> dict[str, np.ndarray]:
+        """Analyse the batch in the python core of this module.
+
+        The path of a batch the kernel does not carry and, with the
+        differential gate armed, of one it does: the gate holds the two
+        answers against each other and there is only one place the python
+        answer is computed, so the two engines cannot be given different
+        inputs.
+
+        Returns:
+            One array per variable, `flags` among the keys.
+        """
+        route, routes = row_routes(timecourses, n_rows)
+        batch_lloq = timecourses.lloq
+        return run_analysis_rows(
+            timecourses.times.reshape(n_rows, timecourses.n_time),
+            timecourses.values.reshape(n_rows, timecourses.n_time),
+            dose_amount=dose_amount,
+            dose_time=dose_time,
+            dose_duration=dose_duration,
+            route=route,
+            options=options,
+            lloq=None if batch_lloq is None else batch_lloq.reshape(n_rows),
+            windows=windows,
+            routes=routes,
+        )
+
     # outside the dispatch below, since it also checks the keys of
     # `TerminalPhase.windows` against the samples of the batch and a batch
     # which names a sample it does not have is refused the same way whichever
@@ -1662,38 +1702,36 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     values: dict[str, np.ndarray] | None = None
     reason = engine.unsupported_reason(timecourses, options)
     if reason is None:
+        # the differential gate, armed by the environment and a no-op
+        # otherwise: an ordinary analysis pays one lookup of the environment
+        # and the kernel's units are collected only for the comparison
+        comparing = engine.comparing()
+        units_kernel: dict[str, str] | None = {} if comparing else None
         try:
-            values = engine.run_kernel(timecourses, options)
+            values = engine.run_kernel(timecourses, options, units=units_kernel)
         except engine.UnsupportedError as refusal:
             # the predicate let a batch through which the kernel does not
             # carry, which is a defect of the predicate and not of the
             # analysis: the batch takes the python path and the mismatch is
             # reported rather than raised
             reason = str(refusal)
-            logger.warning(
-                "NCA: the kernel refused a batch the engine let through (%s); "
-                "the python core runs it",
-                reason,
-            )
+            logger.warning(FALLBACK_WARNING, reason)
+        else:
+            if comparing:
+                engine.compare_with_python(
+                    timecourses,
+                    kernel=values,
+                    python=python_rows(),
+                    units_kernel=units_kernel or {},
+                )
+                # the comparison is counted here, at the one place an analysis
+                # runs it, so that a test session which believes it armed the
+                # gate and compared nothing can say so (`engine.comparisons`,
+                # the sentinel of `tests/conftest.py`)
+                engine.note_comparison()
     if values is None:
         logger.debug("NCA: the python core runs the batch (%s)", reason)
-        t = timecourses.times.reshape(n_rows, timecourses.n_time)
-        c = timecourses.values.reshape(n_rows, timecourses.n_time)
-        route, routes = row_routes(timecourses, n_rows)
-        batch_lloq = timecourses.lloq
-        lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
-        values = run_analysis_rows(
-            t,
-            c,
-            dose_amount=dose_amount,
-            dose_time=dose_time,
-            dose_duration=dose_duration,
-            route=route,
-            options=options,
-            lloq=lloq,
-            windows=windows,
-            routes=routes,
-        )
+        values = python_rows()
 
     # `flags` is the last variable of the result, the uncertainty variables and
     # `n` go before it

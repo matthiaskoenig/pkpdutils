@@ -94,6 +94,7 @@ addopts = "-n auto"
 markers = [
     "docs: runs the python snippets of a page of `docs/`",
     "examples: runs an example script of `examples/`",
+    "engine_fallback: makes the rust kernel refuse a batch on purpose, see tests/conftest.py",
 ]
 
 [tool.ty.environment]
