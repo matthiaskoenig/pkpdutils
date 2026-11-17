@@ -355,6 +355,25 @@ class TestTheKernelEntryPoint:
             engine._force_python = False
         return python, time_to_steady_state(result, **options)
 
+    def test_the_level_of_the_stepwise_estimate_reaches_the_kernel(self) -> None:
+        rng = np.random.default_rng(7)
+        predicted = superposed(0.05, 16)
+        noisy = predicted.model_copy(
+            update={
+                "value": predicted.value * rng.normal(1.0, 0.05, predicted.value.size)
+            }
+        )
+        result = nca_single(noisy, options=LOG)
+        found = set()
+        for alpha in (0.001, 0.05, 0.5, 0.9):
+            python, kernel = self.both(result, method="stepwise", alpha=alpha)
+            assert float(kernel.tss) == float(python.tss) or (
+                np.isnan(float(kernel.tss)) and np.isnan(float(python.tss))
+            )
+            found.add(float(kernel.tss))
+        # the answer depends on alpha, so a level which did not arrive would show
+        assert len(found) > 1
+
     @pytest.mark.parametrize("method", ["monoexponential", "stepwise"])
     @pytest.mark.parametrize("k", [0.05, 0.2, 0.5])
     def test_the_engines_agree_on_a_batch(self, method, k) -> None:
