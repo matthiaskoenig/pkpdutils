@@ -391,21 +391,46 @@ def python_path(forced: bool) -> Generator[None]:
 def check_dispatch(name: str, case: EngineCase) -> None:
     """Refuse to measure a case whose two halves are not the two engines.
 
-    The kernel column is the kernel's only while the dispatch really sends the
-    batch there, and the python column is python's only while the switch really
-    holds it back. Both are the one decision `nca` takes per batch
-    (`pkpdutils.nca.engine.unsupported_reason`), asked here before anything is
-    timed, so that a case which ran the python core twice fails loudly instead
-    of publishing a speedup of 1.
+    Four questions, every one of them a way for this table to be a plausible
+    table of nonsense rather than a failure, and none of them answerable from
+    the numbers afterwards:
+
+    - **does the dispatch send this batch to the kernel at all**
+      (`pkpdutils.nca.engine.unsupported_reason`), or is the kernel column the
+      python core under another name
+    - **is the forced python path really forced**, or is the python column the
+      kernel twice
+    - **is the differential gate armed** (`engine.comparing()`,
+      `PKPDUTILS_COMPARE_ENGINES`)? While it is, every batch which reaches the
+      kernel is analysed by the python core as well and compared, so the kernel
+      column would carry both engines and the ratio would be about half of the
+      truth, with nothing in the table to show it. Continuous integration has a
+      job which sets that variable, so an inherited environment is a real way
+      to get here and not a thought experiment.
+    - **does the kernel accept the batch when it is really called**? A
+      refusal of `run_kernel` is answered by `nca` with a warning and the
+      python path (`pkpdutils.nca.nca.FALLBACK_WARNING`), so the kernel column
+      would time a refused call plus the python core. The predicate cannot
+      answer this one, which is the whole reason the kernel is the authority
+      and the predicate a mirror of it, so the kernel is called here once.
 
     Args:
         name: name of the case
         case: the case.
 
     Raises:
-        RuntimeError: if the kernel does not carry the analysis, or if the
-            forced python path is not forced.
+        RuntimeError: if the kernel does not carry the analysis, if the forced
+            python path is not forced, if the differential gate is armed or if
+            the kernel refuses the batch the predicate let through.
     """
+    if engine.comparing():
+        raise RuntimeError(
+            f"the differential gate is armed ({engine.COMPARE_VARIABLE} is "
+            "set), so every batch of the kernel half would be analysed by the "
+            "python core as well and the ratio of the case "
+            f"'{name}' would be about half of the truth; unset the variable "
+            "and measure again"
+        )
     reason = engine.unsupported_reason(case.timecourses, case.options)
     if reason is not None:
         raise RuntimeError(f"the kernel does not carry the case '{name}': {reason}")
@@ -416,6 +441,14 @@ def check_dispatch(name: str, case: EngineCase) -> None:
             f"the python path of the case '{name}' is not forced: the dispatch "
             f"answers {forced!r} instead of the forced reason"
         )
+    try:
+        engine.run_kernel(case.timecourses, case.options)
+    except engine.UnsupportedError as refusal:
+        raise RuntimeError(
+            f"the kernel refuses the case '{name}' although the predicate let "
+            "it through, so its kernel half would time a refused call and the "
+            f"python core behind it: {refusal}"
+        ) from refusal
 
 
 def refusal_rows() -> list[tuple[str, str]]:
@@ -628,6 +661,86 @@ def engine_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def engine_points(row: dict[str, Any]) -> int:
+    """The work of an engine case: its curves times its points per curve.
+
+    Args:
+        row: the result of an engine case.
+
+    Returns:
+        The number of points of its batch.
+    """
+    n_rows, n_time = ENGINE_SHAPES[row["case"]]
+    return n_rows * n_time
+
+
+def summary_sentences(rows: list[dict[str, Any]]) -> str:
+    """The load-bearing figures of the table, as sentences of the page.
+
+    The prose of `docs/benchmark.md` is written around these rather than
+    repeating them, because a figure a reader copies into a paragraph is the
+    one staleness the structural check of `page_complaints` cannot see: it
+    maps every measured cell to `#` on purpose, so a `--write` on another
+    machine moves the table and leaves a hand-copied number behind. These
+    sentences are computed from the very rows the table is formatted from, so
+    the two cannot disagree.
+
+    Four figures: the largest and the smallest ratio of the run, the two
+    shapes the crossover lies between, the largest amount the kernel path
+    costs below it, and the first clear win above it (`CLEAR_WIN`, far enough
+    from 1 to survive the few percent a rerun moves a ratio by).
+
+    Args:
+        rows: the results of the engine cases, in the order of the table.
+
+    Returns:
+        The sentences, as one line of markdown.
+    """
+    ordered = sorted(rows, key=engine_points)
+    best = max(ordered, key=lambda row: row["speedup"])
+    worst = min(ordered, key=lambda row: row["speedup"])
+    sentences = [
+        f"The largest ratio of this run is {best['speedup']:.2f}x, at "
+        f"{best['size']}, and the smallest {worst['speedup']:.2f}x, at "
+        f"{worst['size']}."
+    ]
+    below = [row for row in ordered if row["speedup"] < 1.0]
+    above = [row for row in ordered if row["speedup"] >= 1.0]
+    if below and above:
+        last, first = below[-1], above[0]
+        sentences.append(
+            f"The two engines cost the same between {engine_points(last):,} "
+            f"and {engine_points(first):,} points: {last['size']} is "
+            f"{last['speedup']:.2f}x and {first['size']} is "
+            f"{first['speedup']:.2f}x.".replace(",", " ")
+        )
+        cost = max(row["kernel_s"] - row["python_s"] for row in below)
+        sentences.append(
+            f"Below the crossover the kernel path costs at most "
+            f"{1e3 * cost:.2f} ms more per call."
+        )
+    elif above:
+        sentences.append(
+            "Every shape of this run is at or above 1.00x, so the crossover "
+            "is below the smallest one measured."
+        )
+    else:
+        sentences.append(
+            "Every shape of this run is below 1.00x, so the crossover is "
+            "above the largest one measured."
+        )
+    clear = [row for row in ordered if row["speedup"] >= CLEAR_WIN]
+    if clear:
+        sentences.append(
+            f"The first clear win is {clear[0]['size']} at {clear[0]['speedup']:.2f}x."
+        )
+    return " ".join(sentences)
+
+
+#: the ratio from which a win is clear of the few percent a rerun moves one by
+CLEAR_WIN: float = 1.25
+
+
 def refusal_table() -> str:
     """The analyses the kernel does not carry as a markdown table.
 
@@ -763,6 +876,10 @@ def replace_region(page: str, start: str, end: str, body: str) -> str:
 def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
     """The page with the two generated tables of this run pasted into it.
 
+    The timing region carries the machine, the table and the sentences of
+    `summary_sentences`, which are the figures the prose of the page leans on,
+    so that a rerun moves them with the table.
+
     Args:
         page: the markdown of the page
         rows: the results of the engine cases
@@ -771,12 +888,10 @@ def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
     Returns:
         The markdown of the page.
     """
-    page = replace_region(
-        page,
-        TIMINGS_START,
-        TIMINGS_END,
-        f"{machine_line(repeat)}\n\n{engine_table(rows)}",
+    timings = (
+        f"{machine_line(repeat)}\n\n{engine_table(rows)}\n\n{summary_sentences(rows)}"
     )
+    page = replace_region(page, TIMINGS_START, TIMINGS_END, timings)
     return replace_region(page, REFUSALS_START, REFUSALS_END, refusal_table())
 
 
