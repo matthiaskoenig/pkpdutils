@@ -1,8 +1,8 @@
 """High precision reference of the Student t inverse survival function, for the kernel tests.
 
 Usage: ``python scripts/reference_t_isf.py P DF [DF ...]`` prints ``t`` with ``P(T > t) = P``
-at 60 digits for every degrees of freedom. Needs ``mpmath``, which the development environment
-does not carry (``uv run --with mpmath python scripts/reference_t_isf.py 1e-300 3 10 2.5``).
+at 60 digits for every degrees of freedom. Needs ``mpmath``, which the development extra
+carries (``uv run python scripts/reference_t_isf.py 1e-300 3 10 2.5``).
 
 The survival function is ``betainc(df/2, 1/2, 0, df/(df+t^2), regularized=True) / 2`` and is
 inverted by bisection on ``log t``, which is what keeps it usable at ``p = 1e-300`` where ``t``
@@ -15,15 +15,19 @@ visible in the far tail where the result changes by 1e-14 per ulp of the argumen
 """
 
 import sys
+from typing import Any
 
-from mpmath import betainc, exp, log, mp, mpf  # ty: ignore[import-not-found]
+from mpmath import betainc, exp, log, mp, mpf
+
+# mpmath creates `mpf` at runtime out of its context, so it is a value rather than a
+# static type and cannot stand in an annotation: the precise numbers are `Any` here
 
 
-def student_t_sf(t: mpf, df: mpf) -> mpf:
+def student_t_sf(t: Any, df: Any) -> Any:
     return betainc(df / 2, mpf(1) / 2, 0, df / (df + t * t), regularized=True) / 2
 
 
-def student_t_isf(p: float, df: float) -> mpf:
+def student_t_isf(p: float, df: float) -> Any:
     mp.dps = 60
     p_exact, df_exact = mpf(float(p)), mpf(float(df))
     target = log(p_exact)
