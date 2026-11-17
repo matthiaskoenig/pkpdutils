@@ -1,3 +1,6 @@
+import math
+from fractions import Fraction as F
+
 import numpy as np
 import pytest
 
@@ -12,6 +15,7 @@ from pkpdutils import (
     nca_single,
 )
 from pkpdutils.nca import AUCMethod, superposition
+from pkpdutils.nca.intervals import _extrapolate_end
 from pkpdutils.nca.options import Kind, NCAFlag
 
 K, C0, TAU, N_DOSES = 0.2, 10.0, 12.0, 5
@@ -439,3 +443,55 @@ def test_an_interval_with_samples_on_both_of_its_bounds() -> None:
     # observed trough and the sample at its start is the observed value there
     assert result["interval_ctrough"].to_numpy()[0] == pytest.approx(12.0)
     assert result["interval_c_start"].to_numpy().tolist() == [10.0, 12.0]
+
+
+def _exact_trough(times: np.ndarray, concs: np.ndarray, t_end: float) -> float:
+    # the normal equations in exact rational arithmetic, only log and exp round
+    t = [F(float(x)) for x in times]
+    y = [F(math.log(float(c))) for c in concs]
+    n = F(len(t))
+    sx, sy = sum(t), sum(y)
+    sxx = sum(a * a for a in t)
+    sxy = sum(a * b for a, b in zip(t, y, strict=True))
+    slope = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+    intercept = (sy - slope * sx) / n
+    return math.exp(float(intercept + slope * F(float(t_end))))
+
+
+def test_the_trough_regression_is_accurate_when_the_sample_times_are_large() -> None:
+    # the normal equations subtract two nearly equal sums, so a fit on raw
+    # absolute times loses most of its digits once the times are large
+    # relative to their spread: at t ~ 1e5 with a spread of 0.2 the old form
+    # was wrong by 1e-3 against exact arithmetic. the fit about the centroid
+    # is the same line and stays accurate, so the trough of a late interval
+    # is no longer a function of how far into the study it falls.
+    times = np.array([1.0e5, 1.0e5 + 0.1, 1.0e5 + 0.2])
+    concs = np.array([8.0, 7.9, 7.7])
+    t_end = np.array([1.0e5 + 24.0])
+    tp = times[None, :]
+    cp = concs[None, :]
+    inside = np.ones((1, 3), dtype=bool)
+    got = float(_extrapolate_end(tp, cp, inside, t_end)[0])
+
+    expected = _exact_trough(times, concs, float(t_end[0]))
+    assert got == pytest.approx(expected, rel=1e-9)
+
+
+def test_the_trough_regression_does_not_depend_on_the_packed_column_offset() -> None:
+    # the samples of an interval sit wherever that row's own data puts them in
+    # the packed array. the fit must be a function of the samples alone, so the
+    # same three samples at a different offset give the same trough.
+    times = np.array([1.0e5, 1.0e5 + 0.1, 1.0e5 + 0.2])
+    concs = np.array([8.0, 7.9, 7.7])
+    t_end = np.array([1.0e5 + 24.0])
+    values = []
+    for offset in (0, 5, 11):
+        width = offset + 3 + 7
+        tp = np.zeros((1, width))
+        cp = np.zeros((1, width))
+        inside = np.zeros((1, width), dtype=bool)
+        tp[0, offset : offset + 3] = times
+        cp[0, offset : offset + 3] = concs
+        inside[0, offset : offset + 3] = True
+        values.append(float(_extrapolate_end(tp, cp, inside, t_end)[0]))
+    assert values[0] == values[1] == values[2]
