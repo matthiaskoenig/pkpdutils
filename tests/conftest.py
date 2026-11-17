@@ -704,3 +704,36 @@ def _fail_session(session: pytest.Session, title: str, message: str) -> None:
         reporter.write_sep("=", title, red=True, bold=True)
         reporter.write_line(message)
     session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+@pytest.fixture(params=["kernel", "python"])
+def summary_engine(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[str]:
+    """Run a test of `ParameterResult.summarize` once through each engine.
+
+    `"python"` forces the scipy path with `engine._force_python`, `"kernel"` leaves
+    the dispatch alone. Either way the fixture counts the calls of
+    `pkpdutils_core.summarize` and, at teardown, asserts the engine the test
+    names is the one which ran: the kernel was called, the python path never
+    reached it. Without that a test of "both engines" could pass twice through
+    one of them.
+
+    Args:
+        request: the parametrization.
+        monkeypatch: restores the forced flag and the wrapped entry point.
+
+    Yields:
+        The name of the engine the test runs under.
+    """
+    calls: list[int] = []
+    real = pkpdutils_core.summarize  # ty: ignore[missing-attribute]
+    monkeypatch.setattr(
+        pkpdutils_core, "summarize", lambda *args: (calls.append(1), real(*args))[1]
+    )
+    monkeypatch.setattr(engine, "_force_python", request.param == "python")
+    yield request.param
+    if request.param == "kernel":
+        assert calls, "the kernel was never asked to summarize"
+    else:
+        assert not calls, "the forced python path reached the kernel"

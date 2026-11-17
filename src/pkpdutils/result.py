@@ -1274,6 +1274,7 @@ class ParameterResult:
                 if name in self.summarized_point_variables and dim in self.ds[name].dims
             ),
         ]
+        prepared: dict[str, tuple[tuple[str, ...], np.ndarray]] = {}
         for name in summarized:
             da = self.ds[name]
             if keep is not None:
@@ -1282,85 +1283,58 @@ class ParameterResult:
                 # the variable carries
                 da = da.where(keep)
             da = da.transpose(..., dim)
-            values = da.to_numpy().astype(np.float64)
-            dims = tuple(str(d) for d in da.dims if d != dim)
+            prepared[name] = (
+                tuple(str(d) for d in da.dims if d != dim),
+                da.to_numpy().astype(np.float64),
+            )
+        statistics = _kernel_statistics(
+            {name: values for name, (_, values) in prepared.items()},
+            ci_level,
+            lognormal=self.lognormal_parameters,
+            discrete=self.discrete_parameters,
+        )
+        for name, (dims, values) in prepared.items():
             units = self.units(name)
-            with (
-                np.errstate(invalid="ignore", divide="ignore"),
-                warnings.catch_warnings(),
-            ):
-                warnings.simplefilter("ignore", RuntimeWarning)
-                finite = np.isfinite(values)
-                count = finite.sum(axis=-1).astype(np.float64)
-                filled = np.where(finite, values, np.nan)
-                mean = np.nanmean(filled, axis=-1)
-                sd = np.where(count > 1, np.nanstd(filled, axis=-1, ddof=1), np.nan)
-                se = sd / np.sqrt(count)
-                tq = student_t.isf(alpha / 2.0, np.maximum(count - 1.0, 1.0))
-                low, high = mean - tq * se, mean + tq * se
-                median = np.nanmedian(filled, axis=-1)
-                q25, q75 = nan_percentile(filled, (25.0, 75.0))
-                minimum = np.nanmin(filled, axis=-1)
-                maximum = np.nanmax(filled, axis=-1)
-                cv = sd / np.abs(mean)
-                mean = np.where(count > 0, mean, np.nan)
-                median = np.where(count > 0, median, np.nan)
-                minimum = np.where(count > 0, minimum, np.nan)
-                maximum = np.where(count > 0, maximum, np.nan)
-            data_vars[name] = (dims, mean, {"units": units})
+            stats = (
+                statistics[name]
+                if statistics is not None
+                else _python_statistics(values, alpha)
+            )
+            data_vars[name] = (dims, stats["mean"], {"units": units})
             if name not in self.discrete_parameters:
-                data_vars[f"{name}_sd"] = (dims, sd, {"units": units})
-                data_vars[f"{name}_se"] = (dims, se, {"units": units})
-                data_vars[f"{name}_cv"] = (dims, cv, {"units": "dimensionless"})
-                data_vars[f"{name}_ci_low"] = (
+                data_vars[f"{name}_sd"] = (dims, stats["sd"], {"units": units})
+                data_vars[f"{name}_se"] = (dims, stats["se"], {"units": units})
+                data_vars[f"{name}_cv"] = (
                     dims,
-                    np.where(count > 1, low, np.nan),
-                    {"units": units},
+                    stats["cv"],
+                    {"units": "dimensionless"},
                 )
+                data_vars[f"{name}_ci_low"] = (dims, stats["ci_low"], {"units": units})
                 data_vars[f"{name}_ci_high"] = (
                     dims,
-                    np.where(count > 1, high, np.nan),
+                    stats["ci_high"],
                     {"units": units},
                 )
-            data_vars[f"{name}_median"] = (dims, median, {"units": units})
-            data_vars[f"{name}_q25"] = (
-                dims,
-                np.where(count > 0, q25, np.nan),
-                {"units": units},
-            )
-            data_vars[f"{name}_q75"] = (
-                dims,
-                np.where(count > 0, q75, np.nan),
-                {"units": units},
-            )
-            data_vars[f"{name}_min"] = (dims, minimum, {"units": units})
-            data_vars[f"{name}_max"] = (dims, maximum, {"units": units})
-            data_vars[f"{name}_n"] = (dims, count, {"units": "dimensionless"})
+            data_vars[f"{name}_median"] = (dims, stats["median"], {"units": units})
+            data_vars[f"{name}_q25"] = (dims, stats["q25"], {"units": units})
+            data_vars[f"{name}_q75"] = (dims, stats["q75"], {"units": units})
+            data_vars[f"{name}_min"] = (dims, stats["min"], {"units": units})
+            data_vars[f"{name}_max"] = (dims, stats["max"], {"units": units})
+            data_vars[f"{name}_n"] = (dims, stats["count"], {"units": "dimensionless"})
             if (
                 name in self.lognormal_parameters
                 and name not in self.discrete_parameters
             ):
-                with (
-                    np.errstate(invalid="ignore", divide="ignore"),
-                    warnings.catch_warnings(),
-                ):
-                    warnings.simplefilter("ignore", RuntimeWarning)
-                    logs = np.where(
-                        finite & (values > 0),
-                        np.log(np.where(values > 0, values, 1.0)),
-                        np.nan,
-                    )
-                    n_pos = np.isfinite(logs).sum(axis=-1)
-                    geomean = np.where(
-                        n_pos > 0, np.exp(np.nanmean(logs, axis=-1)), np.nan
-                    )
-                    geocv = np.where(
-                        n_pos > 1,
-                        np.sqrt(np.expm1(np.nanvar(logs, axis=-1, ddof=1))),
-                        np.nan,
-                    )
-                data_vars[f"{name}_geomean"] = (dims, geomean, {"units": units})
-                data_vars[f"{name}_geocv"] = (dims, geocv, {"units": "dimensionless"})
+                data_vars[f"{name}_geomean"] = (
+                    dims,
+                    stats["geomean"],
+                    {"units": units},
+                )
+                data_vars[f"{name}_geocv"] = (
+                    dims,
+                    stats["geocv"],
+                    {"units": "dimensionless"},
+                )
         kept = (
             None
             if keep is None
@@ -1398,6 +1372,161 @@ class ParameterResult:
         }
         ds = xr.Dataset(data_vars=data_vars, coords=coords, attrs=dict(self.ds.attrs))
         return self._new(ds)
+
+
+_STATISTICS: tuple[str, ...] = (
+    "mean",
+    "sd",
+    "se",
+    "cv",
+    "ci_low",
+    "ci_high",
+    "median",
+    "q25",
+    "q75",
+    "min",
+    "max",
+    "count",
+    "geomean",
+    "geocv",
+)
+"""The statistics of `_python_statistics` and of the answer of the kernel."""
+
+
+def _python_statistics(values: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
+    """The summary statistics of `values` over the last axis, in numpy and scipy.
+
+    This is the reference of the kernel's `summarize`: `ParameterResult.summarize`
+    uses it where the kernel is not available or the python path is forced
+    (`pkpdutils.nca.engine._force_python`), and the tests hold the two to each
+    other. A non-finite value is missing; below two finite values the spread and
+    the interval are `NaN` (the t quantile at `max(n - 1, 1)` is finite and
+    must never reach them), below one the location statistics are. The
+    geometric statistics use the positive values alone, the geometric mean from
+    one of them and the coefficient of variation from two.
+
+    Args:
+        values: array whose last axis holds the samples of a group.
+        alpha: one minus the confidence level of the interval of the mean.
+
+    Returns:
+        One array over the leading axes per name of `_STATISTICS`.
+    """
+    with (
+        np.errstate(invalid="ignore", divide="ignore"),
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("ignore", RuntimeWarning)
+        finite = np.isfinite(values)
+        count = finite.sum(axis=-1).astype(np.float64)
+        filled = np.where(finite, values, np.nan)
+        mean = np.nanmean(filled, axis=-1)
+        sd = np.where(count > 1, np.nanstd(filled, axis=-1, ddof=1), np.nan)
+        se = sd / np.sqrt(count)
+        tq = student_t.isf(alpha / 2.0, np.maximum(count - 1.0, 1.0))
+        low, high = mean - tq * se, mean + tq * se
+        median = np.nanmedian(filled, axis=-1)
+        q25, q75 = nan_percentile(filled, (25.0, 75.0))
+        minimum = np.nanmin(filled, axis=-1)
+        maximum = np.nanmax(filled, axis=-1)
+        cv = sd / np.abs(mean)
+        logs = np.where(
+            finite & (values > 0),
+            np.log(np.where(values > 0, values, 1.0)),
+            np.nan,
+        )
+        n_pos = np.isfinite(logs).sum(axis=-1)
+        geomean = np.where(n_pos > 0, np.exp(np.nanmean(logs, axis=-1)), np.nan)
+        geocv = np.where(
+            n_pos > 1,
+            np.sqrt(np.expm1(np.nanvar(logs, axis=-1, ddof=1))),
+            np.nan,
+        )
+    seen = count > 0
+    return {
+        "mean": np.where(seen, mean, np.nan),
+        "sd": sd,
+        "se": se,
+        "cv": cv,
+        "ci_low": np.where(count > 1, low, np.nan),
+        "ci_high": np.where(count > 1, high, np.nan),
+        "median": np.where(seen, median, np.nan),
+        "q25": np.where(seen, q25, np.nan),
+        "q75": np.where(seen, q75, np.nan),
+        "min": np.where(seen, minimum, np.nan),
+        "max": np.where(seen, maximum, np.nan),
+        "count": count,
+        "geomean": geomean,
+        "geocv": geocv,
+    }
+
+
+def _kernel_statistics(
+    arrays: Mapping[str, np.ndarray],
+    ci_level: float,
+    *,
+    lognormal: frozenset[str],
+    discrete: frozenset[str],
+) -> dict[str, dict[str, np.ndarray]] | None:
+    """The summary statistics of the rust kernel, `None` where python computes them.
+
+    The variables of one group shape are stacked into one `(n_vars, n_groups,
+    n_samples)` array and summarized in one call, so a result of forty parameters
+    crosses the boundary once. The classification stays with the python class:
+    the kernel is told the flags and computes every statistic of every variable,
+    and `ParameterResult.summarize` writes the ones the class wants.
+
+    The kernel is not used while `pkpdutils.nca.engine._force_python` is set, so
+    that the tests have the two paths to compare, nor when the installed
+    `pkpdutils-core` predates `summarize`. A request the kernel rejects raises
+    its `ValueError` to the caller: it is not an `UnsupportedError`, so nothing
+    answers it by silently summarizing in python.
+
+    Args:
+        arrays: variable name to values with the samples on the last axis.
+        ci_level: the confidence level of the interval of the mean.
+        lognormal: the names of the log-normal parameters.
+        discrete: the names of the discrete parameters.
+
+    Returns:
+        Variable name to statistic name to an array over the leading axes of the
+        variable, or `None` for the python path.
+
+    Raises:
+        ValueError: if the kernel rejects the request as malformed.
+    """
+    from pkpdutils.nca import engine  # deferred, the engine imports this module
+
+    kernel = getattr(engine.pkpdutils_core, "summarize", None)
+    if kernel is None or engine._force_python or not arrays:
+        return None
+    by_shape: dict[tuple[int, ...], list[str]] = {}
+    for name, values in arrays.items():
+        by_shape.setdefault(values.shape, []).append(name)
+    out: dict[str, dict[str, np.ndarray]] = {}
+    for shape, names in by_shape.items():
+        n_samples = shape[-1]
+        n_groups = int(np.prod(shape[:-1], dtype=np.int64))
+        stacked = np.stack(
+            [arrays[name].reshape(n_groups, n_samples) for name in names]
+        )
+        answer = kernel(
+            {
+                "values": stacked,
+                "n_vars": len(names),
+                "n_groups": n_groups,
+                "n_samples": n_samples,
+                "ci_level": ci_level,
+                "lognormal": [name in lognormal for name in names],
+                "discrete": [name in discrete for name in names],
+            }
+        )
+        for i, name in enumerate(names):
+            out[name] = {
+                key: np.asarray(answer[key][i]).reshape(shape[:-1])
+                for key in _STATISTICS
+            }
+    return out
 
 
 def _table_groups(
