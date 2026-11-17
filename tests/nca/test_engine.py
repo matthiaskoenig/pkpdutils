@@ -1,5 +1,7 @@
 import importlib
 import sys
+from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -410,6 +412,123 @@ def test_a_coordinate_of_numpy_scalars_reads_as_its_values(
     assert_same_mapping(labelled, options)
 
 
+def labelled_batch(labels: Sequence[Any]) -> Timecourses:
+    """Two curves labelled by an object coordinate of the given values."""
+    values = C0 * np.exp(-K * TIMES)
+    return Timecourses.from_arrays(
+        TIMES,
+        np.stack([values, 1.1 * values]),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array(labels, dtype=object)},
+        dose=IV_DOSE,
+    )
+
+
+MIXED_LABELS: list[tuple[str, list[Any], Any]] = [
+    ("int and str", [1, "a"], 1),
+    ("int and float", [1, 2.5], 2.5),
+    ("bool and str", [True, "a"], True),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "labels", "key"), MIXED_LABELS, ids=[m[0] for m in MIXED_LABELS]
+)
+def test_a_window_on_labels_of_several_types_is_the_host_s_own_refusal(
+    what: str, labels: list[Any], key: Any
+) -> None:
+    # a coordinate travels under one type for the whole column, where
+    # `encode_window_key` keeps the type of every key: the kernel then holds
+    # `Str("1")` against `Int(1)`, finds no sample of that name and refuses the
+    # batch with a plain `ValueError` - no `UnsupportedError`, so no fallback -
+    # where the released library matches the label and answers. Both shapes are
+    # what pandas hands over for a column of mixed identifiers
+    labelled = labelled_batch(labels)
+    options = NCAOptions(terminal=TerminalPhase(windows={key: (2.0, 8.0)}))
+    # the kernel's own predicate accepts the batch, which is why the refusal is
+    # the host's own and not the kernel's sentence; and the refusal of its
+    # analysis is pinned here, so that the day the kernel carries such a column
+    # this goes red and the reason is removed rather than kept forever
+    assert is_supported(engine.batch_dict(labelled), engine.options_dict(options)) is (
+        None
+    )
+    with pytest.raises(ValueError, match="names no sample") as refusal:
+        engine.kernel_result(labelled, options)
+    assert not isinstance(refusal.value, engine.UnsupportedError), (
+        "an `UnsupportedError` would be answered by the fallback of `nca` and "
+        "would need no reason of the host at all"
+    )
+    assert engine.unsupported_reason(labelled, options) == engine.MIXED_LABELS_REASON
+    # and the analysis is the answer of the python core rather than that
+    # exception: the window is on the row its key names
+    result = nca(labelled, options=options)
+    row = labels.index(key)
+    assert result.ds["lambda_z_t_first"].to_numpy()[row] == pytest.approx(2.0)
+    assert result.ds["lambda_z_t_last"].to_numpy()[row] == pytest.approx(8.0)
+    assert_same_result(result, python_result(labelled, options))
+
+
+CARRIED_LABELS: list[tuple[str, list[Any], dict[Any, tuple[float, float]] | None]] = [
+    ("several types and no window", [1, "a"], None),
+    ("several types and the default window alone", [1, "a"], {"*": (2.0, 8.0)}),
+    ("one type and a window", [1, 2], {1: (2.0, 8.0)}),
+    (
+        "dates and a window",
+        [date(2024, 1, 1), date(2024, 1, 2)],
+        {date(2024, 1, 1): (2.0, 8.0)},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "labels", "windows"), CARRIED_LABELS, ids=[c[0] for c in CARRIED_LABELS]
+)
+def test_the_kernel_keeps_every_batch_whose_labels_survive_the_crossing(
+    what: str, labels: list[Any], windows: dict[Any, tuple[float, float]] | None
+) -> None:
+    # the refusal above is as narrow as the defect, which is the comparison of
+    # a key against a column that lost its type: labels are read for nothing
+    # else, so a batch of several types without a window and one whose only key
+    # is the default name no label at all, and a date travels as the isoformat
+    # text of `_label_text` on one side and of `encode_window_key` on the
+    # other, so it meets its label either way. A refusal wider than the defect
+    # is a permanent slowdown nothing would report
+    labelled = labelled_batch(labels)
+    options = NCAOptions(
+        terminal=TerminalPhase(windows=windows) if windows else TerminalPhase()
+    )
+    assert engine.unsupported_reason(labelled, options) is None, what
+    assert_same_result(nca(labelled, options=options), python_result(labelled, options))
+    assert_same_mapping(labelled, options)
+
+
+def test_a_covariate_of_several_types_is_no_refusal() -> None:
+    # the label of a sample is the value of its dimension coordinate and
+    # nothing else (`pkpdutils.nca.nca.sample_keys`), and a window keyed by
+    # anything else is refused by the host before either engine is reached, so
+    # a covariate of several types names no sample and costs the batch nothing
+    values = C0 * np.exp(-K * TIMES)
+    labelled = Timecourses.from_arrays(
+        TIMES,
+        np.stack([values, 1.1 * values]),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={
+            "subject": ["S1", "S2"],
+            "weight": ("subject", np.array([70, "not reported"], dtype=object)),
+        },
+        dose=IV_DOSE,
+    )
+    options = NCAOptions(terminal=TerminalPhase(windows={"S1": (2.0, 8.0)}))
+    assert engine.mixed_label_dim(labelled) is None
+    assert engine.unsupported_reason(labelled, options) is None
+    assert_same_result(nca(labelled, options=options), python_result(labelled, options))
+    assert_same_mapping(labelled, options)
+
+
 def test_the_batch_carries_every_field_of_the_contract() -> None:
     one = batch()
     sent = engine.batch_dict(one)
@@ -650,6 +769,12 @@ def test_the_options_carry_every_field_and_the_typed_windows() -> None:
 
 
 def test_a_missing_kernel_fails_plainly() -> None:
+    # the reload resets every attribute of the module and with it the count of
+    # the differential gate, which the sentinel of tests/conftest.py reads as a
+    # floor: an armed run whose last comparison happened before this test would
+    # otherwise report that it compared nothing, so the count is carried over
+    # the reload rather than left where the reload put it
+    compared = engine.comparisons()
     try:
         with pytest.MonkeyPatch.context() as patched:
             patched.setitem(sys.modules, "pkpdutils_core", None)
@@ -657,6 +782,9 @@ def test_a_missing_kernel_fails_plainly() -> None:
                 importlib.reload(engine)
     finally:
         importlib.reload(engine)
+        for _ in range(compared):
+            engine.note_comparison()
+    assert engine.comparisons() == compared
     assert engine.unsupported_reason(batch(), NCAOptions()) is None
 
 
@@ -1230,7 +1358,7 @@ def test_the_cross_check_sees_every_batch_of_a_test(
     assert engine_cross_check.compared == before + 2
 
 
-def test_the_cross_check_counts_the_batches_of_the_two_host_reasons(
+def test_the_cross_check_counts_the_batches_of_the_three_host_reasons(
     engine_cross_check: Any,
 ) -> None:
     empty = Timecourses.from_arrays(
@@ -1252,6 +1380,14 @@ def test_the_cross_check_counts_the_batches_of_the_two_host_reasons(
     forced = engine_cross_check.forced
     python_result(batch())
     assert engine_cross_check.forced == forced + 1
+    # and the third, a window given by hand on labels of several types, which
+    # the kernel's predicate accepts and its analysis refuses
+    mixed = engine_cross_check.mixed
+    nca(
+        labelled_batch([1, "a"]),
+        options=NCAOptions(terminal=TerminalPhase(windows={1: (2.0, 8.0)})),
+    )
+    assert engine_cross_check.mixed == mixed + 1
 
 
 def test_the_cross_check_catches_a_predicate_which_refuses_too_much(

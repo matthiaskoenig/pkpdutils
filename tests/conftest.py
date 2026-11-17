@@ -36,10 +36,11 @@ session:
   it cannot be left behind on a test which stopped exercising the fallback.
 - **a session which believes it armed the differential gate and compared
   nothing fails** (`pytest_sessionfinish`), whether because the library reads
-  another name for the variable than the job sets or because the dispatch no
-  longer runs the gate. Nothing else in the suite can see that: every test
-  passes in the ordinary way and the evidence of two engines agreeing is a job
-  which was never armed.
+  another name for the variable than the job sets, because the dispatch no
+  longer runs the gate, or because no worker of a distributed run reported its
+  count at all, which would leave the sentinel reading zeros of its own.
+  Nothing else in the suite can see that: every test passes in the ordinary way
+  and the evidence of two engines agreeing is a job which was never armed.
 
 **Half 2 is secondary to half 1.** A refusal of the kernel after the host
 accepted the batch already means the two predicates disagreed, and half 1
@@ -81,6 +82,16 @@ Two properties the hook is built for, both of them lessons of this plan:
   kernel are read from the inputs - the forced python path of
   `engine._force_python` and a batch of no samples - and never from the
   predicate's answer.
+
+The third refusal of the host's own, a batch of labels of several types with a
+terminal window given by hand (`engine.MIXED_LABELS_REASON`), is the one
+exemption read from the answer rather than from the inputs, because its
+condition is a property of two encoders and not a flag: re-deriving it here
+would be a second copy of the rule, which drifts. What is asserted instead is
+that such a refusal was warranted, by the necessary condition of it - the
+batch is labelled by python objects and a window names a sample - so a
+predicate which answered that reason for every batch fails here on the first
+ordinary one, which is what the rule above is for.
 """
 
 import logging
@@ -93,7 +104,7 @@ import pytest
 
 from pkpdutils.nca import engine
 from pkpdutils.nca.nca import FALLBACK_WARNING
-from pkpdutils.nca.options import NCAOptions
+from pkpdutils.nca.options import WINDOW_DEFAULT_KEY, NCAOptions
 from pkpdutils.timecourse import Timecourses
 
 FALLBACK_MARKER = "engine_fallback"
@@ -128,6 +139,41 @@ Kernel = Callable[..., dict[str, np.ndarray]]
 """The signature of `engine.run_kernel`, which the hook stands in for."""
 
 
+def _object_labels(timecourses: Timecourses) -> bool:
+    """Whether a sample dimension of a batch is labelled by python objects.
+
+    The necessary condition of `engine.MIXED_LABELS_REASON`, read from the
+    batch: labels of several types are objects, whatever else they are.
+
+    Args:
+        timecourses: the batch.
+
+    Returns:
+        Whether one of its sample dimensions carries an object coordinate.
+    """
+    return any(
+        timecourses.ds.coords[dim].dtype.kind == "O"
+        for dim in timecourses.sample_dims
+        if dim in timecourses.ds.coords
+    )
+
+
+def _named_window(options: NCAOptions) -> bool:
+    """Whether a terminal window is keyed by the label of a sample.
+
+    The other necessary condition of `engine.MIXED_LABELS_REASON`, read from
+    the options: the default key names every sample the mapping does not name
+    and is no label of the batch.
+
+    Args:
+        options: the options of the analysis.
+
+    Returns:
+        Whether at least one window is keyed by a label.
+    """
+    return any(key != WINDOW_DEFAULT_KEY for key in options.terminal.windows or ())
+
+
 class CrossCheck:
     """The host's eligibility predicate and its kernel call, both watched.
 
@@ -154,6 +200,8 @@ class CrossCheck:
         """How many batches took the python path because it was forced."""
         self.empty: int = 0
         """How many batches had no sample at all."""
+        self.mixed: int = 0
+        """How many batches the host refused for the types of their labels."""
         self.refusals: list[str] = []
         """The kernel's refusals of a batch the host let through."""
         self.fallbacks: list[logging.LogRecord] = []
@@ -187,6 +235,24 @@ class CrossCheck:
             assert reason == engine.EMPTY_REASON, (
                 "a batch of no samples is the host's own refusal and the "
                 f"predicate answers {reason!r} instead of the empty reason"
+            )
+            return reason
+        if reason == engine.MIXED_LABELS_REASON:
+            # the host's third own refusal, which the kernel's predicate
+            # accepts and its analysis then rejects with a plain `ValueError`,
+            # so the two answers are unequal by design. The condition is read
+            # from the answer here and not from the inputs, see the module
+            # docstring; what is read from the inputs is the necessary
+            # condition of it, so the exemption cannot be claimed for a batch
+            # it does not apply to
+            self.mixed += 1
+            assert _object_labels(timecourses) and _named_window(options), (
+                "the predicate refuses this batch for the types of its sample "
+                f"labels, and the batch is labelled over {timecourses.sample_dims} "
+                f"with the terminal windows {options.terminal.windows!r}: that "
+                "reason names a batch of labels of several types with a window "
+                "given by hand, and a predicate which answers it for any other "
+                "batch sends that batch down the python path for good."
             )
             return reason
         kernel = is_supported(
@@ -294,7 +360,7 @@ def engine_cross_check(
     finally:
         logger.removeHandler(watch)
         global _batches_seen
-        _batches_seen += check.compared + check.forced + check.empty
+        _batches_seen += check.compared + check.forced + check.empty + check.mixed
 
 
 @pytest.hookimpl(wrapper=True)
@@ -343,6 +409,17 @@ _worker_comparisons: int = 0
 _worker_batches: int = 0
 """The batches the finished xdist workers were asked about."""
 
+_workers_reported: int = 0
+"""How many finished xdist workers reported a count at all.
+
+The evidence of the sentinel itself: with `-n auto` the controller runs no test
+and counts nothing, so every number it reaches its verdict on arrives through
+the `workeroutput` of a worker. A break in that plumbing - a hook which is no
+longer called, a key renamed on one side - leaves both sums at zero, which
+reads exactly like a selection that built no batch, and the sentinel would
+return without a word. This counter is what tells the two apart.
+"""
+
 
 def pytest_testnodedown(node: object, error: object) -> None:
     """Collect the gate's comparison count from a finished xdist worker.
@@ -355,8 +432,10 @@ def pytest_testnodedown(node: object, error: object) -> None:
         node: the worker which finished
         error: whatever it crashed with, which leaves its count behind.
     """
-    global _worker_comparisons, _worker_batches
+    global _worker_comparisons, _worker_batches, _workers_reported
     output = getattr(node, "workeroutput", None) or {}
+    if "engine_comparisons" in output:
+        _workers_reported += 1
     _worker_comparisons += int(output.get("engine_comparisons", 0))
     _worker_batches += int(output.get("engine_batches", 0))
 
@@ -381,6 +460,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
       compared (`engine.comparisons`) means the dispatch of `nca` no longer
       runs it. A selection which builds no batch at all says nothing about the
       gate and is left alone.
+    - **nothing reported.** The counts of a distributed run are the ones the
+      workers send up (`pytest_testnodedown`, `_workers_reported`), and a break
+      in that plumbing leaves them at zero, which reads like the selection
+      above. A run which collected tests under xdist and from which no worker
+      reported therefore fails rather than being read as a run which compared
+      nothing on purpose.
     - the variable never reaches pytest at all, through a `passenv` of
       `tox.ini` or the `env:` of a job. That one is **not** visible here, since
       a process which never sees the variable cannot know it was meant to be
@@ -435,6 +520,25 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         )
         return
     if not armed_by_the_job:
+        return
+    if (
+        config.pluginmanager.hasplugin("dsession")
+        and session.testscollected
+        and not _workers_reported
+    ):
+        # every count of a distributed run arrives through `workeroutput`, so a
+        # break in that plumbing leaves the two sums below at zero and the
+        # verdict reads like a selection which built no batch
+        _fail_session(
+            session,
+            "no worker reported to the gate's sentinel",
+            f"{session.testscollected} test(s) ran in xdist workers and not "
+            "one of them reported its count of the differential gate up to "
+            "this session, so every question below would be asked of two "
+            "zeros. `pytest_testnodedown` of tests/conftest.py no longer sees "
+            "the `workeroutput` of a worker, or the worker no longer writes "
+            "it.",
+        )
         return
     # the count includes the batches of the gate's own armed tests, which arm
     # it with `monkeypatch` and travel the same dispatch; a gate which no

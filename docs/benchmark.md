@@ -15,27 +15,27 @@ Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils
 
 | case | size | points | kernel ms | python ms | speedup | peak RSS MB |
 |---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 3.17 | 2.77 | 0.87x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 3.29 | 3.10 | 0.94x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 3.27 | 3.17 | 0.97x | 169 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 3.38 | 3.52 | 1.04x | 171 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.67 | 5.27 | 1.44x | 184 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 3.65 | 7.10 | 1.94x | 186 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.27 | 32.25 | 4.43x | 209 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 4.97 | 48.67 | 9.79x | 237 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 53.21 | 105.55 | 1.98x | 557 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 18.53 | 462.09 | 24.94x | 505 |
+| engine-1x12 | 1 curve x 12 points | 12 | 4.21 | 3.67 | 0.87x | 169 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 5.91 | 4.37 | 0.74x | 169 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 4.80 | 4.64 | 0.97x | 170 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 4.44 | 4.60 | 1.03x | 172 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 5.51 | 7.39 | 1.34x | 188 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 4.87 | 9.29 | 1.91x | 184 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 10.87 | 44.40 | 4.09x | 209 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 7.74 | 67.46 | 8.72x | 236 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 78.76 | 180.14 | 2.29x | 556 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 32.72 | 627.63 | 19.18x | 508 |
 
-The largest ratio of this run is 24.94x, at 10 000 curves x 200 points, and the smallest 0.87x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.97x and 250 curves x 12 points is 1.04x. Below the crossover the kernel path costs at most 0.40 ms more per call. The first clear win is 1 000 curves x 12 points at 1.44x.
+The largest ratio of this run is 19.18x, at 10 000 curves x 200 points, and the smallest 0.74x, at 100 curves x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.97x and 250 curves x 12 points is 1.03x. Below the crossover the kernel path costs at most 1.54 ms more per call. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.34x.
 <!-- timings:end -->
 
 ## Where the crossover is
 
-The two engines cost within a few percent of each other from one curve up to the crossover named under the table, and the kernel is the slower of the two over most of that range. The loss is bounded rather than a factor: such a batch is about 3 ms of analysis either way and the kernel path pays a fraction of a millisecond of it for the conversion of the batch and the call into the kernel, whatever the shape, which is why the smallest ratio of the sweep belongs to the smallest batch of it. The ratio right at the crossover is worth no more than its first digit: it moves by a few percent between runs, and the sentence to read instead is the first clear win, which is far enough above 1 to survive a rerun. From there the gain grows with the work, by about an order of magnitude every order of magnitude of points.
+The two engines cost within a few percent of each other from one curve up to the crossover named under the table, and the kernel is the slower of the two over most of that range. The loss is bounded rather than a factor: the kernel path pays the conversion of the batch and the call into the kernel whatever the shape, which is a fixed cost and no multiple of the analysis, and the sentence under the table names the largest it reached in this run in milliseconds. A ratio below 1 is that fixed cost against an analysis which is itself a few milliseconds, so which of the small shapes carries the smallest ratio of a run is noise and no property of the sweep. The ratio right at the crossover is worth no more than its first digit: it moves by a few percent between runs, and the sentence to read instead is the shape the clear wins start at, which is far enough above 1 to survive a rerun. From there the gain grows with the work, by about an order of magnitude every order of magnitude of points.
 
 What crosses over is the work and not the shape: 10 curves of 200 points and 100 curves of 12 points are two different studies of nearly the same size in points, and the two engines are the same few percent apart on both of them, which is why the sweep carries a sparse and a dense case at every size rather than rows alone. The practical reading is that a bioequivalence study of two arms of 24 subjects notices neither engine, and that a simulation sweep or a population of thousands of profiles is the case the kernel was written for.
 
-The one row which does not follow the trend is 100 000 curves of 12 points, whose ratio is well below the one of 10 000 curves of the same length. A batch of that many rows is spread over several threads by **both** engines, by the python core above `NCA_WORKER_THRESHOLD` (20 000 rows, `pkpdutils.parallel`) and by the kernel under its own shard plan, so that row holds two parallel analyses against each other where every row above it holds two serial ones. It is the honest number for the defaults, which is what a caller gets; `NCAOptions(n_workers=1)` on both sides is a different and larger ratio.
+The sweep is not monotone in its ratio, and that is a property of the defaults rather than of this run: a batch is spread over several threads by **both** engines, by the python core above `NCA_WORKER_THRESHOLD` (20 000 rows, `pkpdutils.parallel`) and by the kernel under its own shard plan, so every shape above that many rows holds two parallel analyses against each other where every shape below it holds two serial ones. The ratio of such a shape need not follow the trend of the smaller ones and can fall below any of them, which is why the sentences under the table are read off the sweep in the order of the work: a run which crosses 1.00x at more than one shape names no single crossover and says so, instead of naming the largest and the smallest shape of the run as if they were neighbours. The ratios of the defaults are what a caller gets; `NCAOptions(n_workers=1)` on both sides is a different and larger ratio.
 
 ## What the memory column says
 
@@ -72,4 +72,4 @@ The numbers are of the machine named above the table, and of its load on that da
 
 `--check` compares what the script controls and not what the machine does: the cases, their size labels, the columns of the table and that every measured cell is a number, plus the refusal table word for word, since that one is the dispatch's own text. It cannot tell whether a timing was measured or invented, which is why the timings belong to `--write` alone and never to a hand edit. `tests/docs/test_benchmark.py` runs the check, so a case added, removed, renamed or reshaped fails the test suite until the page is rewritten.
 
-A figure in a paragraph is the one staleness neither of them can see, which is why the four sentences under the table are generated with it and the prose of this page leans on them instead of repeating a number. The prose that is left makes claims which survive a rerun on another machine, a crossover between two named shapes and a gain which grows with the work; if a `--write` ever moves the table far enough that one of them stops being true, the paragraphs are what has to be rewritten, and no check will say so.
+A figure in a paragraph is the one staleness neither of them can see, which is why the sentences under the table are generated with it and the prose of this page leans on them instead of repeating a number. The prose that is left makes claims which survive a rerun on another machine, a crossover between two named shapes and a gain which grows with the work; if a `--write` ever moves the table far enough that one of them stops being true, the paragraphs are what has to be rewritten, and no check will say so.

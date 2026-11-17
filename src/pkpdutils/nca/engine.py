@@ -56,18 +56,28 @@ suite reaches:
 
 - `flags` and `c0_method` as exact integers, which no table of another tool
   carries and which a tolerance would not compare anyway (`_compare_columns`),
-- the point variables (`candidate_*` of a kept candidate table, `rate` and
-  `midpoint` of a urine analysis) and the `interval_*` variables of a multiple
-  dose analysis, which are no column of a parameter table,
-- multiple dose, steady state, a last interval completed within
-  `tau_tolerance`, a limit of quantification and a terminal window given by
-  hand, none of which the benchmark scenarios exercise,
-- group data with uncertainty, whose replicate rows run through the engine the
-  batch was dispatched to,
+- the point variables of a kept candidate table (`candidate_t_first`,
+  `candidate_n_points`, `candidate_r2_adj`), which are no column of a
+  parameter table,
+- a limit of quantification and a terminal window given by hand, neither of
+  which the benchmark scenarios exercise,
 - a batch of several routes and the order of its variables, which is the order
   of the columns of `NCAResult.to_dataframe` and of every rendered table,
 - the positions of `NaN`, the dtype of every column and the unit string the
   kernel reports for every variable, which the host neither adopts nor drops.
+
+What the gate does **not** reach is every analysis the dispatch refuses, since
+a batch which never goes to the kernel is held against nothing: the multiple
+dose analysis and with it the `interval_*` variables, the steady state and a
+last interval completed within `tau_tolerance`, the propagation of the
+uncertainty of a group curve, the acceptance criteria, the named partial areas,
+the effect curve and the unit conversion of a result (`unsupported_reason`, the
+table of `docs/benchmark.md`). The urine analysis is out of reach for another
+reason: `pkpdutils.nca.urine.nca_urine` calls `compute_parameters` of the
+python core directly and never passes through `nca`, so `rate` and `midpoint`
+are no answer of an engine at all. Every one of those is held to the python
+core alone, by the reference tests of the suite, and the day the kernel carries
+one of them the gate compares it without a word being changed here.
 
 Where a reference table does cover a variable, the gate's value is breadth and
 diagnosis rather than a sensitivity the suite lacks: of that `aumc_inf_pred`
@@ -96,6 +106,9 @@ import numpy as np
 import xarray as xr
 
 from pkpdutils.nca.options import (
+    SCALAR_KEY_TYPES,
+    TEXT_KEY_TYPES,
+    WINDOW_DEFAULT_KEY,
     Kind,
     NCAOptions,
     UncertaintyMethod,
@@ -152,6 +165,24 @@ names the fix, which belongs on its side). The host therefore answers an empty
 batch itself, which costs nothing: there is no row to analyse.
 """
 
+MIXED_LABELS_REASON: str = (
+    "a terminal window which names a sample of a batch whose labels do not "
+    "share one type, which one type per label column cannot carry"
+)
+"""The reason `unsupported_reason` gives for a batch of labels of several types.
+
+The third reason of this module which is not the kernel's own and the second
+one about a real batch. A coordinate travels under one type for the whole
+column where a window key travels under its own, so a batch whose labels are
+of several types and whose options name one of them by hand would be refused
+by the kernel with a plain `ValueError` - no `UnsupportedError`, so no
+fallback - where the python core matches the label and answers. The host
+therefore refuses it itself, which routes it to the python core, and the
+refusal is the narrowest one which covers the defect (`mixed_label_dim`,
+`_names_a_sample`): a batch of such labels without a window given by hand is
+analysed by the kernel as before, since nothing of its labels is ever read.
+"""
+
 HOST_VARIABLES: frozenset[str] = frozenset({"n"})
 """The variables of a result which the host writes itself, not the kernel.
 
@@ -171,9 +202,11 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
     in its order, since an analysis may trip over several of them and only the
     first is reported, and every sentence is the kernel's own (the `what` of
     its `KernelError::Unsupported`), so that a reason of this module and a
-    reason of the kernel cannot drift apart unnoticed. Two reasons are the
-    host's own and are no refusal of the kernel, `FORCED_REASON` and
-    `EMPTY_REASON`, which is why they are named rather than written here:
+    reason of the kernel cannot drift apart unnoticed. Three reasons are the
+    host's own and are no refusal of the kernel, `FORCED_REASON`,
+    `EMPTY_REASON` and `MIXED_LABELS_REASON`, which is why they are named
+    rather than written here and are answered before the kernel's own
+    conditions are read:
 
     - the analysis of an effect curve (`NCAOptions.kind`)
     - a multiple dose analysis (`NCAOptions.tau`)
@@ -200,6 +233,11 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
         return FORCED_REASON
     if timecourses.n_samples == 0:
         return EMPTY_REASON
+    if (
+        _names_a_sample(options.terminal.windows)
+        and mixed_label_dim(timecourses) is not None
+    ):
+        return MIXED_LABELS_REASON
     if options.kind is Kind.EFFECT:
         return "the analysis of an effect curve (Kind::Effect)"
     if options.tau is not None:
@@ -452,21 +490,52 @@ def _coordinate_values(values: np.ndarray) -> dict[str, list[Any]]:
     if values.dtype.kind == "f":
         return {"float": [float(value) for value in items]}
     if values.dtype.kind == "O":
-        # a numpy scalar is no instance of the python type it holds, so it is
-        # unwrapped before it is read, exactly as `encode_window_key` unwraps
-        # the key of a terminal window: an object array of `np.int64` is what
-        # `xarray` hands over for a coordinate of integers it was given as an
-        # object array, and it has to read as the integers it holds and not as
-        # their text
-        items = [
-            value.item() if isinstance(value, np.generic) else value for value in items
-        ]
-        # the order of `encode_window_key`: a truth value is an integer in
-        # python and the text of a number is no number
-        for tag, cls in (("bool", bool), ("str", str), ("int", int), ("float", float)):
-            if items and all(isinstance(value, cls) for value in items):
-                return {tag: [cls(value) for value in items]}
+        items = _unwrapped(items)
+        tagged = _object_tag(items)
+        if tagged is not None:
+            tag, cls = tagged
+            return {tag: [cls(value) for value in items]}
     return {"str": [_label_text(value) for value in items]}
+
+
+def _unwrapped(items: list[Any]) -> list[Any]:
+    """The values of an object column as the python objects they hold.
+
+    A numpy scalar is no instance of the python type it holds, so it is
+    unwrapped before it is read, exactly as `encode_window_key` unwraps the key
+    of a terminal window: an object array of `np.int64` is what `xarray` hands
+    over for a coordinate of integers it was given as an object array, and it
+    has to read as the integers it holds and not as their text.
+
+    Args:
+        items: the values of the column.
+
+    Returns:
+        The values, a numpy scalar replaced by the object it holds.
+    """
+    return [value.item() if isinstance(value, np.generic) else value for value in items]
+
+
+def _object_tag(items: list[Any]) -> tuple[str, type] | None:
+    """The one type every value of an object column shares, with its tag.
+
+    The types are read in the order of `SCALAR_KEY_TYPES`, which
+    `encode_window_key` reads the key of a terminal window with, so a column
+    and a key which names one of its values cannot be tagged by two different
+    rules.
+
+    Args:
+        items: the values of the column, numpy scalars unwrapped
+            (`_unwrapped`).
+
+    Returns:
+        The tag of `Coordinate` and the type to convert with, or `None` for an
+        empty column and for one whose values share no type of the table.
+    """
+    for tag, cls in SCALAR_KEY_TYPES:
+        if items and all(isinstance(value, cls) for value in items):
+            return tag, cls
+    return None
 
 
 def _label_text(value: Any) -> str:
@@ -485,6 +554,83 @@ def _label_text(value: Any) -> str:
     if isinstance(value, date | datetime):
         return value.isoformat()
     return str(value)
+
+
+def mixed_label_dim(timecourses: Timecourses) -> str | None:
+    """The sample dimension whose labels the two encoders of the host disagree about.
+
+    A coordinate travels under one type for the whole column
+    (`_coordinate_values`), as the kernel's `Coordinate` carries one, where
+    `encode_window_key` keeps the type of every single key of
+    `TerminalPhase.windows`. For a column whose values share one type the two
+    agree, and for one whose values do not, the column travels as text while a
+    key of it travels as its own type: the kernel then holds `Str("1")` against
+    `Int(1)`, finds no sample of that name and refuses the batch with a plain
+    `ValueError`, where the python core matches the label (`sample_keys`).
+
+    Such a batch is therefore the host's own refusal
+    (`MIXED_LABELS_REASON`) rather than a batch the kernel may see, and the
+    refusal is as narrow as the defect: a value whose record is the text of
+    the label itself (`TEXT_KEY_TYPES`, a string as itself and a date or a
+    datetime as its isoformat) meets the text of the column whichever way the
+    column was tagged, so a column of dates and a column of dates and strings
+    are both carried faithfully and are not refused. Only the sample
+    dimensions are read, since the label of a sample is the value of its
+    dimension coordinate and nothing else (`sample_keys`), and a window keyed
+    by anything which is no label of the batch is refused by the host before
+    either engine is reached (`sample_windows`).
+
+    Args:
+        timecourses: the batch.
+
+    Returns:
+        The name of the first sample dimension whose labels do not survive the
+        crossing, or `None` when every one of them does.
+    """
+    for dim in timecourses.sample_dims:
+        coord = timecourses.ds.coords.get(dim)
+        if coord is None or coord.dtype.kind != "O":
+            continue
+        items = _unwrapped(coord.to_numpy().ravel().tolist())
+        if _object_tag(items) is not None:
+            # the column carries the one type of its values, as a key does
+            continue
+        if any(_key_type(value) not in TEXT_KEY_TYPES for value in items):
+            return str(dim)
+    return None
+
+
+def _key_type(value: Any) -> str | None:
+    """The record type `encode_window_key` would give a label, `None` for none.
+
+    Args:
+        value: the value of a label column.
+
+    Returns:
+        The `type` of the record, or `None` for a value no record spells, which
+        is no text either and makes the column of it a refusal.
+    """
+    try:
+        return str(encode_window_key(value)["type"])
+    except ValueError:
+        return None
+
+
+def _names_a_sample(windows: Mapping[Any, Any] | None) -> bool:
+    """Whether a terminal window is keyed by the label of a sample.
+
+    The default key names every sample the mapping does not name
+    (`WINDOW_DEFAULT_KEY`) and is no label, so a mapping of that key alone
+    holds no label against the samples of the batch and nothing of the labels
+    is compared.
+
+    Args:
+        windows: the windows of `TerminalPhase`, `None` when none are given.
+
+    Returns:
+        Whether at least one key is the label of a sample.
+    """
+    return any(key != WINDOW_DEFAULT_KEY for key in windows or ())
 
 
 def options_dict(options: NCAOptions) -> dict[str, Any]:
@@ -593,11 +739,16 @@ def _as_computed(values: dict[str, np.ndarray], timecourses: Timecourses) -> Non
 
     An integer variable is cast and never divided: it counts rather than
     measures, so its expression is dimensionless and its factor is 1, which is
-    asserted rather than assumed.
+    checked rather than assumed, and with a raise rather than with an `assert`,
+    which `python -O` removes from the one place the invariant is read.
 
     Args:
         values: the columns of the kernel, converted in place
         timecourses: the analysed batch, which carries the units
+
+    Raises:
+        RuntimeError: if a counted variable carries a unit factor, which would
+            report it as a number of another unit than the host believes.
     """
     # `pkpdutils.nca.nca` imports this module, so the table of the unit
     # expressions is read where it is needed and not at the top
@@ -615,9 +766,10 @@ def _as_computed(values: dict[str, np.ndarray], timecourses: Timecourses) -> Non
             # counts in integers what is counted (`flags`, the rule of
             # `c0_method`); `_to_result` casts such a column and never
             # multiplies it, so there is no factor to divide back out
-            assert factor == 1.0, (
-                f"the counted variable '{name}' carries the unit factor {factor}"
-            )
+            if factor != 1.0:
+                raise RuntimeError(
+                    f"the counted variable '{name}' carries the unit factor {factor}"
+                )
             values[name] = column.astype(np.int64)
             continue
         if factor != 1.0:

@@ -34,6 +34,7 @@ import argparse
 import contextlib
 import functools
 import gc
+import itertools
 import json
 import os
 import platform
@@ -687,8 +688,20 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
 
     Four figures: the largest and the smallest ratio of the run, the two
     shapes the crossover lies between, the largest amount the kernel path
-    costs below it, and the first clear win above it (`CLEAR_WIN`, far enough
-    from 1 to survive the few percent a rerun moves a ratio by).
+    costs below it, and the shape the clear wins start at (`CLEAR_WIN`, far
+    enough from 1 to survive the few percent a rerun moves a ratio by).
+
+    The two shapes and the clear win are read by walking the sweep in the order
+    of the work (`crossover`, `clear_win`) and not off the two sorted halves of
+    it, because this sweep is deliberately not monotone in its ratio: the row
+    above `pkpdutils.parallel.NCA_WORKER_THRESHOLD` holds two parallel analyses
+    against each other where the rows below it hold two serial ones, and a
+    machine of more cores can put it below 1.00x between two rows which are
+    well above it. `below[-1]` and `above[0]` would then be the largest and the
+    smallest shape of the whole run, and the sentence would name a crossover of
+    1 200 000 and 3 000 points with a cost of some 50 ms which is no cost of a
+    crossover at all. A sweep which crosses 1.00x more than once names no
+    single crossover, and the sentences say that rather than inventing one.
 
     Args:
         rows: the results of the engine cases, in the order of the table.
@@ -706,35 +719,117 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
     ]
     below = [row for row in ordered if row["speedup"] < 1.0]
     above = [row for row in ordered if row["speedup"] >= 1.0]
-    if below and above:
-        last, first = below[-1], above[0]
+    crossed = crossover(ordered)
+    if not below:
+        sentences.append(
+            "Every shape of this run is at or above 1.00x, so the crossover "
+            "is below the smallest one measured."
+        )
+    elif not above:
+        sentences.append(
+            "Every shape of this run is below 1.00x, so the crossover is "
+            "above the largest one measured."
+        )
+    elif crossed is None:
+        sentences.append(
+            f"The ratio of this run crosses 1.00x at "
+            f"{len(sign_changes(ordered))} shapes of the sweep rather than at "
+            "one, so it names no single crossover; the shapes below 1.00x are "
+            + ", ".join(f"{row['size']} at {row['speedup']:.2f}x" for row in below)
+            + f", and on those the kernel path costs at most "
+            f"{1e3 * max(row['kernel_s'] - row['python_s'] for row in below):.2f} "
+            "ms more per call."
+        )
+    else:
+        last, first = crossed
         sentences.append(
             f"The two engines cost the same between {engine_points(last):,} "
             f"and {engine_points(first):,} points: {last['size']} is "
             f"{last['speedup']:.2f}x and {first['size']} is "
             f"{first['speedup']:.2f}x.".replace(",", " ")
         )
-        cost = max(row["kernel_s"] - row["python_s"] for row in below)
+        cost = max(
+            row["kernel_s"] - row["python_s"]
+            for row in ordered
+            if engine_points(row) <= engine_points(last)
+        )
         sentences.append(
             f"Below the crossover the kernel path costs at most "
             f"{1e3 * cost:.2f} ms more per call."
         )
-    elif above:
+    win = clear_win(ordered)
+    if win is not None:
         sentences.append(
-            "Every shape of this run is at or above 1.00x, so the crossover "
-            "is below the smallest one measured."
-        )
-    else:
-        sentences.append(
-            "Every shape of this run is below 1.00x, so the crossover is "
-            "above the largest one measured."
-        )
-    clear = [row for row in ordered if row["speedup"] >= CLEAR_WIN]
-    if clear:
-        sentences.append(
-            f"The first clear win is {clear[0]['size']} at {clear[0]['speedup']:.2f}x."
+            f"From {win['size']} on every shape of this run is a clear win, "
+            f"the first of them at {win['speedup']:.2f}x."
         )
     return " ".join(sentences)
+
+
+def sign_changes(
+    ordered: list[dict[str, Any]],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Every adjacent pair of the sweep whose ratios lie on two sides of 1.00x.
+
+    Args:
+        ordered: the results of the engine cases, sorted by `engine_points`.
+
+    Returns:
+        The pairs, in the order of the work.
+    """
+    return [
+        (left, right)
+        for left, right in itertools.pairwise(ordered)
+        if (left["speedup"] < 1.0) != (right["speedup"] < 1.0)
+    ]
+
+
+def crossover(
+    ordered: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The two neighbouring shapes the crossover of the sweep lies between.
+
+    The crossover of a sweep is a pair of neighbours in the order of the work
+    whose ratios lie on two sides of 1.00x, and it is one only when the sweep
+    has exactly one such pair and crosses upwards there: a sweep which crosses
+    back has as many crossovers as it has sign changes and none of them is
+    "the" crossover of the page.
+
+    Args:
+        ordered: the results of the engine cases, sorted by `engine_points`.
+
+    Returns:
+        The last shape below 1.00x and the first at or above it, or `None` for
+        a sweep which names no single crossover.
+    """
+    changes = sign_changes(ordered)
+    if len(changes) != 1:
+        return None
+    last, first = changes[0]
+    return None if last["speedup"] >= 1.0 else (last, first)
+
+
+def clear_win(ordered: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The smallest shape from which every larger one of the run is a clear win.
+
+    Read from the large end of the sweep and not as the first row at or above
+    `CLEAR_WIN`: the smallest shape above the ratio is the first clear win only
+    while the sweep stays above it, and a run in which a larger shape falls
+    back would publish the first of the two and say nothing of the second.
+
+    Args:
+        ordered: the results of the engine cases, sorted by `engine_points`.
+
+    Returns:
+        The smallest shape of the suffix every ratio of which is at or above
+        `CLEAR_WIN`, or `None` when the largest shape of the run is below it.
+    """
+    win: dict[str, Any] | None = None
+    for row in reversed(ordered):
+        if row["speedup"] < CLEAR_WIN:
+            break
+        win = row
+    return win
 
 
 #: the ratio from which a win is clear of the few percent a rerun moves one by
