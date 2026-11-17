@@ -52,7 +52,10 @@ dense cover of those variables on those batches, and the measure of it is that
 a mutation of `aumc_inf_pred` by 1e-5 for every batch of three samples or more
 fails 25 tests with the gate disarmed. The gate compares **every** batch the
 caller builds, and these are the parts of an answer no reference table of the
-suite reaches:
+suite reaches, the multiple dose analysis among them (the `interval_*` point
+variables, the steady state, `n_doses`, `tau` and the flags `INCOMPLETE_INTERVAL`
+and `EXTRAPOLATED_TROUGH`, and a last interval completed within
+`tau_tolerance`):
 
 - `flags` and `c0_method` as exact integers, which no table of another tool
   carries and which a tolerance would not compare anyway (`_compare_columns`),
@@ -67,11 +70,9 @@ suite reaches:
   kernel reports for every variable, which the host neither adopts nor drops.
 
 What the gate does **not** reach is every analysis the dispatch refuses, since
-a batch which never goes to the kernel is held against nothing: the multiple
-dose analysis and with it the `interval_*` variables, the steady state and a
-last interval completed within `tau_tolerance`, the propagation of the
-uncertainty of a group curve, the acceptance criteria, the named partial areas,
-the effect curve and the unit conversion of a result (`unsupported_reason`, the
+a batch which never goes to the kernel is held against nothing: the
+propagation of the uncertainty of a group curve, the acceptance criteria, the
+named partial areas, the effect curve and the unit conversion of a result (`unsupported_reason`, the
 table of `docs/benchmark.md`). The urine analysis is out of reach for another
 reason: `pkpdutils.nca.urine.nca_urine` calls `compute_parameters` of the
 python core directly and never passes through `nca`, so `rate` and `midpoint`
@@ -209,8 +210,6 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
     conditions are read:
 
     - the analysis of an effect curve (`NCAOptions.kind`)
-    - a multiple dose analysis (`NCAOptions.tau`)
-    - a protocol of more than one dose in any row of the batch
     - the acceptance criteria, whenever one of their four thresholds is set
       (`NCAOptions.acceptance`)
     - the named partial areas (`NCAOptions.partial_aucs`)
@@ -240,14 +239,6 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
         return MIXED_LABELS_REASON
     if options.kind is Kind.EFFECT:
         return "the analysis of an effect curve (Kind::Effect)"
-    if options.tau is not None:
-        return "a multiple dose analysis (NcaOptions::tau)"
-    amounts, times, _ = dose_arrays(timecourses)
-    # the doses of a row are the columns whose amount and whose time are both a
-    # number, counted on the very arrays `batch_dict` sends, so that the
-    # predicate and the batch cannot read one protocol differently
-    if np.any((np.isfinite(amounts) & np.isfinite(times)).sum(axis=1) >= 2):
-        return "a protocol of more than one dose (the multiple dose analysis)"
     acceptance = options.acceptance
     if any(
         threshold is not None

@@ -1591,7 +1591,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     The analysis runs in the rust kernel of `pkpdutils.nca.engine` where that
     build carries it and in the python core of this module otherwise. The
     decision is taken once per batch (`pkpdutils.nca.engine.unsupported_reason`
-    names what the kernel does not carry: a multiple dose analysis, an effect
+    names what the kernel does not carry: an effect
     curve, the acceptance criteria, the named partial areas, the propagation of
     an uncertainty and the unit conversion of a result), the two engines
     compute the same numbers and the result is assembled from the same mapping

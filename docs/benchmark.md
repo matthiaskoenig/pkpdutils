@@ -43,14 +43,12 @@ The sweep is not monotone in its ratio, and that is a property of the defaults r
 
 ## What the kernel does not carry
 
-An analysis `pkpdutils-core` 0.2.0 does not carry takes the python path, with the numbers and the timings it always had, and no table of this page covers it: the two columns would be the same engine twice. The dispatch decides once per batch, and the reason it gives is the kernel's own sentence:
+An analysis `pkpdutils-core` does not carry takes the python path, with the numbers and the timings it always had, and no table of this page covers it: the two columns would be the same engine twice. The dispatch decides once per batch, and the reason it gives is the kernel's own sentence:
 
 <!-- refusals:start -->
 | analysis | the reason the dispatch gives |
 |---|---|
 | an effect curve | the analysis of an effect curve (Kind::Effect) |
-| a given dosing interval | a multiple dose analysis (NcaOptions::tau) |
-| a protocol of several doses | a protocol of more than one dose (the multiple dose analysis) |
 | the acceptance criteria of the terminal phase | the acceptance criteria (NcaOptions::acceptance) |
 | a named partial area | the named partial areas (NcaOptions::partial_aucs) |
 | the uncertainty of a group curve | the propagation of the uncertainty of a group curve |

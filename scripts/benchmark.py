@@ -469,11 +469,8 @@ def refusal_rows() -> list[tuple[str, str]]:
     """
     batch = mono_batch(2)
     group = mono_batch(2, spread=True)
-    multiple = multi_dose_batch(2, n_time=12, n_doses=2)
     cases: list[tuple[str, Timecourses, NCAOptions]] = [
         ("an effect curve", batch, NCAOptions(kind=Kind.EFFECT)),
-        ("a given dosing interval", batch, NCAOptions(tau=12.0)),
-        ("a protocol of several doses", multiple, NCAOptions()),
         (
             "the acceptance criteria of the terminal phase",
             batch,
