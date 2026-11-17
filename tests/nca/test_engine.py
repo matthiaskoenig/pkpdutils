@@ -1239,6 +1239,24 @@ def test_routes_which_differ_in_their_dosing_take_the_python_path(
     assert engine.comparisons() == before
 
 
+def test_the_order_cache_tells_a_multiple_dose_batch_from_a_single_dose_one() -> None:
+    # the same routes in the same order and the same options, once with no
+    # multiple dose row and once with one in every route: the cached order of
+    # the first must not be served for the second
+    single = mixed_route_dose_batch(
+        ((Route.ORAL, 1), (Route.IV_BOLUS, 1), (Route.ORAL, 1), (Route.IV_BOLUS, 1))
+    )
+    multiple = mixed_route_dose_batch(
+        ((Route.ORAL, 3), (Route.IV_BOLUS, 3), (Route.ORAL, 3), (Route.IV_BOLUS, 3))
+    )
+    engine._ORDER_CACHE.clear()
+    assert_same_mapping(single)
+    assert_same_mapping(multiple)
+    engine._ORDER_CACHE.clear()
+    assert_same_mapping(multiple)
+    assert_same_mapping(single)
+
+
 def test_the_single_dose_rows_of_a_mixed_batch_have_no_interval_values() -> None:
     result = nca(mixed_dose_batch())
     for name in result.ds.data_vars:
