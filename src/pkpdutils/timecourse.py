@@ -39,6 +39,7 @@ import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from typing import Any, Literal, Self
 
 import numpy as np
@@ -1927,18 +1928,24 @@ class Timecourses:
             n=count,
         )
         self.ds: xr.Dataset = ds
+        # The dataset is wrapped once and never replaced, and nothing in the
+        # package assigns to the attrs of one of its variables, so the layout
+        # and the three units are fixed from here on: the properties which read
+        # them are `cached_property`, because every one of them went through
+        # `Dataset.__getitem__` on each access and that builds a throwaway
+        # `DataArray`. One `nca()` call read them about ninety times each.
         #: the units `_check_units_once` has parsed, so that building single
         #: timecourses parses the three unit strings of the batch once
         self._checked_units: tuple[str, str, str | None] | None = None
 
     # --- layout -------------------------------------------------------------
 
-    @property
+    @cached_property
     def sample_dims(self) -> tuple[str, ...]:
         """The dimensions other than `time`."""
         return tuple(str(d) for d in self.ds["value"].dims if d != TIME_DIM)
 
-    @property
+    @cached_property
     def sample_shape(self) -> tuple[int, ...]:
         """The shape of the sample dimensions."""
         return tuple(int(self.ds.sizes[d]) for d in self.sample_dims)
@@ -1948,18 +1955,18 @@ class Timecourses:
         """Number of timecourses."""
         return int(np.prod(self.sample_shape, dtype=int)) if self.sample_shape else 1
 
-    @property
+    @cached_property
     def n_time(self) -> int:
         """Number of time points (the length of the padded grid for ragged data)."""
         return int(self.ds.sizes[TIME_DIM])
 
-    @property
+    @cached_property
     def time_unit(self) -> str:
         """Unit of the times."""
         time_var = self.ds[TIMES_VAR] if TIMES_VAR in self.ds else self.ds[TIME_DIM]
         return str(time_var.attrs["units"])
 
-    @property
+    @cached_property
     def unit(self) -> str:
         """Unit of the values."""
         return str(self.ds["value"].attrs["units"])
@@ -2125,7 +2132,7 @@ class Timecourses:
         """Whether `sd` or `se` is present."""
         return "sd" in self.ds or "se" in self.ds
 
-    @property
+    @cached_property
     def has_dose(self) -> bool:
         """Whether doses are present."""
         return "dose_amount" in self.ds
@@ -2237,14 +2244,14 @@ class Timecourses:
         """Infusion durations of shape `(*sample_shape, n_dose)` (`NaN` without infusion), `None` without doses."""
         return self._optional("dose_duration")
 
-    @property
+    @cached_property
     def dose_unit(self) -> str | None:
         """Unit of the doses, `None` without doses."""
         if not self.has_dose:
             return None
         return str(self.ds["dose_amount"].attrs["units"])
 
-    @property
+    @cached_property
     def n_dose(self) -> int:
         """Size of the dose dimension, the longest protocol of the batch; 0 without doses."""
         return int(self.ds.sizes[DOSE_DIM]) if self.has_dose else 0
