@@ -1,10 +1,10 @@
 # Performance
 
-The non-compartmental analysis of `pkpdutils` runs in two engines: the rust kernel [`pkpdutils-core`](https://github.com/matthiaskoenig/pkpdutils-core), which is installed with the package, and the python core of `pkpdutils.nca.nca`. `nca()` takes the decision once per batch and the two compute the same numbers, so the only difference a caller sees is the time it takes. This page measures that difference.
+The non-compartmental analysis of `pkpdutils` runs in two engines: the rust kernel [`pkpdutils-core`](https://github.com/matthiaskoenig/pkpdutils-core), which is installed with the package, and the python core of `pkpdutils.nca.nca`. `nca()` takes the decision once per batch and the two compute the same numbers, so the only difference a caller sees is the time it takes. This page measures that difference. `ParameterResult.summarize` and `time_to_steady_state` dispatch to the kernel in the same way, each with its python implementation as the fallback; both are small reductions next to an analysis and neither is timed here.
 
 The short answer is a crossover and not a headline: the kernel is worth more than an order of magnitude on the largest batch measured here and costs a fraction of a millisecond on a small one, because converting a batch and calling into the kernel costs the same whether the batch holds one curve or a hundred thousand. The figures are the sentences below the table, which the benchmark writes together with it.
 
-That the two compute the same numbers is measured and not assumed: with `PKPDUTILS_COMPARE_ENGINES=1` every batch which reaches the kernel is analysed by the python core as well and the two answers are held against each other variable by variable, down to the positions of `NaN`, the dtype of every column and the unit of every variable. Continuous integration runs the whole test suite that way.
+That the two compute the same numbers is measured and not assumed: with `PKPDUTILS_COMPARE_ENGINES=1` every batch which reaches the kernel is analysed by the python core as well and the two answers are held against each other variable by variable, down to the positions of `NaN`, the dtype of every column and the unit of every variable. Continuous integration runs the whole test suite that way. The gate is the analysis alone: the summary and the time to steady state are held to their python implementations by tests which run both engines on the same input, which is where their one documented difference is pinned as well (see [NCA](nca.md#the-two-engines)).
 
 ## The two engines on one batch
 
