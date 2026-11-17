@@ -2143,14 +2143,14 @@ class Timecourses:
     def times(self) -> np.ndarray:
         """Times as an array of shape `(*sample_shape, n_time)`."""
         if TIMES_VAR in self.ds:
-            return self.ds[TIMES_VAR].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+            return self._ordered(TIMES_VAR, (*self.sample_dims, TIME_DIM))
         grid = self.ds[TIME_DIM].to_numpy().astype(np.float64)
         return np.broadcast_to(grid, (*self.sample_shape, grid.size)).copy()
 
     @property
     def values(self) -> np.ndarray:
         """Values as an array of shape `(*sample_shape, n_time)`."""
-        return self.ds["value"].transpose(*self.sample_dims, TIME_DIM).to_numpy()
+        return self._ordered("value", (*self.sample_dims, TIME_DIM))
 
     @property
     def nominal_times(self) -> np.ndarray | None:
@@ -2174,6 +2174,28 @@ class Timecourses:
             da.transpose(*self.sample_dims, TIME_DIM).to_numpy(), dtype=np.float64
         )
 
+    def _ordered(self, name: str, order: tuple[str, ...]) -> np.ndarray:
+        """A stored variable as an array with its dimensions in `order`.
+
+        The same array as `self.ds[name].transpose(*order).to_numpy()`, read
+        from the stored variable instead: `Dataset.__getitem__` builds a
+        `DataArray` and `DataArray.transpose` replaces it and filters the
+        indexes of its coordinates, where the permutation itself is one numpy
+        view. A variable whose dimensions are not exactly `order` goes the
+        long way, so an unusual layout keeps the behaviour it had.
+
+        Args:
+            name: name of the variable.
+            order: the dimensions, in the order the array should carry them.
+
+        Returns:
+            The array, dimensions in `order`.
+        """
+        var = self.ds.variables[name]
+        if set(var.dims) != set(order):
+            return self.ds[name].transpose(*order).to_numpy()
+        return np.asarray(var.data).transpose(tuple(var.dims.index(d) for d in order))
+
     def _optional(self, name: str) -> np.ndarray | None:
         """Return a variable as an array transposed to `(*sample_dims[, time | dose])`, or `None` if absent.
 
@@ -2185,12 +2207,10 @@ class Timecourses:
         """
         if name not in self.ds:
             return None
-        da = self.ds[name]
         sample_dims = self.sample_dims
-        extra = [
-            d for d in (TIME_DIM, DOSE_DIM) if d in da.dims and d not in sample_dims
-        ]
-        return da.transpose(*sample_dims, *extra).to_numpy()
+        dims = self.ds.variables[name].dims
+        extra = [d for d in (TIME_DIM, DOSE_DIM) if d in dims and d not in sample_dims]
+        return self._ordered(name, (*sample_dims, *extra))
 
     @property
     def sd(self) -> np.ndarray | None:
