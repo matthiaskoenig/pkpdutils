@@ -17,6 +17,22 @@ import pytest
 from numpy.typing import NDArray
 from scipy import special, stats
 
+_MISSING = [
+    name
+    for name in ("normal_isf", "student_t_isf", "student_t_sf")
+    if not hasattr(pkpdutils_core, name)
+]
+if _MISSING:
+    # the floor `pkpdutils-core>=0.3.0` admits the published 0.3.0 wheel, which has none of the
+    # quantiles and reports the same version as a build which has them, so the attributes are
+    # what is asked and not the version. Without this the module raises while it is collected
+    # and pytest runs nothing at all.
+    pytest.skip(
+        f"pkpdutils_core {getattr(pkpdutils_core, '__version__', '?')} lacks {', '.join(_MISSING)}: rebuild the "
+        "kernel into this environment (`maturin develop`) or raise the pkpdutils-core floor",
+        allow_module_level=True,
+    )
+
 # the extension module carries no stubs, so ty cannot see its functions
 normal_isf = pkpdutils_core.normal_isf  # ty: ignore[missing-attribute]
 student_t_isf = pkpdutils_core.student_t_isf  # ty: ignore[missing-attribute]
@@ -100,7 +116,7 @@ def test_the_kernel_student_t_quantile_matches_scipy_over_a_dense_grid(
 @pytest.mark.parametrize(
     ("df", "p", "expected"),
     [
-        # mpmath at 60 digits, bisection on log t of the regularised incomplete beta function
+        # mpmath at 60 digits for the exact floats: python scripts/reference_t_isf.py 1e-300 3 10 2.5
         (3.0, 1e-300, 1.0331108360446529e100),
         (10.0, 1e-300, 2.5645257189481978e30),
         (2.5, 1e-300, 8.765437882279992e119),
