@@ -11,22 +11,22 @@ That the two compute the same numbers is measured and not assumed: with `PKPDUTI
 One batch of single dose intravenous bolus curves, analysed through `nca()` with the defaults, is timed through both engines by `scripts/benchmark.py`. Every case runs in a fresh interpreter and alternates the two engines run after run in that one process, kernel, python, kernel, python: the two halves are measured in the same window, so a ratio is not an artefact of whatever else the machine did between two blocks of runs. The python column is the python core of the same installation, reached through the switch `pkpdutils.nca.engine._force_python`. Before anything is timed the benchmark asks four questions a published ratio cannot be read back from, and fails the case rather than answering any of them with a plausible number: whether the dispatch sends this batch to the kernel at all, whether the forced python path is really forced, whether the differential gate is armed (which would run the python core inside the kernel half and halve the ratio) and whether the kernel accepts the batch when it is really called, since a refusal would be answered with a warning and the python path. `points` is the work of the analysis, the curves times the points per curve; `speedup` is the python median over the kernel median, so a number above 1 is the factor the kernel saves and a number below 1 the factor it costs.
 
 <!-- timings:start -->
-Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils` 1.4.0 with `pkpdutils-core` 0.2.0, 9 timed runs per engine and case after one warm-up run each.
+Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils` 1.4.0 with `pkpdutils-core` 0.3.0, 9 timed runs per engine and case after one warm-up run each.
 
 | case | size | points | kernel ms | python ms | speedup | peak RSS MB |
 |---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 4.36 | 3.73 | 0.86x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 4.43 | 4.21 | 0.95x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 4.53 | 4.23 | 0.94x | 169 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 4.54 | 4.63 | 1.02x | 172 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 4.75 | 6.76 | 1.42x | 187 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 4.69 | 9.39 | 2.00x | 187 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 9.85 | 41.50 | 4.21x | 209 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 7.57 | 66.06 | 8.73x | 239 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 89.15 | 175.52 | 1.97x | 553 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 32.14 | 625.48 | 19.46x | 508 |
+| engine-1x12 | 1 curve x 12 points | 12 | 3.20 | 2.96 | 0.93x | 169 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 3.29 | 3.25 | 0.99x | 169 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 3.33 | 3.24 | 0.97x | 169 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 3.51 | 3.71 | 1.06x | 172 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.63 | 5.49 | 1.51x | 185 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 3.55 | 7.59 | 2.14x | 184 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.28 | 33.65 | 4.62x | 211 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 5.11 | 52.61 | 10.29x | 237 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 66.53 | 126.27 | 1.90x | 574 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 19.34 | 593.06 | 30.66x | 507 |
 
-The largest ratio of this run is 19.46x, at 10 000 curves x 200 points, and the smallest 0.86x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.94x and 250 curves x 12 points is 1.02x. Below the crossover the kernel path costs at most 0.63 ms more per call, and the ratios there run from 0.86x to 0.95x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.21x and 1 000 curves x 200 points at 8.73x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.42x.
+The largest ratio of this run is 30.66x, at 10 000 curves x 200 points, and the smallest 0.93x, at 1 curve x 12 points. The two engines cost the same between 2 000 and 3 000 points: 10 curves x 200 points is 0.97x and 250 curves x 12 points is 1.06x. Below the crossover the kernel path costs at most 0.23 ms more per call, and the ratios there run from 0.93x to 0.99x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.62x and 1 000 curves x 200 points at 10.29x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.51x.
 <!-- timings:end -->
 
 ## Where the crossover is
