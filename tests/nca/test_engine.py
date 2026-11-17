@@ -386,10 +386,57 @@ def test_the_host_does_not_decide_what_the_kernel_refuses(
     for options in refused:
         assert host(batch(), options) is None
     assert host(group_batch(), NCAOptions()) is None
-    # the host's own answers do not ask the kernel at all
+    # an ordinary batch asks the kernel exactly once
     seen.clear()
     assert host(batch(), NCAOptions()) is None
     assert len(seen) == 1
+
+
+def test_the_host_s_own_answers_neither_ask_nor_convert(
+    engine_cross_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the forced path, an empty batch and a batch of mixed labels are answered
+    # before the kernel is asked and before anything is converted for it
+    host = engine_cross_check._predicate
+    asked: list[str] = []
+    monkeypatch.setattr(
+        pkpdutils_core, "is_supported", lambda *args: asked.append("kernel")
+    )
+    for name in ("batch_dict", "options_dict"):
+        real = getattr(engine, name)
+        monkeypatch.setattr(
+            engine, name, lambda *a, _n=name, _r=real: (asked.append(_n), _r(*a))[1]
+        )
+    empty = Timecourses.from_arrays(
+        TIMES,
+        np.zeros((0, TIMES.size)),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array([], dtype=object)},
+    )
+    mixed = labelled_batch([1, "a"])
+    named = NCAOptions(terminal=TerminalPhase(windows={1: (2.0, 8.0)}))
+    assert host(empty, NCAOptions()) == engine.EMPTY_REASON
+    assert host(mixed, named) == engine.MIXED_LABELS_REASON
+    monkeypatch.setattr(engine, "_force_python", True)
+    assert host(batch(), NCAOptions()) == engine.FORCED_REASON
+    assert asked == []
+    # and the same batches do reach the kernel when the host does not answer
+    monkeypatch.setattr(engine, "_force_python", False)
+    host(mixed, NCAOptions())
+    assert asked == ["batch_dict", "options_dict", "kernel"]
+
+
+def test_a_conversion_of_another_batch_is_refused() -> None:
+    other = engine.KernelInput(group_batch(), NCAOptions())
+    same_options = NCAOptions()
+    for call in (engine.unsupported_reason, engine.kernel_result, engine.run_kernel):
+        with pytest.raises(ValueError, match="another batch"):
+            call(batch(), same_options, prepared=other)
+    shared = engine.KernelInput(batch(), same_options)
+    with pytest.raises(ValueError, match="another batch"):
+        engine.unsupported_reason(shared.timecourses, NCAOptions(), prepared=shared)
 
 
 def test_the_source_of_the_host_predicate_names_no_refusal_of_the_kernel(

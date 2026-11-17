@@ -225,6 +225,34 @@ class KernelInput:
         return self._dicts
 
 
+def _check_prepared(
+    timecourses: Timecourses, options: NCAOptions, prepared: KernelInput | None
+) -> KernelInput:
+    """The conversion of this batch: `prepared` if it belongs to it, else a new one.
+
+    Args:
+        timecourses: the batch
+        options: the options of the analysis
+        prepared: the conversion the caller made, or `None`
+
+    Returns:
+        `prepared`, or a fresh `KernelInput` (nothing converted yet).
+
+    Raises:
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`, which would analyse another batch than
+            the one asked about.
+    """
+    if prepared is None:
+        return KernelInput(timecourses, options)
+    if prepared.timecourses is not timecourses or prepared.options is not options:
+        raise ValueError(
+            "`prepared` was built from another batch or other options than the "
+            "ones passed beside it"
+        )
+    return prepared
+
+
 def unsupported_reason(
     timecourses: Timecourses,
     options: NCAOptions,
@@ -259,11 +287,16 @@ def unsupported_reason(
     Keyword Args:
         prepared: the conversion of this batch and these options which
             `run_kernel` is given as well, so that it is made once; built here
-            when `None`
+            when `None`; it must have been built from these very objects
 
     Returns:
         The reason, or `None` for an analysis the kernel carries.
+
+    Raises:
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`, whichever path answers.
     """
+    prepared = _check_prepared(timecourses, options, prepared)
     if _force_python:
         return FORCED_REASON
     if timecourses.n_samples == 0:
@@ -274,7 +307,7 @@ def unsupported_reason(
     ):
         return MIXED_LABELS_REASON
     is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
-    batch, kernel_options = (prepared or KernelInput(timecourses, options)).dicts
+    batch, kernel_options = prepared.dicts
     reason: str | None = is_supported(batch, kernel_options)
     return reason
 
@@ -693,7 +726,7 @@ def kernel_result(
     Keyword Args:
         prepared: the conversion of the batch and the options, made once by the
             caller which asked `unsupported_reason` as well; built here when
-            `None`
+            `None`, and it must have been built from these very objects
 
     Returns:
         The result of `pkpdutils_core.analyze_batch`.
@@ -702,9 +735,11 @@ def kernel_result(
         UnsupportedError: if this build of the kernel does not carry the
             analysis, which `unsupported_reason` answers without running
             anything.
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`.
     """
     analyze = pkpdutils_core.analyze_batch  # ty: ignore[missing-attribute]
-    batch, kernel_options = (prepared or KernelInput(timecourses, options)).dicts
+    batch, kernel_options = _check_prepared(timecourses, options, prepared).dicts
     return dict(
         analyze(
             batch,
@@ -971,7 +1006,8 @@ def run_kernel(
             without the analysis running twice; `None` outside the gate, which
             is every ordinary call.
         prepared: the conversion of the batch and the options, see
-            `unsupported_reason`; built here when `None`
+            `unsupported_reason`; built here when `None`, and it must have been
+            built from these very objects
 
     Returns:
         One array per variable, `flags` among the keys.
@@ -980,6 +1016,8 @@ def run_kernel(
         UnsupportedError: if this build of the kernel does not carry the
             analysis, which `unsupported_reason` answers without running
             anything.
+        ValueError: if `prepared` was built from other objects than
+            `timecourses` and `options`.
     """
     result = kernel_result(timecourses, options, prepared=prepared)
     if units is not None:
