@@ -2,12 +2,13 @@
 
 The analysis runs in the rust kernel of `pkpdutils.nca.engine` where that
 build carries it and in the python core otherwise, and the decision is taken
-by a predicate of the host which mirrors the kernel's own
-(`engine.unsupported_reason` against `pkpdutils_core.is_supported`). The
-mirror is an optimization and the kernel is the authority, which makes one
-direction of a drift silent and permanent: a predicate which stops accepting
-some shape sends it down the python path, the numbers are still right, and
-nothing ever complains.
+by a predicate of the host which forwards to the kernel's own
+(`engine.unsupported_reason` and `pkpdutils_core.is_supported`) and answers
+itself only the three conditions about the python objects. The forwarding is
+the authority and the host's own conditions are the part which can drift
+silently and permanently: a condition which stops accepting some shape sends
+it down the python path, the numbers are still right, and nothing ever
+complains.
 
 That is measured rather than feared. A predicate mutated to refuse every
 batch whose unit is not `mg/l` leaves `tests/nca/test_engine.py` green at 57

@@ -316,6 +316,115 @@ def test_the_reason_is_the_kernels_own(
     assert reason == kernel, what
 
 
+COMBINED: list[tuple[str, Timecourses, NCAOptions]] = [
+    (
+        "effect curve and units, the kernel's first",
+        batch(),
+        NCAOptions(
+            kind=Kind.EFFECT, effect_threshold=1.0, units={"auc_last": "mg*min/l"}
+        ),
+    ),
+    (
+        "partial areas and units, the kernel's first",
+        batch(),
+        NCAOptions(
+            partial_aucs={"auc_0_4": (0.0, 4.0)}, units={"auc_last": "mg*min/l"}
+        ),
+    ),
+    (
+        "a group batch and units, the kernel's first",
+        group_batch(),
+        NCAOptions(units={"auc_last": "mg*min/l"}),
+    ),
+    (
+        "a multiple dose batch with a threshold of the acceptance",
+        multiple_dose_batch(),
+        NCAOptions(tau=12.0, acceptance=Acceptance(r2_adj_min=0.9)),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "timecourses", "options"), COMBINED, ids=[c[0] for c in COMBINED]
+)
+def test_the_host_agrees_with_the_kernel_on_several_refusals_at_once(
+    what: str, timecourses: Timecourses, options: NCAOptions
+) -> None:
+    # the host holds no order of refusals of its own: an analysis which trips
+    # over several is answered with the one the kernel names first, which is
+    # compared against the kernel on the real batch and not against a table
+    kernel = is_supported(engine.batch_dict(timecourses), engine.options_dict(options))
+    assert kernel is not None, what
+    assert engine.unsupported_reason(timecourses, options) == kernel, what
+
+
+def test_the_host_does_not_decide_what_the_kernel_refuses(
+    engine_cross_check: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the host predicate forwards to the kernel's `is_supported` and holds no
+    # condition of its own about the options, so a refusal added in, or lifted
+    # from, a kernel release needs no change here. Asked through the original
+    # predicate, since the cross-check of the suite stands in for the name
+    # `engine.unsupported_reason` and holds it against the unpatched kernel
+    host = engine_cross_check._predicate
+    refused = [options for _, options in REFUSED]
+    seen: list[tuple[Any, Any]] = []
+
+    def says(answer: str | None) -> Any:
+        def stand_in(batch_dict: Any, options_dict: Any) -> str | None:
+            seen.append((batch_dict, options_dict))
+            return answer
+
+        return stand_in
+
+    # a refusal the kernel invents, for an analysis the host has never heard of
+    monkeypatch.setattr(pkpdutils_core, "is_supported", says("a refusal of 9.9"))
+    assert host(batch(), NCAOptions()) == "a refusal of 9.9"
+    assert len(seen) == 1
+    # and every refusal the kernel lifts, which a restating host would still make
+    monkeypatch.setattr(pkpdutils_core, "is_supported", says(None))
+    for options in refused:
+        assert host(batch(), options) is None
+    assert host(group_batch(), NCAOptions()) is None
+    # the host's own answers do not ask the kernel at all
+    seen.clear()
+    assert host(batch(), NCAOptions()) is None
+    assert len(seen) == 1
+
+
+def test_the_source_of_the_host_predicate_names_no_refusal_of_the_kernel(
+    engine_cross_check: Any,
+) -> None:
+    # the structural half of the same claim: nothing of the function body reads
+    # the option or the spread of the batch a refusal of the kernel is about.
+    # The only conditions it holds are the three the host answers itself
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(engine_cross_check._predicate)))
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    body = function.body[1:]  # without the docstring
+    read = {
+        node.attr
+        for stmt in body
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Attribute)
+    }
+    strings = {
+        node.value
+        for stmt in body
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert strings == set()
+    assert read.isdisjoint(
+        {"kind", "acceptance", "partial_aucs", "units", "sd", "se", "uncertainty"}
+    ), read
+    assert read <= {"terminal", "windows", "n_samples", "is_supported"}, read
+
+
 def test_the_forced_python_path_is_no_refusal_of_the_kernel() -> None:
     forced = engine._force_python
     engine._force_python = True

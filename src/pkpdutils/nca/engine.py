@@ -15,14 +15,14 @@ around:
 
 - `pkpdutils_core.is_supported` and the `pkpdutils_core.UnsupportedError` of
   `pkpdutils_core.analyze_batch` are the **authority** on what the kernel
-  analyses. `unsupported_reason` is an **optimization** which mirrors them, so
-  that a batch the kernel would refuse is never converted at all.
-- A mirror which is too narrow is the dangerous direction: the batch quietly
-  takes the python path, the numbers are right and nobody learns that the fast
-  path never fired. A mirror which is too wide corrects itself, since the
-  kernel refuses with `UnsupportedError` and the caller falls back. The reason
-  this module reports is therefore the kernel's own sentence, word for word,
-  and `tests/nca/test_engine.py` asserts the two agree on every refusal rather
+  analyses. `unsupported_reason` forwards to the first of them and holds no
+  refusal of its own, so a kernel release which changes one needs no change
+  here; the three conditions it does answer itself are about the python
+  objects and are no refusal of the kernel (see its docstring).
+- A batch which only `analyze_batch` refuses (a unit the registry of the
+  kernel cannot read) raises `UnsupportedError` and `nca` falls back, so the
+  reason is the kernel's own sentence, word for word, either way, and
+  `tests/nca/test_engine.py` asserts the two agree on every refusal rather
   than asserting a text of its own.
 
 The two engines report the same variables with the same numbers, and one
@@ -109,9 +109,7 @@ from pkpdutils.nca.options import (
     SCALAR_KEY_TYPES,
     TEXT_KEY_TYPES,
     WINDOW_DEFAULT_KEY,
-    Kind,
     NCAOptions,
-    UncertaintyMethod,
     encode_window_key,
 )
 from pkpdutils.nca.result import parameter_unit
@@ -198,27 +196,24 @@ one of the host rather than adopted.
 def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | None:
     """Why the kernel would refuse this analysis, `None` when it would run it.
 
-    The conditions are `unsupported_reason` of `crates/python/src/options.rs`
-    in its order, since an analysis may trip over several of them and only the
-    first is reported, and every sentence is the kernel's own (the `what` of
-    its `KernelError::Unsupported`), so that a reason of this module and a
-    reason of the kernel cannot drift apart unnoticed. Three reasons are the
-    host's own and are no refusal of the kernel, `FORCED_REASON`,
-    `EMPTY_REASON` and `MIXED_LABELS_REASON`, which is why they are named
-    rather than written here and are answered before the kernel's own
-    conditions are read:
+    The kernel decides, the host forwards: every refusal of the kernel (an
+    effect curve, the acceptance criteria, the named partial areas, the
+    propagation of the uncertainty of a group curve, the unit conversion of a
+    result, and whatever a later release adds) is the answer of
+    `pkpdutils_core.is_supported`, text and order included, so that a release
+    which changes a refusal changes it here without a change of the host.
 
-    - the analysis of an effect curve (`NCAOptions.kind`)
-    - the acceptance criteria, whenever one of their four thresholds is set
-      (`NCAOptions.acceptance`)
-    - the named partial areas (`NCAOptions.partial_aucs`)
-    - the propagation of the uncertainty of a group curve, of what the options
-      *resolve* to and not of what they say: a batch with `sd` or `se` is
-      refused although the options name no method, and one is analysed
-      although it carries `sd` when they name `UncertaintyMethod.NONE`. The
-      counts `n` play no part in it, as they play none in
-      `NCAOptions.resolve_uncertainty`
-    - the unit conversion of a result (`NCAOptions.units`)
+    The host answers before it asks only what the kernel cannot see, which is
+    a statement about the python objects and no refusal of the kernel's, and
+    each of them is named rather than written here (`FORCED_REASON`,
+    `EMPTY_REASON`, `MIXED_LABELS_REASON`). `is_supported` itself accepts all
+    three: it says nothing about the python path being pinned, and it answers
+    `None` for an empty batch and for a batch of mixed labels, whose analysis
+    the kernel then answers with one column or rejects with a plain
+    `ValueError`. One refusal of the kernel is invisible to `is_supported`
+    too, a unit string its registry cannot read, and it is raised by
+    `run_kernel` as an `UnsupportedError`, which `nca` answers with the
+    fallback.
 
     Args:
         timecourses: the batch
@@ -236,48 +231,9 @@ def unsupported_reason(timecourses: Timecourses, options: NCAOptions) -> str | N
         and mixed_label_dim(timecourses) is not None
     ):
         return MIXED_LABELS_REASON
-    if options.kind is Kind.EFFECT:
-        return "the analysis of an effect curve (Kind::Effect)"
-    acceptance = options.acceptance
-    if any(
-        threshold is not None
-        for threshold in (
-            acceptance.r2_adj_min,
-            acceptance.extrapolation_max,
-            acceptance.span_min,
-            acceptance.n_points_min,
-        )
-    ):
-        return "the acceptance criteria (NcaOptions::acceptance)"
-    if options.partial_aucs:
-        return "the named partial areas (NcaOptions::partial_aucs)"
-    if resolved_uncertainty(timecourses, options) is not UncertaintyMethod.NONE:
-        return "the propagation of the uncertainty of a group curve"
-    if options.units:
-        return "the unit conversion of a result (NcaOptions::units)"
-    return None
-
-
-def resolved_uncertainty(
-    timecourses: Timecourses, options: NCAOptions
-) -> UncertaintyMethod:
-    """The uncertainty the analysis would really propagate.
-
-    `resolved_uncertainty` of `crates/python/src/options.rs`, which is
-    `NCAOptions.resolve_uncertainty` of the spread the batch carries: the
-    bootstrap for a batch with `sd` or `se` per point, nothing for a batch of
-    individual curves. The counts `n` are no spread and play no part.
-
-    Args:
-        timecourses: the batch
-        options: the options of the analysis
-
-    Returns:
-        The method, `UncertaintyMethod.NONE` for an analysis which propagates
-        nothing.
-    """
-    spread = timecourses.sd is not None or timecourses.se is not None
-    return options.resolve_uncertainty(spread)
+    is_supported = pkpdutils_core.is_supported  # ty: ignore[missing-attribute]
+    reason: str | None = is_supported(batch_dict(timecourses), options_dict(options))
+    return reason
 
 
 def dose_arrays(
