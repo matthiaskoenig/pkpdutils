@@ -227,6 +227,117 @@ def test_a_rising_and_a_falling_series_have_no_estimate_whatever_the_starts(
             assert np.isnan(tss) and np.isnan(plateau), (value[0], starts)
 
 
+class FakeFit:
+    """A fit which reports success wherever it is told it stopped."""
+
+    def __init__(self, x: float, cost: float) -> None:
+        self.x = np.array([x])
+        self.cost = cost
+        self.success = True
+
+
+def stopped_at(monkeypatch: pytest.MonkeyPatch, x: float, cost: float) -> None:
+    """Make the search of the python reference stop at `log10(k) = x` with `cost`."""
+    monkeypatch.setattr(tss_module, "least_squares", lambda *a, **k: FakeFit(x, cost))
+    monkeypatch.setattr(engine, "_force_python", True)
+
+
+def test_a_stop_inside_the_range_does_not_make_an_unbounded_optimum_an_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the search reports success where it stopped, and it can stop inside the range of the
+    # starts: the cost beyond the range is what tells the optimum is not there
+    time = np.arange(12.0, 145.0, 12.0)
+    flat = np.full(time.size, 5.0)  # cost 0 at every large k, the high edge
+    proportional = 0.5 * time  # cost falls towards k = 0, the low edge
+    for value, x in (
+        (flat, 0.0),
+        (flat, -1.0),
+        (proportional, -2.5),
+        (proportional, -3.5),
+    ):
+        stopped_at(monkeypatch, x, 1e6)
+        tss, plateau = tss_module._monoexponential_row(time, value, 0.9)
+        assert np.isnan(tss) and np.isnan(plateau), (value[0], x)
+
+
+def test_a_cost_as_low_as_the_edge_is_no_interior_optimum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    time = np.arange(12.0, 145.0, 12.0)
+    value = np.full(time.size, 5.0)
+    monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 0.0)
+    # the cost at the high edge of a flat series is exactly 0: a fit which reports 0 is a tie
+    stopped_at(monkeypatch, 0.0, 0.0)
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+    # and a fit which is worse than the edge by a hair is one as well, with the tolerance
+    monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 1e-12)
+    stopped_at(monkeypatch, 0.0, 1e-13 * float(np.sum(value * value)))
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+
+
+def profiled_cost(time: np.ndarray, value: np.ndarray, x: float) -> float:
+    """Half the residual sum of squares of the profiled model at `k = 10 ** x`."""
+    g = 1.0 - np.exp(-(10.0**x) * time)
+    plateau = float(np.sum(value * g) / np.sum(g * g))
+    return float(np.sum((value - plateau * g) ** 2)) / 2.0
+
+
+def test_the_cost_at_the_edge_is_compared_with_a_tolerance_of_the_series(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    time = np.arange(12.0, 145.0, 12.0)
+    value = 0.5 * time
+    low = float(np.log10(0.5 / time[-1])) - 2.0
+    edge = profiled_cost(time, value, low)
+    scale = float(np.sum(value * value))
+    monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 1e-12)
+    # worse than the edge by half the tolerance: a tie, not an interior optimum
+    stopped_at(monkeypatch, -2.5, edge - 0.5e-12 * scale)
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+    # better than the edge by more than the tolerance is one
+    stopped_at(monkeypatch, -2.5, edge - 2e-12 * scale)
+    assert np.isfinite(tss_module._monoexponential_row(time, value, 0.9)[0])
+
+
+def test_a_stop_on_the_edge_of_the_range_is_not_inside_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    time = np.arange(12.0, 145.0, 12.0)
+    value = 10.0 * (1.0 - np.exp(-0.05 * time))  # the edges cost far more than 0
+    low = float(np.log10(0.5 / time[-1])) - 2.0
+    high = float(np.log10(8.0 / time[-1])) + 2.0
+    for x in (low, high):
+        stopped_at(monkeypatch, x, 0.0)
+        assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0]), x
+    stopped_at(monkeypatch, np.log10(0.05), 0.0)
+    assert np.isfinite(tss_module._monoexponential_row(time, value, 0.9)[0])
+
+
+def test_a_minimum_two_decades_below_the_starts_is_still_an_estimate() -> None:
+    # k = 3e-4 per hour, 1.7 decades below the lowest start: inside the range of the search
+    time = np.arange(12.0, 145.0, 12.0)
+    value = 1e3 * (1.0 - np.exp(-3e-4 * time))
+    engine._force_python = True
+    try:
+        tss, plateau = tss_module._monoexponential_row(time, value, 0.9)
+    finally:
+        engine._force_python = False
+    assert tss == pytest.approx(-np.log(0.1) / 3e-4, rel=1e-3)
+    assert plateau == pytest.approx(1e3, rel=1e-3)
+
+
+def test_a_minimum_beyond_the_range_of_the_starts_is_no_estimate_in_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # k = 1e-6 per hour is a genuine minimum 4.5 decades below the starts: the kernel searches
+    # two decades around them and reports nothing there, and so does the reference
+    monkeypatch.setattr(engine, "_force_python", True)
+    time = np.arange(12.0, 145.0, 12.0)
+    value = 1e6 * (1.0 - np.exp(-1e-6 * time))
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+
+
 @pytest.mark.skipif(
     not hasattr(pkpdutils_core, "time_to_steady_state"),
     reason="this build of pkpdutils-core carries no `time_to_steady_state`",
@@ -294,6 +405,26 @@ class TestTheKernelEntryPoint:
             result = nca_single(periodic(trough))
             python, kernel = self.both(result, method="stepwise")
             np.testing.assert_array_equal(kernel.tss.to_numpy(), python.tss.to_numpy())
+
+    def test_a_minimum_beyond_the_range_of_the_starts_is_no_estimate_in_the_kernel(
+        self,
+    ) -> None:
+        time = np.arange(12.0, 145.0, 12.0)[None]
+        value = 1e6 * (1.0 - np.exp(-1e-6 * time))
+        answer = pkpdutils_core.time_to_steady_state(  # ty: ignore[missing-attribute]
+            {
+                "time": time,
+                "value": value,
+                "start": np.zeros_like(time),
+                "valid": np.ones(time.shape, dtype=bool),
+                "n_rows": 1,
+                "n_cols": time.size,
+                "method": "monoexponential",
+                "fraction": 0.9,
+                "alpha": 0.05,
+            }
+        )
+        assert np.isnan(answer["tss"][0]) and np.isnan(answer["c_ss"][0])
 
     def test_a_malformed_request_is_a_value_error_and_not_a_python_answer(
         self, monkeypatch: pytest.MonkeyPatch
