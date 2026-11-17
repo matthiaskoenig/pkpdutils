@@ -65,8 +65,15 @@ _STARTS: tuple[float, ...] = (0.5, 2.0, 8.0)
 #: (the bracket of the rust kernel, `BRACKET_DECADES` of `tss.rs`)
 _BRACKET_DECADES: float = 2.0
 
-#: a cost at the edge of the range this close to the best one, relative to the
-#: sum of squares of the troughs, is no worse: the optimum is not interior
+#: a cost at the edge of the range this close to the best one, **relative to
+#: the larger of the two costs**, is no worse: the optimum is not interior. The
+#: test has to be relative, because the two families it separates both reach a
+#: cost of 0: a series with no plateau of its own ties exactly (its cost is 0,
+#: or as low as it gets, at the edge as well), while a series whose plateau is
+#: reached within a part per million is fitted exactly in the interior and still
+#: costs the variance of its troughs at the edge. An absolute floor, of the sum
+#: of squares of the troughs, cannot tell them apart and used to report NaN for
+#: a short half-life on a long dosing interval
 _EDGE_TOLERANCE: float = 1e-12
 
 
@@ -131,14 +138,42 @@ def _monoexponential_row(
         fraction: the fraction of the plateau
 
     Returns:
-        The time to `fraction` of the plateau and the plateau; both `NaN` when
-        the fit does not converge to a rising curve, which includes a series
-        without a plateau of its own: flat, falling or still linear troughs
-        have no optimum in `k`, the cost keeps falling towards `k = 0` or
-        `k = infinity`, and where the Levenberg-Marquardt search stops is an
-        accident of its starts and not an estimate.
+        The time to `fraction` of the plateau and the plateau, both `NaN` for a
+        series which carries neither. Exactly these series have no estimate:
+
+        - fewer than three troughs, a trough which is not positive (a `NaN`
+          among them included) or a last time which is not positive, none of
+          which is a curve to fit;
+        - troughs which are **all the same value**, which have no rise at all,
+          so the cost falls towards `k = infinity` and the plateau is the
+          common value whatever `k` is;
+        - a series **without an interior optimum in `k`**: the search stops
+          outside the range of `_BRACKET_DECADES` around the starts, or its
+          cost there is no better than the cost at the edge of that range,
+          relative to the larger of the two. Flat, falling and still linear
+          troughs are of this kind, their cost keeps falling towards `k = 0` or
+          `k = infinity`, and where the Levenberg-Marquardt search stops is an
+          accident of its starts and not an estimate.
+
+        A near exact fit is **not** one of them: its cost is zero at the
+        optimum and the variance of the troughs at the edge, which the relative
+        test tells apart and an absolute floor of the sum of squares of the
+        troughs does not. Such a series is ordinary - a half-life far below the
+        dosing interval reaches its plateau within a part per million at the
+        first trough. The one case this search loses to the rust kernel, which
+        brackets instead of following a gradient, is a series already saturated
+        to the resolution of a double, i.e. a first trough within about
+        `1e-12` of the plateau: the cost of the whole region above the optimum
+        is then zero to that resolution, the search stops anywhere in it and
+        ties the edge, so python reports `NaN` where the kernel still recovers
+        `k` to a few parts in `1e4` (`release-notes/0.4.0.md` of the kernel).
     """
     if time.size < 3 or not np.all(value > 0.0) or time[-1] <= 0.0:
+        return float("nan"), float("nan")
+    if float(np.ptp(value)) == 0.0:
+        # troughs which are all the same value have no rise to fit: the cost
+        # falls towards `k = infinity` with the plateau right at every step, so
+        # the search would report whichever `k` it stopped at
         return float("nan"), float("nan")
 
     def plateau(k: float) -> float:
@@ -165,13 +200,17 @@ def _monoexponential_row(
         return float("nan"), float("nan")
     # the optimum has to be interior: the search is unbounded and reports
     # success wherever it stopped, so look at the cost beyond the range in
-    # which a plateau is looked for
+    # which a plateau is looked for. The two costs are compared relative to the
+    # larger of them, so that a tie is a tie at any magnitude: a series without
+    # a plateau of its own reaches the same cost at the edge as anywhere else,
+    # while a near exact fit beats the edge by many orders of magnitude however
+    # small its own cost is
     low = float(np.log10(_STARTS[0] / time[-1])) - _BRACKET_DECADES
     high = float(np.log10(_STARTS[-1] / time[-1])) + _BRACKET_DECADES
     edge_cost = min(
         float(np.sum(residuals(np.array([x])) ** 2)) / 2.0 for x in (low, high)
     )
-    tolerance = _EDGE_TOLERANCE * float(np.sum(value * value))
+    tolerance = _EDGE_TOLERANCE * max(edge_cost, best.cost)
     if not low < best.x[0] < high or edge_cost <= best.cost + tolerance:
         return float("nan"), float("nan")
     k = float(10.0 ** best.x[0])
@@ -351,7 +390,15 @@ def time_to_steady_state(
         alpha: significance level of the trend test of the stepwise estimate
 
     Returns:
-        The estimate per sample.
+        The estimate per sample. It is `NaN` for a sample whose troughs do not
+        carry it: fewer than three of them for the monoexponential estimate,
+        troughs which are all the same value, and troughs with no plateau of
+        their own, i.e. flat, falling or still linear ones, whose fit has no
+        optimum in `k` (`_monoexponential_row` lists them exactly); for the
+        stepwise estimate, a sample whose troughs still trend over every
+        window of at least three of them. A study which stops before the
+        plateau therefore reports no estimate rather than a number its data
+        does not carry.
 
     Raises:
         ValueError: if the result carries no per-interval troughs, if

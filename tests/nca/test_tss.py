@@ -164,6 +164,27 @@ def test_a_plateau_next_to_a_flat_series_is_still_estimated(tss_engine: str) -> 
     assert np.isfinite(float(estimate.tss)) and np.isfinite(float(estimate.c_ss))
 
 
+@pytest.mark.parametrize("thalf", [0.7, 0.6])
+def test_a_half_life_far_below_the_dosing_interval_is_still_an_estimate(
+    thalf: float, tss_engine: str
+) -> None:
+    # a drug whose half-life is a twentieth of the 12 h interval is at its plateau to
+    # within a part per million at the first trough, so the fit is near exact: its cost
+    # is 0 at the optimum and the variance of the troughs at the edges of the search,
+    # which is an interior optimum. The plateau is sharp and well determined, so both
+    # engines report `-ln(1 - f) / k`. Python used to return NaN at 0.6 h and below,
+    # because its tie test compared the cost at the edge with an absolute floor of the
+    # sum of squares of the troughs, which a near exact fit falls below; the answer a
+    # user got therefore depended on which wheel was installed
+    k = np.log(2.0) / thalf
+    estimate = time_to_steady_state(nca_single(superposed(k, 10), options=LOG))
+    assert float(estimate.tss) == pytest.approx(np.log(10.0) / k, rel=1e-6)
+    assert estimate.c_ss is not None
+    assert float(estimate.c_ss) == pytest.approx(
+        C0 * np.exp(-k * TAU) / (1 - np.exp(-k * TAU)), rel=1e-6
+    )
+
+
 def test_a_single_dose_result_has_no_troughs() -> None:
     result = nca_single(single_dose(0.2), options=LOG)
     with pytest.raises(ValueError, match="no per-interval troughs"):
@@ -200,8 +221,17 @@ def test_a_flat_series_has_no_estimate_whatever_the_starts_of_the_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # the python reference reported tss = 0.038, 6e-14, 0.097, 0.101 and 0.028 for these start
-    # sets, with a correct plateau: k is unidentifiable and nothing of it was an estimate
+    # sets, with a correct plateau: k is unidentifiable and nothing of it was an estimate.
+    # Troughs which are all the same value have no rise at all and are answered before the
+    # search runs, so the answer cannot depend on the starts
     monkeypatch.setattr(engine, "_force_python", True)
+    searched: list[int] = []
+    real = tss_module.least_squares
+    monkeypatch.setattr(
+        tss_module,
+        "least_squares",
+        lambda *args, **kwargs: (searched.append(1), real(*args, **kwargs))[1],
+    )
     time = np.arange(12.0, 145.0, 12.0)
     value = np.full(time.size, 5.0)
     for starts in [
@@ -213,6 +243,7 @@ def test_a_flat_series_has_no_estimate_whatever_the_starts_of_the_search(
         monkeypatch.setattr(tss_module, "_STARTS", starts)
         tss, plateau = tss_module._monoexponential_row(time, value, 0.9)
         assert np.isnan(tss) and np.isnan(plateau), starts
+    assert not searched
 
 
 def test_a_rising_and_a_falling_series_have_no_estimate_whatever_the_starts(
@@ -248,11 +279,11 @@ def test_a_stop_inside_the_range_does_not_make_an_unbounded_optimum_an_estimate(
     # the search reports success where it stopped, and it can stop inside the range of the
     # starts: the cost beyond the range is what tells the optimum is not there
     time = np.arange(12.0, 145.0, 12.0)
-    flat = np.full(time.size, 5.0)  # cost 0 at every large k, the high edge
+    falling = 20.0 - time / 10.0  # the cost falls towards large k, the high edge
     proportional = 0.5 * time  # cost falls towards k = 0, the low edge
     for value, x in (
-        (flat, 0.0),
-        (flat, -1.0),
+        (falling, 0.0),
+        (falling, -1.0),
         (proportional, -2.5),
         (proportional, -3.5),
     ):
@@ -265,15 +296,20 @@ def test_a_cost_as_low_as_the_edge_is_no_interior_optimum(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     time = np.arange(12.0, 145.0, 12.0)
-    value = np.full(time.size, 5.0)
+    value = 20.0 - time / 10.0  # falling: the cost falls towards large k, the high edge
+    edge = profiled_cost(time, value, float(np.log10(8.0 / time[-1])) + 2.0)
     monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 0.0)
-    # the cost at the high edge of a flat series is exactly 0: a fit which reports 0 is a tie
+    # a fit which reports the cost of the edge is a tie, with no tolerance at all
+    stopped_at(monkeypatch, 0.0, edge)
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+    # and a fit which is worse than the edge is one as well
+    stopped_at(monkeypatch, 0.0, 2.0 * edge)
+    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+    # a flat series is answered before the search, so there is nothing to tie
     stopped_at(monkeypatch, 0.0, 0.0)
-    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
-    # and a fit which is worse than the edge by a hair is one as well, with the tolerance
-    monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 1e-12)
-    stopped_at(monkeypatch, 0.0, 1e-13 * float(np.sum(value * value)))
-    assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
+    assert np.isnan(
+        tss_module._monoexponential_row(time, np.full(time.size, 5.0), 0.9)[0]
+    )
 
 
 def profiled_cost(time: np.ndarray, value: np.ndarray, x: float) -> float:
@@ -283,7 +319,7 @@ def profiled_cost(time: np.ndarray, value: np.ndarray, x: float) -> float:
     return float(np.sum((value - plateau * g) ** 2)) / 2.0
 
 
-def test_the_cost_at_the_edge_is_compared_with_a_tolerance_of_the_series(
+def test_the_cost_at_the_edge_is_compared_relative_to_the_larger_of_the_two(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     time = np.arange(12.0, 145.0, 12.0)
@@ -292,11 +328,18 @@ def test_the_cost_at_the_edge_is_compared_with_a_tolerance_of_the_series(
     edge = profiled_cost(time, value, low)
     scale = float(np.sum(value * value))
     monkeypatch.setattr(tss_module, "_EDGE_TOLERANCE", 1e-12)
-    # worse than the edge by half the tolerance: a tie, not an interior optimum
-    stopped_at(monkeypatch, -2.5, edge - 0.5e-12 * scale)
+    # better than the edge by half the relative tolerance: a tie, not an interior optimum
+    stopped_at(monkeypatch, -2.5, edge * (1.0 - 0.5e-12))
     assert np.isnan(tss_module._monoexponential_row(time, value, 0.9)[0])
-    # better than the edge by more than the tolerance is one
-    stopped_at(monkeypatch, -2.5, edge - 2e-12 * scale)
+    # better than it by more than the relative tolerance is one
+    stopped_at(monkeypatch, -2.5, edge * (1.0 - 2e-12))
+    assert np.isfinite(tss_module._monoexponential_row(time, value, 0.9)[0])
+    # the tolerance is relative to the costs and not to the sum of squares of the troughs:
+    # a fit a billionth of its own cost below the edge is an interior optimum, although that
+    # difference is far below `1e-12 * scale`, where the absolute floor this replaces called
+    # it a tie and reported no estimate (finding 1 of the whole-branch review)
+    assert edge * 1e-9 < 1e-12 * scale
+    stopped_at(monkeypatch, -2.5, edge * (1.0 - 1e-9))
     assert np.isfinite(tss_module._monoexponential_row(time, value, 0.9)[0])
 
 
@@ -397,10 +440,16 @@ class TestTheKernelEntryPoint:
         )
         python, kernel = self.both(result, method=method)
         # noisy troughs have a flat cost, where scipy's Levenberg-Marquardt stops at its own
-        # tolerance: it is within 6e-6 of the minimum the kernel finds to 3e-8 (measured
-        # over 300 noisy series against a bounded scalar search), so the two agree to 1e-4;
-        # the exact series of the other tests hold each engine to 1e-6 of the analytic value
-        rtol = 1e-4 if method == "monoexponential" else 0.0
+        # tolerance well before the minimum the kernel brackets to 3e-8. Measured over 400
+        # random series of the shape of this test (14 intervals of 12 h, k from 0.05 to 0.75,
+        # 3 % noise) the two engines differ in tss by a median of 3.4e-7, 7.2e-6 at the 95th
+        # percentile and 1.55e-4 at the worst; over a wider domain (4 to 30 intervals,
+        # k * t_last from 0.003 to 1e4) by 2.2e-4 at 3 % noise and 1.2e-3 at 10 %. So 1e-4,
+        # which this test asserted, held only for its own seeds: 2e-3 is what the data
+        # support. The plateau is the better determined half of the fit, 8.8e-8 at the worst
+        # on this shape, and keeps its 1e-4. The exact series of the other tests hold each
+        # engine to 1e-6 of the analytic value
+        rtol = 2e-3 if method == "monoexponential" else 0.0
         np.testing.assert_allclose(
             kernel.tss.to_numpy(), python.tss.to_numpy(), rtol=rtol, equal_nan=True
         )
@@ -412,6 +461,19 @@ class TestTheKernelEntryPoint:
                 rtol=1e-4,
                 equal_nan=True,
             )
+
+    def test_troughs_saturated_to_the_resolution_of_a_double_still_differ(self) -> None:
+        # the one input where the two engines are known to disagree, measured rather than
+        # left to be found: at a half-life a fortieth of the dosing interval the first
+        # trough is 1e-12 from the plateau, so the cost of the whole region above the
+        # optimum is zero to the resolution of a double. The kernel brackets and recovers
+        # `k` to 3e-4, while python's Levenberg-Marquardt stops anywhere in that region,
+        # where the cost ties the edge of the range, and reports no estimate. Giving python
+        # the same bracketed search is the recorded follow-up of this wave
+        k = np.log(2.0) / 0.3
+        python, kernel = self.both(nca_single(superposed(k, 10), options=LOG))
+        assert np.isnan(float(python.tss))
+        assert float(kernel.tss) == pytest.approx(np.log(10.0) / k, rel=1e-3)
 
     def test_an_exact_straight_line_of_troughs_agrees_between_the_engines(self) -> None:
         # a slope of exactly 0 is no trend and every other slope on an exact line is one,
