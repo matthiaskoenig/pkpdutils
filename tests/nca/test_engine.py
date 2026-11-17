@@ -1416,3 +1416,88 @@ def test_the_cross_check_catches_a_predicate_which_refuses_too_little(
         # the host is the only thing between it and an `UnsupportedError` at
         # the call site of a user
         nca(multiple_dose_batch())
+
+
+def unit_batch(*, time_unit: str = "hr", unit: str = "mg/l") -> Timecourses:
+    """Two curves in the given time and concentration units."""
+    values = C0 * np.exp(-K * TIMES)
+    return Timecourses.from_arrays(
+        TIMES,
+        np.stack([values, 1.1 * values]),
+        time_unit=time_unit,
+        unit=unit,
+        dims=("subject",),
+        coords={"subject": ["A", "B"]},
+        dose=IV_DOSE,
+    )
+
+
+@pytest.mark.engine_fallback
+@pytest.mark.parametrize(
+    ("time_unit", "unit"),
+    [("week", "mg/l"), ("hr", "U/l")],
+    ids=["week", "U/l"],
+)
+def test_a_unit_only_pint_reads_falls_back_instead_of_raising(
+    time_unit: str, unit: str, engine_cross_check: Any
+) -> None:
+    # the kernel's registry is narrower than pint's and 0.2.0 reported such a
+    # unit as an error of the batch, which `nca` does not catch. Its predicate
+    # stays silent on purpose (answering needs a copy of the registry in the
+    # kernel and in the host, which the cross-check would have to mirror), so
+    # the batch takes the fallback and the marker says that is expected
+    one = unit_batch(time_unit=time_unit, unit=unit)
+    result = nca(one)
+    assert_same_result(result, python_result(one))
+    assert engine_cross_check.refusals, "the kernel was expected to refuse"
+    assert engine_cross_check.fallbacks
+
+
+NUMERIC_LABELS: list[tuple[str, list[Any], Any]] = [
+    ("float label and int key", [1.0, 2.0], 1),
+    ("int label and float key", [1, 2], 1.0),
+    ("bool label and int key", [True, False], 1),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "labels", "key"), NUMERIC_LABELS, ids=[n[0] for n in NUMERIC_LABELS]
+)
+def test_a_window_key_of_another_numeric_type_matches_on_the_kernel(
+    what: str,
+    labels: list[Any],
+    key: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    engine_cross_check: Any,
+) -> None:
+    # python matches `1 == 1.0 == True`; 0.2.0 found no sample of that name and
+    # raised, 0.2.1 matches and runs the batch. No marker: the batch must run on
+    # the kernel, so the kernel is spied on and a quiet fallback fails the test
+    values = C0 * np.exp(-K * TIMES)
+    labelled = Timecourses.from_arrays(
+        TIMES,
+        np.stack([values, 1.1 * values]),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array(labels)},
+        dose=IV_DOSE,
+    )
+    options = NCAOptions(terminal=TerminalPhase(windows={key: (2.0, 8.0)}))
+    expected = python_result(labelled, options)
+    calls: list[dict[str, np.ndarray]] = []
+    kernel = engine.run_kernel
+
+    def spy(*args: Any, **kwargs: Any) -> dict[str, np.ndarray]:
+        calls.append(kernel(*args, **kwargs))
+        return calls[-1]
+
+    monkeypatch.setattr(engine, "run_kernel", spy)
+    result = nca(labelled, options=options)
+    assert len(calls) == 1, what
+    assert not engine_cross_check.refusals, what
+    assert not engine_cross_check.fallbacks, what
+    assert result.terminal_windows()[key] == (2.0, 8.0)
+    row = 0
+    assert result.ds["lambda_z_t_first"].to_numpy()[row] == pytest.approx(2.0)
+    assert_same_result(result, expected)
