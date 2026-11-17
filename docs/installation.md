@@ -1,6 +1,6 @@
 # Installation
 
-`pkpdutils` requires python >= 3.13 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils). It is tested on Linux, macOS and Windows and is pure python; every dependency ships binary wheels, so no compiler is needed.
+`pkpdutils` requires python >= 3.13 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils). It is tested on Linux, macOS and Windows and is itself pure python; its dependencies ship binary wheels for those platforms, the rust kernel of the non-compartmental analysis ([pkpdutils-core](https://pypi.org/project/pkpdutils-core/)) among them, so no compiler is needed.
 
 ## With uv
 
@@ -43,6 +43,7 @@ To work on the repository itself, with the test and documentation tooling, see [
 
 | package | used for |
 | --- | --- |
+| [pkpdutils-core](https://pypi.org/project/pkpdutils-core/) | the rust kernel which runs the non-compartmental analyses it carries (`pkpdutils.nca.engine`) |
 | [numpy](https://numpy.org), [scipy](https://scipy.org) | numerics, integration, regression, optimization and statistics |
 | [xarray](https://xarray.dev), [pandas](https://pandas.pydata.org) | timecourses and results as labeled arrays and tables |
 | [pint](https://pint.readthedocs.io) | units and unit conversions |

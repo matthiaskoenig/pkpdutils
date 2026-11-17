@@ -36,6 +36,9 @@ keywords = [
     "meta-analysis",
 ]
 dependencies = [
+    # the rust kernel of the non-compartmental analysis, which `pkpdutils.nca`
+    # sends an eligible batch to (`pkpdutils.nca.engine`)
+    "pkpdutils-core>=0.2.0",
     # numerics, data structures and units
     "numpy>=2.2.2",
     "scipy>=1.15.0",

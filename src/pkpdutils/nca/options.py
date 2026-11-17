@@ -561,7 +561,10 @@ class NCAOptions(BaseModel):
             at once, `min(n_workers, n_chunks) * chunk_rows` rows. The chunks
             are mapped in order; how many there are follows from the rows, the
             workers and this bound (`pkpdutils.parallel.split_rows`), so a
-            serial run of a small batch is one chunk whatever `n_workers` says
+            serial run of a small batch is one chunk whatever `n_workers` says.
+            It has no effect on a batch the rust kernel analyses
+            (`pkpdutils.nca.engine`), which bounds the memory of its own row
+            loop and reads `n_workers` alone
         uncertainty: propagation of `sd`/`se` to the parameters; `None` selects
             `BOOTSTRAP` when the batch carries an uncertainty and `NONE` otherwise
         n_boot: number of bootstrap replicates
@@ -654,10 +657,28 @@ class NCAOptions(BaseModel):
         )
 
 
-def _encode_window_key(key: Any) -> dict[str, Any]:
-    """Encode scalar or tuple sample labels without JSON's string key coercion."""
+def encode_window_key(key: Any) -> dict[str, Any]:
+    """Encode scalar or tuple sample labels without JSON's string key coercion.
+
+    The label of a sample is a string, a number, a truth value, a date, a
+    tuple of those or nothing, and a mapping key says no more about which of
+    them it is than a JSON key does, so the key of a terminal window travels
+    as the record `{"type": ..., "value": ...}` wherever it leaves python:
+    into the options a result carries (`serialize_nca_options`) and into the
+    options of the rust kernel (`pkpdutils.nca.engine.options_dict`).
+
+    Args:
+        key: the label of a sample, a key of `TerminalPhase.windows`.
+
+    Returns:
+        The type of the label and its value, the value of a tuple being the
+        records of its items.
+
+    Raises:
+        ValueError: if the label is of a type which no record spells.
+    """
     if isinstance(key, tuple):
-        return {"type": "tuple", "value": [_encode_window_key(item) for item in key]}
+        return {"type": "tuple", "value": [encode_window_key(item) for item in key]}
     if isinstance(key, np.generic):
         key = key.item()
     if key is None:
@@ -705,7 +726,7 @@ def serialize_nca_options(options: NCAOptions) -> str:
         None
         if windows is None
         else [
-            {"key": _encode_window_key(key), "window": list(window)}
+            {"key": encode_window_key(key), "window": list(window)}
             for key, window in windows.items()
         ]
     )

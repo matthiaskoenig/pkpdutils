@@ -64,6 +64,7 @@ nav = [
     ] },
     { "pkpdutils.nca" = [
       { "nca" = "api/nca.md" },
+      { "engine" = "api/nca.engine.md" },
       { "options" = "api/nca.options.md" },
       { "result" = "api/nca.result.md" },
       { "auc" = "api/nca.auc.md" },

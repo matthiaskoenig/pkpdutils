@@ -24,6 +24,7 @@ Non-compartmental analysis, see [Non-compartmental analysis](../nca.md), [Urinar
 | module | description |
 | --- | --- |
 | [nca.nca](nca.md) | `nca`, `nca_single`, `compute_parameters`: the analysis |
+| [nca.engine](nca.engine.md) | `unsupported_reason`, `run_kernel`: the dispatch of a batch to the rust kernel `pkpdutils-core` |
 | [nca.options](nca.options.md) | `NCAOptions`, `TerminalPhase`, the method enumerations and `NCAFlag` |
 | [nca.result](nca.result.md) | `NCAResult` and the units of the parameters |
 | [nca.auc](nca.auc.md) | vectorized trapezoid areas, interpolation |

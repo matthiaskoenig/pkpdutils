@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from pkpdutils.nca import engine
 from pkpdutils.nca.auc import (
     auc_aumc,
     insert_point,
@@ -275,9 +276,10 @@ def positive_dose(dose_amount: np.ndarray) -> np.ndarray:
     A dose of 0 is the encoding of a placebo arm (`Dose.amount` is
     non-negative). The parameters which divide by the dose - the clearance, the
     volumes and the dose normalized exposure - are not defined for it, so the
-    amount is `NaN` there and every one of them follows; the analysis reports
-    this in a debug log and sets no flag, since a zero dose is a property of
-    the data and not a finding of the analysis.
+    amount is `NaN` there and every one of them follows. No flag is set, since
+    a zero dose is a property of the data and not a finding of the analysis;
+    `log_zero_doses` reports it in a debug log, once per batch and for either
+    engine, where this runs once per chunk of the python core.
 
     Args:
         dose_amount: the reference dose per row `(N,)`
@@ -286,8 +288,24 @@ def positive_dose(dose_amount: np.ndarray) -> np.ndarray:
         The amounts with the non-positive ones replaced by `NaN`.
     """
     with np.errstate(invalid="ignore"):
-        positive = dose_amount > 0
-        n_zero = int((np.isfinite(dose_amount) & ~positive).sum())
+        return np.where(dose_amount > 0, dose_amount, np.nan)
+
+
+def log_zero_doses(dose_amount: np.ndarray | None) -> None:
+    """Report the rows which carry a dose of 0 in a debug log.
+
+    The diagnostic of `positive_dose`, emitted once for a batch by `nca` so
+    that it does not depend on how many chunks the python core cut the rows
+    into and so that a batch the rust kernel analysed reports it as well.
+
+    Args:
+        dose_amount: the reference dose of every row `(N,)`, `None` for a
+            batch without doses.
+    """
+    if dose_amount is None:
+        return
+    with np.errstate(invalid="ignore"):
+        n_zero = int((np.isfinite(dose_amount) & ~(dose_amount > 0)).sum())
     if n_zero:
         logger.debug(
             "%d of %d rows carry a dose of 0: their dose dependent parameters "
@@ -295,7 +313,6 @@ def positive_dose(dose_amount: np.ndarray) -> np.ndarray:
             n_zero,
             dose_amount.shape[0],
         )
-    return np.where(positive, dose_amount, np.nan)
 
 
 def bolus_c0(
@@ -1544,10 +1561,19 @@ def run_analysis_rows(
 def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCAResult:
     """Non-compartmental analysis of a batch of timecourses.
 
-    The rows are analysed in chunks of at most `options.chunk_rows` rows, in
-    the calling thread or, for a large batch or an explicit
-    `options.n_workers`, in the shared thread pool (`run_rows`); a multiple
-    dose analysis is chunked the same way.
+    The analysis runs in the rust kernel of `pkpdutils.nca.engine` where that
+    build carries it and in the python core of this module otherwise. The
+    decision is taken once per batch (`pkpdutils.nca.engine.unsupported_reason`
+    names what the kernel does not carry: a multiple dose analysis, an effect
+    curve, the acceptance criteria, the named partial areas, the propagation of
+    an uncertainty and the unit conversion of a result), the two engines
+    compute the same numbers and the result is assembled from the same mapping
+    either way, so a caller sees no difference but the time it takes.
+
+    The rows of the python core are analysed in chunks of at most
+    `options.chunk_rows` rows, in the calling thread or, for a large batch or
+    an explicit `options.n_workers`, in the shared thread pool (`run_rows`); a
+    multiple dose analysis is chunked the same way.
 
     A sample whose dosing protocol holds more than one dose (and every sample
     of an analysis with `options.tau`) is analysed over its dosing intervals:
@@ -1591,8 +1617,6 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     options = options or NCAOptions()
     shape = timecourses.sample_shape
     n_rows = timecourses.n_samples
-    t = timecourses.times.reshape(n_rows, timecourses.n_time)
-    c = timecourses.values.reshape(n_rows, timecourses.n_time)
 
     n_dose = timecourses.n_dose
 
@@ -1614,23 +1638,51 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     dose_amount = flat(timecourses.dose_amount)
     dose_time = flat(timecourses.dose_time)
     dose_duration = flat(timecourses.dose_duration)
-    route, routes = row_routes(timecourses, n_rows)
-    batch_lloq = timecourses.lloq
-    lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
+    # outside the dispatch below, since it also checks the keys of
+    # `TerminalPhase.windows` against the samples of the batch and a batch
+    # which names a sample it does not have is refused the same way whichever
+    # engine would analyse it
     windows = sample_windows(timecourses, options.terminal)
 
-    values = run_analysis_rows(
-        t,
-        c,
-        dose_amount=dose_amount,
-        dose_time=dose_time,
-        dose_duration=dose_duration,
-        route=route,
-        options=options,
-        lloq=lloq,
-        windows=windows,
-        routes=routes,
-    )
+    # the rust kernel of `pkpdutils.nca.engine` runs the analyses it carries
+    # and the python core of `run_analysis_rows` every other one; the two
+    # compute the same numbers and the result is assembled from the same
+    # mapping either way
+    values: dict[str, np.ndarray] | None = None
+    reason = engine.unsupported_reason(timecourses, options)
+    if reason is None:
+        try:
+            values = engine.run_kernel(timecourses, options)
+        except engine.UnsupportedError as refusal:
+            # the predicate let a batch through which the kernel does not
+            # carry, which is a defect of the predicate and not of the
+            # analysis: the batch takes the python path and the mismatch is
+            # reported rather than raised
+            reason = str(refusal)
+            logger.warning(
+                "NCA: the kernel refused a batch the engine let through (%s); "
+                "the python core runs it",
+                reason,
+            )
+    if values is None:
+        logger.debug("NCA: the python core runs the batch (%s)", reason)
+        t = timecourses.times.reshape(n_rows, timecourses.n_time)
+        c = timecourses.values.reshape(n_rows, timecourses.n_time)
+        route, routes = row_routes(timecourses, n_rows)
+        batch_lloq = timecourses.lloq
+        lloq = None if batch_lloq is None else batch_lloq.reshape(n_rows)
+        values = run_analysis_rows(
+            t,
+            c,
+            dose_amount=dose_amount,
+            dose_time=dose_time,
+            dose_duration=dose_duration,
+            route=route,
+            options=options,
+            lloq=lloq,
+            windows=windows,
+            routes=routes,
+        )
 
     # `flags` is the last variable of the result, the uncertainty variables and
     # `n` go before it
@@ -1692,15 +1744,11 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             int(excluded.sum()),
             n_rows,
         )
-    result = _to_result(
-        values,
-        timecourses,
-        shape,
-        dose=reference_dose_amount(
-            dose_amount, dose_time, dose_duration, options, n_rows=n_rows
-        ),
-        units=units,
+    dose = reference_dose_amount(
+        dose_amount, dose_time, dose_duration, options, n_rows=n_rows
     )
+    log_zero_doses(dose)
+    result = _to_result(values, timecourses, shape, dose=dose, units=units)
     resolved = options.model_copy(update={"uncertainty": method})
     result.ds.attrs["nca_options"] = serialize_nca_options(resolved)
     if options.partial_aucs:
