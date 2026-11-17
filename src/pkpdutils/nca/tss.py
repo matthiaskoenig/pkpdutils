@@ -60,6 +60,15 @@ TSSMethod = Literal["monoexponential", "stepwise"]
 #: `1 / t_last`; the best of the three starts is kept
 _STARTS: tuple[float, ...] = (0.5, 2.0, 8.0)
 
+#: the half width, in decades of `k`, of the range around the starts in which a
+#: plateau is looked for; a series whose cost still falls at its edge has none
+#: (the bracket of the rust kernel, `BRACKET_DECADES` of `tss.rs`)
+_BRACKET_DECADES: float = 2.0
+
+#: a cost at the edge of the range this close to the best one, relative to the
+#: sum of squares of the troughs, is no worse: the optimum is not interior
+_EDGE_TOLERANCE: float = 1e-12
+
 
 @dataclass(frozen=True)
 class TSSResult:
@@ -123,7 +132,11 @@ def _monoexponential_row(
 
     Returns:
         The time to `fraction` of the plateau and the plateau; both `NaN` when
-        the fit does not converge to a rising curve.
+        the fit does not converge to a rising curve, which includes a series
+        without a plateau of its own: flat, falling or still linear troughs
+        have no optimum in `k`, the cost keeps falling towards `k = 0` or
+        `k = infinity`, and where the Levenberg-Marquardt search stops is an
+        accident of its starts and not an estimate.
     """
     if time.size < 3 or not np.all(value > 0.0) or time[-1] <= 0.0:
         return float("nan"), float("nan")
@@ -149,6 +162,17 @@ def _monoexponential_row(
         if best is None or fit.cost < best.cost:
             best = fit
     if best is None or not best.success:
+        return float("nan"), float("nan")
+    # the optimum has to be interior: the search is unbounded and reports
+    # success wherever it stopped, so look at the cost beyond the range in
+    # which a plateau is looked for
+    low = float(np.log10(_STARTS[0] / time[-1])) - _BRACKET_DECADES
+    high = float(np.log10(_STARTS[-1] / time[-1])) + _BRACKET_DECADES
+    edge_cost = min(
+        float(np.sum(residuals(np.array([x])) ** 2)) / 2.0 for x in (low, high)
+    )
+    tolerance = _EDGE_TOLERANCE * float(np.sum(value * value))
+    if not low < best.x[0] < high or edge_cost <= best.cost + tolerance:
         return float("nan"), float("nan")
     k = float(10.0 ** best.x[0])
     if not np.isfinite(k) or k <= 0.0:
@@ -200,6 +224,62 @@ def _stepwise(
         np.take_along_axis(start, first[:, None], axis=1)[:, 0],
         np.nan,
     )
+
+
+def _kernel_estimate(
+    end: np.ndarray,
+    value: np.ndarray,
+    start: np.ndarray,
+    valid: np.ndarray,
+    method: TSSMethod,
+    fraction: float,
+    alpha: float,
+) -> tuple[np.ndarray, np.ndarray | None] | None:
+    """The estimate of the rust kernel, `None` where the python path runs.
+
+    The kernel is not used while `pkpdutils.nca.engine._force_python` is set,
+    so that the python implementation stays the reference the tests and the
+    engine gate compare against, nor when the installed `pkpdutils-core`
+    predates `time_to_steady_state`. A request the kernel rejects raises
+    `ValueError` and is never answered by the python path: it is not a refusal
+    but a malformed request, and the caller has to learn that.
+
+    Args:
+        end: the times of the troughs `(N, K)`, the valid ones packed to the front
+        value: the troughs `(N, K)`
+        start: the start of the interval of every trough `(N, K)`
+        valid: which entries are troughs `(N, K)`
+        method: the estimator
+        fraction: the fraction of the plateau
+        alpha: significance level of the stepwise trend test
+
+    Returns:
+        The time to steady state `(N,)` and the plateau `(N,)`, `None` for the
+        stepwise estimate; `None` instead of the pair for the python path.
+
+    Raises:
+        ValueError: if the kernel rejects the request as malformed.
+    """
+    from pkpdutils.nca import engine  # deferred, the engine imports the nca package
+
+    kernel = getattr(engine.pkpdutils_core, "time_to_steady_state", None)
+    if kernel is None or engine._force_python:
+        return None
+    answer = kernel(
+        {
+            "time": np.ascontiguousarray(end, dtype=np.float64),
+            "value": np.ascontiguousarray(value, dtype=np.float64),
+            "start": np.ascontiguousarray(start, dtype=np.float64),
+            "valid": np.ascontiguousarray(valid, dtype=np.bool_),
+            "n_rows": end.shape[0],
+            "n_cols": end.shape[1],
+            "method": method,
+            "fraction": fraction,
+            "alpha": alpha,
+        }
+    )
+    plateau = np.asarray(answer["c_ss"]) if method == "monoexponential" else None
+    return np.asarray(answer["tss"]), plateau
 
 
 def _troughs(
@@ -306,7 +386,12 @@ def time_to_steady_state(
     n_valid = finite.sum(axis=1)
 
     plateau = np.full(flat_values.shape[0], np.nan)
-    if method == "stepwise":
+    answer = _kernel_estimate(end, value, start, valid, method, fraction, alpha)
+    if answer is not None:
+        tss, kernel_plateau = answer
+        if kernel_plateau is not None:
+            plateau = kernel_plateau
+    elif method == "stepwise":
         tss = _stepwise(end, value, start, valid, alpha)
     else:
         tss = np.full(flat_values.shape[0], np.nan)
