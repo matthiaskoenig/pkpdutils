@@ -2056,3 +2056,66 @@ def test_event_reader_retains_partially_known_subject_counts() -> None:
     )
     assert batch.n is not None
     np.testing.assert_allclose(batch.n, [8.0, np.nan], equal_nan=True)
+
+
+class TestCachedLayout:
+    """The layout and the units are cached, so replacing the dataset has to clear them."""
+
+    @staticmethod
+    def _batch() -> Timecourses:
+        return Timecourses.from_arrays(
+            T,
+            V,
+            time_unit="hr",
+            unit="mg/l",
+            dims=("individual",),
+            coords={"individual": ["s1", "s2", "s3"]},
+            dose={"amount": np.full(3, 10.0), "unit": "mg"},
+            route=Route.IV_BOLUS,
+            substance="drug",
+        )
+
+    def test_replacing_the_dataset_clears_the_cached_layout(self) -> None:
+        batch = self._batch()
+        assert batch.n_time == 4
+        assert batch.sample_shape == (3,)
+        batch.ds = batch.ds.isel(time=slice(0, 3))
+        assert batch.n_time == 3
+        assert batch.values.shape == (3, 3)
+
+    def test_replacing_the_dataset_clears_the_cached_units(self) -> None:
+        batch = self._batch()
+        assert batch.unit == "mg/l"
+        assert batch.dose_unit == "mg"
+        ds = batch.ds.copy()
+        ds["value"] = ds["value"].copy()
+        ds["value"].attrs["units"] = "ug/l"
+        batch.ds = ds
+        assert batch.unit == "ug/l"
+
+    def test_a_dataset_without_doses_replaced_by_one_with_them(self) -> None:
+        batch = self._batch()
+        without = Timecourses(batch.ds.drop_vars(["dose_amount", "dose_time"]))
+        assert without.has_dose is False
+        assert without.n_dose == 0
+        without.ds = batch.ds
+        assert without.has_dose is True
+        assert without.n_dose == batch.n_dose
+        assert without.dose_unit == "mg"
+
+
+class TestOrderedArrays:
+    """`_ordered` has to answer what the DataArray path answered."""
+
+    def test_a_pint_backed_variable_keeps_its_magnitudes(self) -> None:
+        values = Q_(V, "mg/l")
+        ds = xr.Dataset(
+            {"value": (("individual", "time"), values, {"units": "mg/l"})},
+            coords={
+                "time": ("time", T, {"units": "hr"}),
+                "individual": ["s1", "s2", "s3"],
+            },
+        )
+        batch = Timecourses(ds)
+        assert np.allclose(batch.values, V)
+        assert not isinstance(batch.values, type(values))

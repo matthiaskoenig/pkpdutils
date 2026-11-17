@@ -584,7 +584,11 @@ class ParameterResult:
         Returns:
             The unit string of the parameter.
         """
-        return str(self.ds.variables[name].attrs["units"])
+        # `ds[name]` here and not `ds.variables[name]`: this is the lookup a
+        # caller reaches with a name of their own, and xarray names the
+        # variables of the dataset in the `KeyError` where a plain mapping
+        # repeats the key alone
+        return str(self.ds[name].attrs["units"])
 
     def _companions(self, name: str) -> list[str]:
         """The variables derived from one parameter, in the order of the dataset.

@@ -1819,6 +1819,20 @@ class _SampleArrays:
     complete: bool
 
 
+#: the layout and the units a `Timecourses` caches, cleared when its dataset
+#: is replaced; see `Timecourses.ds`
+CACHED_LAYOUT = (
+    "sample_dims",
+    "sample_shape",
+    "n_time",
+    "time_unit",
+    "unit",
+    "has_dose",
+    "dose_unit",
+    "n_dose",
+)
+
+
 class Timecourses:
     """A batch of timecourses as an `xarray.Dataset`.
 
@@ -1927,16 +1941,31 @@ class Timecourses:
             se=None if "se" not in ds else ds["se"].to_numpy(),
             n=count,
         )
-        self.ds: xr.Dataset = ds
-        # The dataset is wrapped once and never replaced, and nothing in the
-        # package assigns to the attrs of one of its variables, so the layout
-        # and the three units are fixed from here on: the properties which read
-        # them are `cached_property`, because every one of them went through
-        # `Dataset.__getitem__` on each access and that builds a throwaway
-        # `DataArray`. One `nca()` call read them about ninety times each.
+        self._ds: xr.Dataset = ds
         #: the units `_check_units_once` has parsed, so that building single
         #: timecourses parses the three unit strings of the batch once
         self._checked_units: tuple[str, str, str | None] | None = None
+
+    @property
+    def ds(self) -> xr.Dataset:
+        """The dataset of the batch, see the class documentation for its layout.
+
+        Assigning a new dataset is supported and clears what the layout
+        properties below have cached. Mutating the dataset **in place**, e.g.
+        `batch.ds["value"] = ...`, is not: those properties are
+        `cached_property`, because each of them went through
+        `Dataset.__getitem__` on every access and that builds a throwaway
+        `DataArray` - one `nca()` call read them about ninety times each - so a
+        batch whose dataset changed underneath it would answer from the layout
+        it had. Build a new `Timecourses` instead.
+        """
+        return self._ds
+
+    @ds.setter
+    def ds(self, ds: xr.Dataset) -> None:
+        self._ds = ds
+        for name in CACHED_LAYOUT:
+            self.__dict__.pop(name, None)
 
     # --- layout -------------------------------------------------------------
 
@@ -2192,9 +2221,24 @@ class Timecourses:
             The array, dimensions in `order`.
         """
         var = self.ds.variables[name]
-        if set(var.dims) != set(order):
+        dims = var.dims
+        # the dimensions have to be the same ones, as many of them, and each one
+        # once: a repeated dimension would index `perm` twice, which numpy
+        # refuses, and xarray does not support one either
+        if (
+            len(dims) != len(order)
+            or set(dims) != set(order)
+            or len(set(dims)) != len(dims)
+        ):
             return self.ds[name].transpose(*order).to_numpy()
-        return np.asarray(var.data).transpose(tuple(var.dims.index(d) for d in order))
+        perm = tuple(dims.index(d) for d in order)
+        data = var.data
+        if type(data) is np.ndarray:
+            return data.transpose(perm)
+        # a pint quantity, a sparse or chunked array, an ndarray subclass: only
+        # `to_numpy` knows how to bring each of them across, and it costs about
+        # 4 us against the 0.25 us of the line above, so it runs for those alone
+        return var.to_numpy().transpose(perm)
 
     def _optional(self, name: str) -> np.ndarray | None:
         """Return a variable as an array transposed to `(*sample_dims[, time | dose])`, or `None` if absent.
