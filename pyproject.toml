@@ -42,7 +42,7 @@ dependencies = [
     # every column the kernel reports, so one new parameter of a future release
     # raises for every eligible batch. It is lifted by the pull request which
     # raises the floor to that release, see docs/development.md#kernel-floor
-    "pkpdutils-core>=0.3.0,<0.4",
+    "pkpdutils-core>=0.4.0,<0.5",
     # numerics, data structures and units
     "numpy>=2.2.2",
     "scipy>=1.15.0",
@@ -73,6 +73,9 @@ dev = [
     "pytest-xdist>=3.8",
     "zensical>=0.0.60",
     "mkdocstrings-python>=2.0.8",
+    # the 40 digit reference of the quantiles: `tests/test_quantiles.py` and
+    # `scripts/reference_t_isf.py` compute the expected values with it
+    "mpmath>=1.3.0",
 ]
 
 [project.urls]

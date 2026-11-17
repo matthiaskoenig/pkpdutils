@@ -15,6 +15,7 @@ from scripts.validation import (
     TABLE_END,
     TABLE_PATH,
     TABLE_START,
+    analyse,
     case,
     case_ids,
     comparison,
@@ -139,6 +140,8 @@ FULL_CASES: tuple[str, ...] = (
 def _cases() -> list[Any]:
     parameters = []
     for case_id in CASE_IDS:
+        if "dim" in case(case_id):
+            continue  # a summary case runs under both engines below
         for subject, parameter, expected in entries(case_id):
             reason = known_difference(case_id, subject, parameter)
             marks = [pytest.mark.xfail(strict=True, reason=reason)] if reason else []
@@ -163,6 +166,36 @@ def test_reference_value(
     relative = deviation(expected["value"], value)
     assert relative <= expected["tolerance"], (
         f"{case_id}, subject {subject}, {parameter}: {value} against "
+        f"{expected['value']} {expected['unit']} of {expected['source']}, "
+        f"relative deviation {relative:.3g} above {expected['tolerance']:.0e}"
+    )
+
+
+def _summary_cases() -> list[Any]:
+    return [
+        pytest.param(case_id, parameter, expected, id=f"{case_id}-{parameter}")
+        for case_id in CASE_IDS
+        if "dim" in case(case_id)
+        for _, parameter, expected in entries(case_id)
+    ]
+
+
+@pytest.mark.parametrize(("case_id", "parameter", "expected"), _summary_cases())
+def test_summary_reference_value(
+    summary_engine: str, case_id: str, parameter: str, expected: dict[str, Any]
+) -> None:
+    """The published PKNCA summary holds under the kernel and under scipy.
+
+    The geometric mean and coefficient of variation and the quantiles are
+    published numbers, so this is where the kernel's statistics meet an
+    external table instead of scipy. The per-subject result is computed once on the
+    default path; only the summary runs under `summary_engine`.
+    """
+    summary = analyse(case_id).summarize(case(case_id)["dim"])
+    value = float(summary.ds[parameter].values)
+    relative = deviation(expected["value"], value)
+    assert relative <= expected["tolerance"], (
+        f"{summary_engine}, {case_id}, {parameter}: {value} against "
         f"{expected['value']} {expected['unit']} of {expected['source']}, "
         f"relative deviation {relative:.3g} above {expected['tolerance']:.0e}"
     )
