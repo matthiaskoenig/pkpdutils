@@ -178,7 +178,7 @@ def test_plot_timecourse_by_broadcasts_coordinate_to_sample_dims() -> None:
     # dimensions ("dose", "individual") of the batch, to catch a naive
     # flatten that ignores the coordinate's own dimension order.
     group = np.array([[f"g{i}{d}" for d in range(n_dose)] for i in range(n_individual)])
-    tcs.ds = tcs.ds.assign_coords(group=(("individual", "dose"), group))
+    tcs = Timecourses(tcs.ds.assign_coords(group=(("individual", "dose"), group)))
     expected = [str(group[i, d]) for d in range(n_dose) for i in range(n_individual)]
     fig = plot_timecourse(tcs, by="group")
     labels = [line.get_label() for line in fig.axes[0].get_lines()]
@@ -260,8 +260,7 @@ def trough_batch(n: int = 4) -> Timecourses:
     curves = [multiple_dose_tc(n_doses=3, c0=10.0 + 2.0 * i) for i in range(n)]
     batch = Timecourses.from_timecourses(curves, labels=[f"s{i}" for i in range(n)])
     arms = ["A" if i < n // 2 else "B" for i in range(n)]
-    batch.ds = batch.ds.assign_coords(arm=("individual", arms))
-    return batch
+    return Timecourses(batch.ds.assign_coords(arm=("individual", arms)))
 
 
 def infusion_tc(duration: float = 2.0) -> Timecourse:
@@ -460,8 +459,8 @@ def test_plot_troughs_places_every_group_on_its_own_interval_times() -> None:
     batch = Timecourses.from_timecourses(
         [*fast, *slow], labels=["f1", "f2", "s1", "s2"]
     )
-    batch.ds = batch.ds.assign_coords(
-        arm=("individual", ["fast", "fast", "slow", "slow"])
+    batch = Timecourses(
+        batch.ds.assign_coords(arm=("individual", ["fast", "fast", "slow", "slow"]))
     )
     result = nca(batch, options=NCAOptions(auc_method=AUCMethod.LOG))
     fig = plot_troughs(result, by="arm")

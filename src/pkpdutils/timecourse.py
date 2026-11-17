@@ -1819,20 +1819,6 @@ class _SampleArrays:
     complete: bool
 
 
-#: the layout and the units a `Timecourses` caches, cleared when its dataset
-#: is replaced; see `Timecourses.ds`
-CACHED_LAYOUT = (
-    "sample_dims",
-    "sample_shape",
-    "n_time",
-    "time_unit",
-    "unit",
-    "has_dose",
-    "dose_unit",
-    "n_dose",
-)
-
-
 class Timecourses:
     """A batch of timecourses as an `xarray.Dataset`.
 
@@ -1948,24 +1934,24 @@ class Timecourses:
 
     @property
     def ds(self) -> xr.Dataset:
-        """The dataset of the batch, see the class documentation for its layout.
+        """The dataset of the batch, read-only; see the class documentation for its layout.
 
-        Assigning a new dataset is supported and clears what the layout
-        properties below have cached. Mutating the dataset **in place**, e.g.
-        `batch.ds["value"] = ...`, is not: those properties are
-        `cached_property`, because each of them went through
-        `Dataset.__getitem__` on every access and that builds a throwaway
-        `DataArray` - one `nca()` call read them about ninety times each - so a
-        batch whose dataset changed underneath it would answer from the layout
-        it had. Build a new `Timecourses` instead.
+        A batch is its dataset, and the layout and the units below are read from
+        it once and kept: each of them went through `Dataset.__getitem__` on
+        every access, which builds a throwaway `DataArray`, and one `nca()` call
+        read them about ninety times each. So the dataset is fixed for the life
+        of the batch - this property has no setter, and the dataset itself is to
+        be treated as read-only. To change a batch, build another one around the
+        dataset you want:
+
+        ```python
+        batch = Timecourses(batch.ds.assign_coords(arm=("individual", arms)))
+        ```
+
+        `select`, `groupby`, `mean`, `relative_to_dose` and `dose_normalized`
+        all return a new batch the same way.
         """
         return self._ds
-
-    @ds.setter
-    def ds(self, ds: xr.Dataset) -> None:
-        self._ds = ds
-        for name in CACHED_LAYOUT:
-            self.__dict__.pop(name, None)
 
     # --- layout -------------------------------------------------------------
 

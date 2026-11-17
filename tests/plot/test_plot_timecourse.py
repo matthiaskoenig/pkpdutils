@@ -323,7 +323,7 @@ def test_plot_timecourse_facet_legend_names_every_group() -> None:
     # legend entry: the legend is built from the groups of the whole batch
     batch = escalation(n_individual=3)
     sex = np.array([["m", "m", "m"], ["m", "f", "m"]])  # "f" only at dose 100
-    batch.ds = batch.ds.assign_coords(sex=(("dose", "individual"), sex))
+    batch = Timecourses(batch.ds.assign_coords(sex=(("dose", "individual"), sex)))
     fig = plot_timecourse(batch, facet="dose", by="sex")
     legend = fig.axes[0].get_legend()
     assert legend is not None
