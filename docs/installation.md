@@ -43,7 +43,7 @@ To work on the repository itself, with the test and documentation tooling, see [
 
 | package | used for |
 | --- | --- |
-| [pkpdutils-core](https://pypi.org/project/pkpdutils-core/) | the rust kernel which runs the non-compartmental analyses it carries (`pkpdutils.nca.engine`) |
+| [pkpdutils-core](https://pypi.org/project/pkpdutils-core/) | the rust kernel which runs the non-compartmental analyses it carries (`pkpdutils.nca.engine`), measured against the python core in [Performance](benchmark.md) |
 | [numpy](https://numpy.org), [scipy](https://scipy.org) | numerics, integration, regression, optimization and statistics |
 | [xarray](https://xarray.dev), [pandas](https://pandas.pydata.org) | timecourses and results as labeled arrays and tables |
 | [pint](https://pint.readthedocs.io) | units and unit conversions |

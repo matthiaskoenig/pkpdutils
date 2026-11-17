@@ -161,11 +161,21 @@ The configuration lives in `[tool.ty]` in `pyproject.toml`. Warnings are treated
 `scripts/benchmark.py` times the hot paths of the package: the analysis of a small, a large and a multiple dose batch, the bootstrap and the delta method, a batch fit, the construction of timecourses and the iteration over a batch.
 
 ```bash
-uv run python scripts/benchmark.py all                        # every case, about 15 s
+uv run python scripts/benchmark.py all                        # every case, about 35 s
 uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
 ```
 
-The cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `fit`, `constructors`, `iterate`, `mean-ragged`, `nested-samples`, `delta-long`, `worker-churn` and `all`; `--repeat` (3 by default) is the number of timed runs after one warm-up run. The additional cases exercise distinct actual sampling times, sparse identifier combinations, long uncertainty curves, and changing worker counts. The script prints a markdown table with the size, first-call time, median warmed wall time and peak resident set size. Every case runs in a fresh interpreter, so the memory and the caches (`pkpdutils.units`) of one case do not carry into the next. The first-call time excludes imports and fixture construction; RSS measures the parent process and does not include live fit workers.
+The hot path cases are `nca-small`, `nca-large`, `nca-multiple`, `bootstrap`, `delta`, `fit`, `constructors`, `iterate`, `mean-ragged`, `nested-samples`, `delta-long` and `worker-churn`; `--repeat` (3 by default) is the number of timed runs after one warm-up run. The additional cases exercise distinct actual sampling times, sparse identifier combinations, long uncertainty curves, and changing worker counts. The script prints a markdown table with the size, first-call time, median warmed wall time and peak resident set size. Every case runs in a fresh interpreter, so the memory and the caches (`pkpdutils.units`) of one case do not carry into the next. The first-call time excludes imports and fixture construction; RSS measures the parent process and does not include live fit workers.
+
+The `engine-*` cases, collectively `engines`, are the second table: one single dose analysis through both engines of the analysis, the rust kernel of `pkpdutils-core` and the python core of `pkpdutils.nca.nca`, alternating run after run in one process so that both halves are measured in the same window, over ten shapes from one curve to 10 000 curves of 200 points. The python half is reached through `pkpdutils.nca.engine._force_python`, the private switch the package documents for its tests and for this benchmark, and `check_dispatch` asks the dispatch about both halves before anything is timed, so a case which ran one engine twice fails instead of publishing a ratio of 1. `all` runs the hot paths and the engine cases.
+
+```bash
+uv run python scripts/benchmark.py engines                    # the comparison of the two engines
+uv run python scripts/benchmark.py --write --repeat 5         # rewrites docs/benchmark.md
+uv run python scripts/benchmark.py --check                    # exit 1 if that page is stale
+```
+
+`--write` runs every engine case and pastes the table, the machine it ran on and the day into [Performance](benchmark.md), together with the table of the analyses the kernel does not carry, whose reasons are read from the dispatch and never written by hand. `--check` compares the page against the cases of the script, not against the timings, which differ between machines and between runs: the cases, their size labels, the columns and that every measured cell is a number, plus the refusal table word for word. `tests/docs/test_benchmark.py` runs that check, so a case added, removed, renamed or reshaped fails the test suite until the page is rewritten; the timings themselves are only ever written by `--write`.
 
 The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
 

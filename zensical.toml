@@ -46,6 +46,7 @@ nav = [
     { "Validation against published results" = "validation.md" },
     { "Benchmark datasets" = "benchmark_datasets.md" },
   ] },
+  { "Performance" = "benchmark.md" },
   { "Glossary" = "glossary.md" },
   { "References" = "references.md" },
   { "API reference" = [

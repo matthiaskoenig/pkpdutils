@@ -1,4 +1,4 @@
-"""Benchmark of the hot paths of `pkpdutils`.
+"""Benchmark of the hot paths of `pkpdutils` and of its two engines.
 
 Every case builds its data first and then runs one operation `--repeat` times;
 the table reports the median wall time and the peak resident set size of the
@@ -9,6 +9,20 @@ as they do in a script a user runs.
 ```bash
 uv run python scripts/benchmark.py all
 uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
+uv run python scripts/benchmark.py engines
+```
+
+The `engine-*` cases are the second table: one single dose analysis measured
+through both engines of `pkpdutils.nca`, the rust kernel and the python core,
+alternating in one process, and the ratio of the two. `--write` runs every one
+of them and pastes the table into `docs/benchmark.md`, `--check` exits 1 when
+that page no longer matches the cases of this script (the timings themselves
+are not compared, they are machine specific), and
+`tests/docs/test_benchmark.py` runs the check:
+
+```bash
+uv run python scripts/benchmark.py --write
+uv run python scripts/benchmark.py --check
 ```
 
 The absolute numbers are machine specific and only comparable against another
@@ -17,25 +31,34 @@ before and after of a change.
 """
 
 import argparse
+import contextlib
+import functools
 import gc
 import json
 import os
-import resource
+import platform
+import re
 import statistics
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import pkpdutils_core
 
+import pkpdutils
 from pkpdutils import (
+    Acceptance,
     Dose,
+    Kind,
     NCAOptions,
+    NCAResult,
     Route,
     Timecourse,
     Timecourses,
@@ -44,11 +67,15 @@ from pkpdutils import (
 )
 from pkpdutils.fit.models import MonoExp
 from pkpdutils.fit.options import FitOptions
+from pkpdutils.nca import engine
 from pkpdutils.nca.options import UncertaintyMethod
 from pkpdutils.parallel import worker_pool
 
 #: set in the environment of the child process which runs one case
 CHILD_ENV = "PKPDUTILS_BENCHMARK_CHILD"
+
+#: the page the comparison of the two engines is pasted into
+PAGE_PATH: Path = Path(__file__).resolve().parent.parent / "docs" / "benchmark.md"
 
 
 @dataclass(frozen=True)
@@ -265,8 +292,191 @@ CASES: dict[str, Callable[[], Case]] = {
 }
 
 
+# --- the two engines of the analysis ------------------------------------------
+
+
+@dataclass(frozen=True)
+class EngineCase:
+    """One analysis measured through both engines: the batch and its options.
+
+    The batch and the options are fields and not a closure, because
+    `measure_engines` asks the dispatch of `pkpdutils.nca` about them before it
+    times anything: a case whose kernel half quietly ran the python core would
+    otherwise be published as a ratio of 1.0.
+    """
+
+    size: str
+    timecourses: Timecourses
+    options: NCAOptions
+
+    def run(self) -> NCAResult:
+        """Analyse the batch through whichever engine the dispatch picks."""
+        return nca(self.timecourses, options=self.options)
+
+
+def engine_size(n_rows: int, n_time: int) -> str:
+    """The size label of an engine case, in the thousands style of the table."""
+    curves = "curve" if n_rows == 1 else "curves"
+    return f"{n_rows:,} {curves} x {n_time} points".replace(",", " ")
+
+
+def engine_case(n_rows: int, n_time: int) -> EngineCase:
+    """The single dose analysis of `n_rows` curves of `n_time` points.
+
+    The analysis both engines carry, with the defaults a caller gets: no
+    uncertainty to propagate, no partial area, no acceptance criterion, one
+    dose per row. What the kernel does not carry is `refusal_rows`.
+
+    Args:
+        n_rows: number of curves of the batch
+        n_time: number of time points per curve
+
+    Returns:
+        The case.
+    """
+    return EngineCase(
+        engine_size(n_rows, n_time),
+        mono_batch(n_rows, n_time),
+        NCAOptions(uncertainty=UncertaintyMethod.NONE),
+    )
+
+
+#: the shapes of the engine comparison, `(n_rows, n_time)` per case, in the
+#: order of the table: the four of the kernel's own benchmark (one curve, 1 000
+#: by 200, 10 000 by 200, 100 000 by 12), so the two tables can be read against
+#: each other, and the ones which locate the crossover, sparse and dense, since
+#: the work of an analysis is its points and not its rows
+ENGINE_SHAPES: dict[str, tuple[int, int]] = {
+    "engine-1x12": (1, 12),
+    "engine-100x12": (100, 12),
+    "engine-10x200": (10, 200),
+    "engine-250x12": (250, 12),
+    "engine-1000x12": (1_000, 12),
+    "engine-100x200": (100, 200),
+    "engine-10000x12": (10_000, 12),
+    "engine-1000x200": (1_000, 200),
+    "engine-100000x12": (100_000, 12),
+    "engine-10000x200": (10_000, 200),
+}
+
+ENGINE_CASES: dict[str, Callable[[], EngineCase]] = {
+    name: functools.partial(engine_case, n_rows, n_time)
+    for name, (n_rows, n_time) in ENGINE_SHAPES.items()
+}
+
+
+@contextlib.contextmanager
+def python_path(forced: bool) -> Generator[None]:
+    """Run the body with the python path of `nca` forced, or with the dispatch.
+
+    `pkpdutils.nca.engine._force_python` is the switch the package documents
+    for its tests and for this benchmark: while it is set, the dispatch refuses
+    every batch and the python core runs it, which is how the two engines are
+    measured in one process.
+
+    Args:
+        forced: whether the python core is to run the batch.
+
+    Yields:
+        Nothing; the body runs inside the `yield`.
+    """
+    previous = engine._force_python
+    engine._force_python = forced
+    try:
+        yield
+    finally:
+        engine._force_python = previous
+
+
+def check_dispatch(name: str, case: EngineCase) -> None:
+    """Refuse to measure a case whose two halves are not the two engines.
+
+    The kernel column is the kernel's only while the dispatch really sends the
+    batch there, and the python column is python's only while the switch really
+    holds it back. Both are the one decision `nca` takes per batch
+    (`pkpdutils.nca.engine.unsupported_reason`), asked here before anything is
+    timed, so that a case which ran the python core twice fails loudly instead
+    of publishing a speedup of 1.
+
+    Args:
+        name: name of the case
+        case: the case.
+
+    Raises:
+        RuntimeError: if the kernel does not carry the analysis, or if the
+            forced python path is not forced.
+    """
+    reason = engine.unsupported_reason(case.timecourses, case.options)
+    if reason is not None:
+        raise RuntimeError(f"the kernel does not carry the case '{name}': {reason}")
+    with python_path(True):
+        forced = engine.unsupported_reason(case.timecourses, case.options)
+    if forced != engine.FORCED_REASON:
+        raise RuntimeError(
+            f"the python path of the case '{name}' is not forced: the dispatch "
+            f"answers {forced!r} instead of the forced reason"
+        )
+
+
+def refusal_rows() -> list[tuple[str, str]]:
+    """What the dispatch sends down the python path, with the reason it gives.
+
+    One row per analysis the kernel of this installation does not carry, in the
+    order `pkpdutils.nca.engine.unsupported_reason` tests them. The reason is
+    read from the dispatch and never written here, so the table of the page is
+    the kernel's own sentence and cannot drift from it.
+
+    Returns:
+        The analysis and the reason, one pair per row.
+
+    Raises:
+        RuntimeError: if the dispatch carries an analysis this table claims it
+            refuses, which would make the row of the page a wrong claim.
+    """
+    batch = mono_batch(2)
+    group = mono_batch(2, spread=True)
+    multiple = multi_dose_batch(2, n_time=12, n_doses=2)
+    cases: list[tuple[str, Timecourses, NCAOptions]] = [
+        ("an effect curve", batch, NCAOptions(kind=Kind.EFFECT)),
+        ("a given dosing interval", batch, NCAOptions(tau=12.0)),
+        ("a protocol of several doses", multiple, NCAOptions()),
+        (
+            "the acceptance criteria of the terminal phase",
+            batch,
+            NCAOptions(acceptance=Acceptance(span_min=2.0)),
+        ),
+        (
+            "a named partial area",
+            batch,
+            NCAOptions(partial_aucs={"auc_0_4": (0.0, 4.0)}),
+        ),
+        ("the uncertainty of a group curve", group, NCAOptions()),
+        (
+            "the reporting units of a result",
+            batch,
+            NCAOptions(units={"auc_last": "mg * min / l"}),
+        ),
+    ]
+    rows: list[tuple[str, str]] = []
+    for what, timecourses, options in cases:
+        reason = engine.unsupported_reason(timecourses, options)
+        if reason is None:
+            raise RuntimeError(
+                f"the kernel carries '{what}', which this table reports as an "
+                "analysis of the python core"
+            )
+        rows.append((what, reason))
+    return rows
+
+
 def peak_rss_mb() -> float:
     """Peak resident set size of this process in MB."""
+    # `resource` is unix only and a measurement needs it; the staleness check
+    # of `docs/benchmark.md` does not, and it runs on every platform of the
+    # test matrix (`tests/docs/test_benchmark.py`), so this module stays
+    # importable where the module is not
+    import resource
+
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
@@ -295,6 +505,50 @@ def measure(name: str, repeat: int) -> dict[str, Any]:
         "size": case.size,
         "median_s": statistics.median(times),
         "first_call_s": first_call_s,
+        "peak_rss_mb": peak_rss_mb(),
+    }
+
+
+def measure_engines(name: str, repeat: int) -> dict[str, Any]:
+    """Time one analysis through both engines, alternating in one process.
+
+    The batch is built once and analysed `repeat` times by each engine, kernel
+    and python run after run, so that both halves are measured in the same
+    window: a ratio of two medians taken one after the other is an artefact of
+    whatever else the machine did in between.
+
+    Args:
+        name: name of the engine case.
+        repeat: number of timed runs per engine, after one warm-up run each.
+
+    Returns:
+        The name, the size label, the median time of each engine in seconds,
+        their ratio and the peak RSS of the process, which ran both.
+    """
+    case = ENGINE_CASES[name]()
+    check_dispatch(name, case)
+    times: dict[str, list[float]] = {"kernel": [], "python": []}
+    halves = (("kernel", False), ("python", True))
+    for forced in (False, True):
+        # one warm-up run per engine, so that no timed run pays the first touch
+        # of a cache either of them keeps
+        with python_path(forced):
+            case.run()
+    for _ in range(repeat):
+        for half, forced in halves:
+            with python_path(forced):
+                gc.collect()
+                start = time.perf_counter()
+                case.run()
+                times[half].append(time.perf_counter() - start)
+    kernel_s = statistics.median(times["kernel"])
+    python_s = statistics.median(times["python"])
+    return {
+        "case": name,
+        "size": case.size,
+        "kernel_s": kernel_s,
+        "python_s": python_s,
+        "speedup": python_s / kernel_s,
         "peak_rss_mb": peak_rss_mb(),
     }
 
@@ -348,34 +602,334 @@ def markdown_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
-    """Parse the arguments and run the requested cases."""
+def engine_table(rows: list[dict[str, Any]]) -> str:
+    """The comparison of the two engines as a markdown table.
+
+    The number of points of a row is read from `ENGINE_SHAPES` rather than
+    measured, so that the table of a run and the table the staleness check
+    builds carry it the same way.
+
+    Args:
+        rows: the results of the engine cases.
+
+    Returns:
+        The table.
+    """
+    header = "| case | size | points | kernel ms | python ms | speedup | peak RSS MB |"
+    lines = [header, "|---|---|---|---|---|---|---|"]
+    for row in rows:
+        n_rows, n_time = ENGINE_SHAPES[row["case"]]
+        points = f"{n_rows * n_time:,}".replace(",", " ")
+        lines.append(
+            f"| {row['case']} | {row['size']} | {points} | "
+            f"{1e3 * row['kernel_s']:.2f} | {1e3 * row['python_s']:.2f} | "
+            f"{row['speedup']:.2f}x | {row['peak_rss_mb']:.0f} |"
+        )
+    return "\n".join(lines)
+
+
+def refusal_table() -> str:
+    """The analyses the kernel does not carry as a markdown table.
+
+    Returns:
+        The table, with the dispatch's own reason per row.
+    """
+    lines = ["| analysis | the reason the dispatch gives |", "|---|---|"]
+    lines.extend(f"| {what} | {reason} |" for what, reason in refusal_rows())
+    return "\n".join(lines)
+
+
+def skeleton_rows() -> list[dict[str, Any]]:
+    """One row per engine case, with its labels and without a measurement.
+
+    The structure of the table is a function of the cases alone, so the check
+    of the page builds it without analysing anything: a case added, removed,
+    renamed or given another size label makes the page stale and a timing never
+    does.
+
+    Returns:
+        The rows `engine_table` would format, every number 0.
+    """
+    return [
+        {
+            "case": name,
+            "size": engine_size(n_rows, n_time),
+            "kernel_s": 0.0,
+            "python_s": 0.0,
+            "speedup": 0.0,
+            "peak_rss_mb": 0.0,
+        }
+        for name, (n_rows, n_time) in ENGINE_SHAPES.items()
+    ]
+
+
+def machine_line(repeat: int) -> str:
+    """The sentence which names the machine and the day of a run.
+
+    Args:
+        repeat: number of timed runs per engine.
+
+    Returns:
+        The sentence, as one line of markdown.
+    """
+    # the wheel of `pkpdutils-core` carries no stub beside its compiled module,
+    # so the one lookup of its version is suppressed by name
+    kernel = pkpdutils_core.__version__  # ty: ignore[missing-attribute]
+    return (
+        f"Measured on {date.today().isoformat()}, python "
+        f"{platform.python_version()} on {platform.system()} "
+        f"{platform.machine()} with {os.cpu_count()} cores, `pkpdutils` "
+        f"{pkpdutils.__version__} with `pkpdutils-core` {kernel}, {repeat} "
+        "timed runs per engine and case after one warm-up run each."
+    )
+
+
+#: a measured cell of a table, which the staleness check does not compare
+NUMBER = re.compile(r"^\d+(\.\d+)?(e[-+]?\d+)?x?$")
+
+#: the region of `docs/benchmark.md` the comparison of the two engines is in
+TIMINGS_START, TIMINGS_END = "<!-- timings:start -->", "<!-- timings:end -->"
+
+#: the region of `docs/benchmark.md` the refusals of the kernel are in
+REFUSALS_START, REFUSALS_END = "<!-- refusals:start -->", "<!-- refusals:end -->"
+
+
+def table_structure(text: str) -> list[list[str]]:
+    """The cells of every markdown table row of a text, measurements aside.
+
+    A cell which is a number (or a ratio such as `4.87x`) is read as `#`, every
+    other cell as it stands: the names of the cases, the size labels, the
+    header and the number of columns are the structure of the table, the
+    timings are not, since they differ between machines and between runs.
+
+    Args:
+        text: the markdown of a region of the page.
+
+    Returns:
+        One list of cells per table row.
+    """
+    rows: list[list[str]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        rows.append(["#" if NUMBER.match(cell) else cell for cell in cells])
+    return rows
+
+
+def region(page: str, start: str, end: str) -> str:
+    """The text of the page between two markers.
+
+    Args:
+        page: the markdown of the page
+        start: the opening marker
+        end: the closing marker.
+
+    Returns:
+        The text between them.
+
+    Raises:
+        ValueError: if the page holds no such region.
+    """
+    first, last = page.find(start), page.find(end)
+    if first < 0 or last < first:
+        raise ValueError(f"the page holds no region '{start}' ... '{end}'")
+    return page[first + len(start) : last]
+
+
+def replace_region(page: str, start: str, end: str, body: str) -> str:
+    """The page with the text between two markers replaced.
+
+    Args:
+        page: the markdown of the page
+        start: the opening marker
+        end: the closing marker
+        body: what goes between them.
+
+    Returns:
+        The page.
+
+    Raises:
+        ValueError: if the page holds no such region.
+    """
+    first, last = page.find(start), page.find(end)
+    if first < 0 or last < first:
+        raise ValueError(f"the page holds no region '{start}' ... '{end}'")
+    inner = body.strip("\n")
+    return f"{page[: first + len(start)]}\n{inner}\n{page[last:]}"
+
+
+def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
+    """The page with the two generated tables of this run pasted into it.
+
+    Args:
+        page: the markdown of the page
+        rows: the results of the engine cases
+        repeat: number of timed runs per engine, named on the page.
+
+    Returns:
+        The markdown of the page.
+    """
+    page = replace_region(
+        page,
+        TIMINGS_START,
+        TIMINGS_END,
+        f"{machine_line(repeat)}\n\n{engine_table(rows)}",
+    )
+    return replace_region(page, REFUSALS_START, REFUSALS_END, refusal_table())
+
+
+def page_complaints(page: str) -> list[str]:
+    """Every way the page no longer matches what this script writes.
+
+    The timings are not compared: they are the run the page names and they
+    differ between machines, which is why `--write` is how they are refreshed.
+    Compared are the structure of the timing table (`table_structure`: the
+    header, the cases, their size labels, the number of columns and that every
+    measured cell is a number) and the table of the refusals word for word,
+    since that one is the dispatch's own text and no measurement.
+
+    Args:
+        page: the markdown of the page.
+
+    Returns:
+        One sentence per complaint, empty for a current page.
+    """
+    complaints: list[str] = []
+    found = table_structure(region(page, TIMINGS_START, TIMINGS_END))
+    expected = table_structure(engine_table(skeleton_rows()))
+    if found != expected:
+        complaints.append(
+            "the timing table of the page is not the table of the cases of "
+            f"the script: {first_difference(expected, found)}"
+        )
+    refusals = region(page, REFUSALS_START, REFUSALS_END).strip()
+    if refusals != refusal_table():
+        complaints.append(
+            "the refusals of the page are not the ones the dispatch gives: "
+            + first_difference(
+                table_structure(refusal_table()), table_structure(refusals)
+            )
+        )
+    return complaints
+
+
+def first_difference(expected: list[list[str]], found: list[list[str]]) -> str:
+    """The first row in which two tables differ, both sides named.
+
+    Args:
+        expected: the rows the script writes
+        found: the rows the page holds.
+
+    Returns:
+        The sentence.
+    """
+    for number, (left, right) in enumerate(zip(expected, found, strict=False)):
+        if left != right:
+            return f"row {number} is {right} and should be {left}"
+    if len(expected) != len(found):
+        return (
+            f"the page holds {len(found)} row(s) and the script writes {len(expected)}"
+        )
+    return "nothing, the two agree"
+
+
+def main() -> int:
+    """Parse the arguments and run the requested cases.
+
+    Returns:
+        The exit status, 1 for a stale page under `--check`.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "cases",
         nargs="*",
         default=["all"],
-        choices=["all", *CASES],
-        help="cases to run, 'all' for every one of them (the default)",
+        choices=["all", "engines", *CASES, *ENGINE_CASES],
+        help=(
+            "cases to run, 'all' for every one of them (the default), "
+            "'engines' for the comparison of the two engines"
+        ),
     )
     parser.add_argument(
         "--repeat", type=int, default=3, help="timed runs per case (default 3)"
     )
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help=f"run the engine cases and rewrite {PAGE_PATH.name}",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=f"exit 1 if {PAGE_PATH.name} no longer matches the cases",
+    )
     args = parser.parse_args()
-    names = list(CASES) if "all" in args.cases else list(dict.fromkeys(args.cases))
 
+    if args.check:
+        complaints = page_complaints(PAGE_PATH.read_text(encoding="utf-8"))
+        for complaint in complaints:
+            print(complaint)
+        if complaints:
+            print(f"{PAGE_PATH} is not current, run {Path(__file__).name} --write")
+            return 1
+        return 0
+
+    names = case_names(args)
     if len(names) == 1 and os.environ.get(CHILD_ENV) == "1":
         # one case in a fresh interpreter: report the row as json
-        print(json.dumps(measure(names[0], args.repeat)), flush=True)
-        return
+        name = names[0]
+        row = (
+            measure_engines(name, args.repeat)
+            if name in ENGINE_CASES
+            else measure(name, args.repeat)
+        )
+        print(json.dumps(row), flush=True)
+        return 0
+
     started = time.perf_counter()
     rows = [run_isolated(name, args.repeat) for name in names]
-    print(markdown_table(rows))
+    hot = [row for row in rows if row["case"] in CASES]
+    engines = [row for row in rows if row["case"] in ENGINE_CASES]
+    if hot:
+        print(markdown_table(hot))
+        print()
+    if engines:
+        print(engine_table(engines))
+        print()
+    if args.write:
+        page = render_page(PAGE_PATH.read_text(encoding="utf-8"), engines, args.repeat)
+        PAGE_PATH.write_text(page, encoding="utf-8")
+        print(f"wrote {PAGE_PATH}")
     print(
-        f"\n{len(names)} cases, {args.repeat} repeats, "
+        f"{len(names)} cases, {args.repeat} repeats, "
         f"{time.perf_counter() - started:.1f} s total"
     )
+    return 0
+
+
+def case_names(args: argparse.Namespace) -> list[str]:
+    """The cases to run, in the order of the tables.
+
+    `--write` runs the engine cases whatever was asked for, since the page it
+    writes is their table.
+
+    Args:
+        args: the parsed arguments.
+
+    Returns:
+        The names of the cases.
+    """
+    if args.write:
+        return list(ENGINE_CASES)
+    if "all" in args.cases:
+        return [*CASES, *ENGINE_CASES]
+    names: list[str] = []
+    for case in args.cases:
+        names.extend(ENGINE_CASES if case == "engines" else [case])
+    return list(dict.fromkeys(names))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
