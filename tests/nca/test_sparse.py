@@ -7,6 +7,7 @@ Jia as Holder writes it, which the per-animal estimator of `bailer_variance`
 has to reproduce.
 """
 
+import logging
 import warnings
 
 import numpy as np
@@ -14,6 +15,7 @@ import pytest
 import xarray as xr
 
 from pkpdutils import AUCMethod, Dose, NCAFlag, NCAOptions, NCAResult, Route
+from pkpdutils.nca import engine
 from pkpdutils.nca.sparse import (
     area_window,
     bailer_variance,
@@ -63,7 +65,7 @@ def test_point_statistics() -> None:
     np.testing.assert_allclose(sd, [0.2, 0.2, 0.1], rtol=1e-12)
 
 
-def test_bailer_estimator_of_a_serial_design() -> None:
+def test_bailer_estimator_of_a_serial_design(sparse_engine: str) -> None:
     """The area is the trapezoid of the means and its variance `sum w^2 s^2 / n`."""
     result = nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")
     weights = trapezoid_weights(TIMES)
@@ -83,7 +85,7 @@ def test_bailer_estimator_of_a_serial_design() -> None:
     assert result.units("auc_last_df") == "dimensionless"
 
 
-def test_the_peak_and_its_standard_error() -> None:
+def test_the_peak_and_its_standard_error(sparse_engine: str) -> None:
     """`cmax` is the largest mean, `cmax_se` the standard error of that mean."""
     result = nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")
     assert float(result["cmax"]) == pytest.approx(2.2)
@@ -95,7 +97,7 @@ def test_the_peak_and_its_standard_error() -> None:
     assert result.point_variables == ["n_animals"]
 
 
-def test_auc_all_covers_the_trailing_zeros() -> None:
+def test_auc_all_covers_the_trailing_zeros(sparse_engine: str) -> None:
     """`auc_last` ends at the last positive mean, `auc_all` at the last sample."""
     values = np.full((12, 4), np.nan)
     for j, column in SERIAL.items():
@@ -113,7 +115,9 @@ def test_auc_all_covers_the_trailing_zeros() -> None:
     )
 
 
-def test_the_batch_design_reproduces_the_covariance_form_of_holder() -> None:
+def test_the_batch_design_reproduces_the_covariance_form_of_holder(
+    sparse_engine: str,
+) -> None:
     """Two batches: the per animal variance equals the covariance form by hand."""
     rng = np.random.default_rng(3)
     times = np.array([1.0, 2.0, 4.0])
@@ -166,7 +170,9 @@ def test_the_batch_design_reproduces_the_covariance_form_of_holder() -> None:
     )
 
 
-def test_a_serial_design_with_several_samples_per_animal_is_rejected() -> None:
+def test_a_serial_design_with_several_samples_per_animal_is_rejected(
+    sparse_engine: str,
+) -> None:
     """`design="serial"` is the promise that every animal carries one sample."""
     values = np.full((3, 3), np.nan)
     values[0, 0] = 1.0
@@ -217,7 +223,7 @@ def test_sparse_mean_is_the_mean_curve_with_its_spread() -> None:
     assert batch.dose_unit == "mg"
 
 
-def test_a_single_time_point_has_no_area() -> None:
+def test_a_single_time_point_has_no_area(sparse_engine: str) -> None:
     """A design with one usable time point is flagged and carries no area."""
     values = np.full((3, 3), np.nan)
     values[:, 1] = [2.0, 2.2, 2.4]
@@ -226,7 +232,7 @@ def test_a_single_time_point_has_no_area() -> None:
     assert np.isnan(float(result["auc_last"]))
 
 
-def test_the_dose_travels_into_the_result() -> None:
+def test_the_dose_travels_into_the_result(sparse_engine: str) -> None:
     """The dose amount is the coordinate a dose normalized parameter divides by."""
     result = nca_sparse(
         TIMES,
@@ -253,7 +259,9 @@ def test_area_window_is_the_window_the_estimator_weights() -> None:
     np.testing.assert_array_equal(area_window(observed, np.zeros(5)), [False] * 5)
 
 
-def test_a_non_linear_trapezoid_rule_warns_only_when_it_was_asked_for() -> None:
+def test_a_non_linear_trapezoid_rule_warns_only_when_it_was_asked_for(
+    sparse_engine: str,
+) -> None:
     """The estimator is linear in the means; an explicit `auc_method` is refused loudly."""
     values = serial_values()
     with pytest.warns(UserWarning, match="linear trapezoid rule is used"):
@@ -271,7 +279,7 @@ def test_a_non_linear_trapezoid_rule_warns_only_when_it_was_asked_for() -> None:
     assert float(explicit["auc_last"]) == pytest.approx(float(default["auc_last"]))
 
 
-def test_the_degrees_of_freedom_are_a_discrete_parameter() -> None:
+def test_the_degrees_of_freedom_are_a_discrete_parameter(sparse_engine: str) -> None:
     """`summarize` gives `auc_last_df` no standard error, interval or CV."""
     assert "auc_last_df" in DISCRETE_PARAMETERS
     values = serial_values()
@@ -285,3 +293,117 @@ def test_the_degrees_of_freedom_are_a_discrete_parameter() -> None:
         assert f"auc_last_df{suffix}" not in summary.ds.data_vars
     assert "auc_last_sd" in summary.ds.data_vars
     assert "auc_last_df_median" in summary.ds.data_vars
+
+
+def batch_values() -> np.ndarray:
+    """A batch design with a gap, a trailing zero and a single animal pattern."""
+    rng = np.random.default_rng(11)
+    values = np.full((9, 5), np.nan)
+    values[:4, [0, 2, 4]] = rng.lognormal(0.0, 0.3, size=(4, 3)) * [1.0, 2.0, 0.4]
+    values[4:7, [1, 3]] = rng.lognormal(0.0, 0.3, size=(3, 2)) * [2.5, 1.0]
+    values[7:, 4] = 0.0
+    return values
+
+
+def run_both(
+    monkeypatch: pytest.MonkeyPatch, design: str, values: np.ndarray
+) -> tuple[NCAResult, NCAResult]:
+    """The sparse analysis through the kernel and, forced, through python."""
+    times = np.array([1.0, 2.0, 4.0, 6.0, 8.0])
+    dose = Dose(amount=10.0, unit="mg", route=Route.ORAL)
+    kwargs = {"design": design, "time_unit": "hr", "unit": "mg/l", "dose": dose}
+    kernel = nca_sparse(times, values, **kwargs)  # ty: ignore[invalid-argument-type]
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "_force_python", True)
+        python = nca_sparse(times, values, **kwargs)  # ty: ignore[invalid-argument-type]
+    return kernel, python
+
+
+def test_both_engines_agree_variable_by_variable(
+    sparse_engine: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every variable of a batch design: NaN positions exact, numbers at 1e-12."""
+    if sparse_engine == "python":
+        pytest.skip("the comparison runs both engines itself")
+    kernel, python = run_both(monkeypatch, "batch", batch_values())
+    assert set(kernel.ds.data_vars) == set(python.ds.data_vars)
+    for name in map(str, python.ds.data_vars):
+        a, b = kernel[name].to_numpy(), python[name].to_numpy()
+        assert a.dtype == b.dtype, name
+        np.testing.assert_array_equal(np.isnan(a), np.isnan(b), err_msg=name)
+        np.testing.assert_allclose(a, b, rtol=1e-12, equal_nan=True, err_msg=name)
+        assert kernel.units(name) == python.units(name), name
+
+
+def test_the_kernel_is_really_used_when_it_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the kernel present and not forced off the call goes through it."""
+    if not hasattr(engine.pkpdutils_core, "nca_sparse"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_sparse`")
+    calls: list[int] = []
+    real = engine.pkpdutils_core.nca_sparse
+    monkeypatch.setattr(
+        engine.pkpdutils_core, "nca_sparse", lambda r: (calls.append(1), real(r))[1]
+    )
+    monkeypatch.setattr(engine, "_force_python", False)
+    nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")
+    assert calls == [1]
+
+
+def test_a_forced_python_run_does_not_touch_the_kernel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_force_python` keeps the sparse analysis on the python path."""
+
+    def refuse(request: object) -> None:
+        raise AssertionError("the kernel was called")
+
+    monkeypatch.setattr(engine.pkpdutils_core, "nca_sparse", refuse, raising=False)
+    monkeypatch.setattr(engine, "_force_python", True)
+    result = nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")
+    assert float(result["cmax"]) == pytest.approx(2.2)
+
+
+def test_an_absent_kernel_falls_back_without_a_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `pkpdutils-core` without `nca_sparse` takes the python path silently."""
+    monkeypatch.setattr(engine, "_force_python", False)
+    monkeypatch.delattr(engine.pkpdutils_core, "nca_sparse", raising=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")
+    assert float(result["cmax"]) == pytest.approx(2.2)
+
+
+def test_the_single_animal_warning_survives_on_both_engines(
+    sparse_engine: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Patterns with a single animal are logged as `bailer_variance` logs them."""
+    values = np.full((4, 3), np.nan)
+    values[0, 0] = 1.0
+    values[1, 1] = 2.0
+    values[2, 2] = 3.0
+    values[3, 2] = 3.5
+    with caplog.at_level(logging.WARNING, logger="pkpdutils.nca.sparse"):
+        nca_sparse(TIMES, values, design="batch", time_unit="hr", unit="mg/l")
+    records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert [r.getMessage() for r in records] == [
+        "2 of 3 batches hold a single animal: the variance of the area cannot be "
+        "estimated"
+    ]
+
+
+def test_the_explicit_auc_method_warning_stays_on_the_kernel_path(
+    sparse_engine: str,
+) -> None:
+    """The kernel takes no options, so the host still warns about `auc_method`."""
+    with pytest.warns(UserWarning, match="linear trapezoid rule is used"):
+        nca_sparse(
+            TIMES,
+            serial_values(),
+            time_unit="hr",
+            unit="mg/l",
+            options=NCAOptions(auc_method=AUCMethod.LOG),
+        )
