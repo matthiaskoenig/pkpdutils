@@ -238,6 +238,32 @@ def _object_labels(timecourses: Timecourses) -> bool:
     )
 
 
+def _routes_differ_in_dosing(timecourses: Timecourses, options: NCAOptions) -> bool:
+    """Whether some routes of a batch have a multiple dose row and others have not.
+
+    The necessary condition of `engine.MIXED_ROUTE_DOSING_REASON`, derived from
+    the dose arrays on its own and not from the function of the engine which
+    answers the reason, so that the two cannot agree by being the same code.
+
+    Args:
+        timecourses: the batch.
+        options: the options of the analysis.
+
+    Returns:
+        Whether the routes of the batch differ in having a protocol of two or
+        more doses, `False` when `tau` is given (every row is then a multiple
+        dose row).
+    """
+    routes = timecourses.routes
+    if routes is None or options.tau is not None:
+        return False
+    amounts, times, _ = engine.dose_arrays(timecourses)
+    doses = (np.isfinite(amounts) & np.isfinite(times)).sum(axis=1)
+    rows = routes.ravel()
+    has = {bool((doses[rows == route] >= 2).any()) for route in set(rows.tolist())}
+    return len(has) > 1
+
+
 def _named_window(options: NCAOptions) -> bool:
     """Whether a terminal window is keyed by the label of a sample.
 
@@ -330,17 +356,12 @@ class CrossCheck:
             # necessary condition from the inputs: a batch of several routes
             # with a protocol of more than one dose or a given `tau`
             self.dosing += 1
-            routes = timecourses.routes
-            assert (
-                routes is not None
-                and len(set(routes.ravel().tolist())) > 1
-                and (timecourses.n_dose > 1 or options.tau is not None)
-            ), (
+            assert _routes_differ_in_dosing(timecourses, options), (
                 "the predicate refuses this batch for routes which differ in "
-                "their dosing, and the batch is not one of several routes with "
-                "a multiple dose analysis: a predicate which answers that "
-                "reason for any other batch sends it down the python path "
-                "for good."
+                "their dosing, and the routes of the batch either all have a "
+                "multiple dose row or none has one (or `tau` is given): a "
+                "predicate which answers that reason for any other batch "
+                "sends it down the python path for good."
             )
             return reason
         if reason == engine.MIXED_LABELS_REASON:

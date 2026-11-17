@@ -268,6 +268,10 @@ host side sorting fixes, so such a batch takes the python path until the
 kernel reports the variables per route. A batch whose routes all have a
 multiple dose row, or none of them, is carried (`_python_order` puts its
 variables in the order of the core).
+
+This refusal is a workaround and no permanent condition of the host, unlike the
+three before it: it exists because the kernel reports one union of variables
+instead of the variables of every route, and it goes when the kernel does.
 """
 
 
@@ -943,7 +947,13 @@ def _dry_order(
         n_time: the number of time points of the batch
         options: the options of the analysis
         multiple: for every route, whether its group has a multiple dose row.
-            The core decides that per row, so a group which has one is run on
+            Every batch `nca` sends to the kernel has the same answer for all
+            its routes (`MIXED_ROUTE_DOSING_REASON` refuses the others), so
+            the per-route form matters only for a direct call of `run_kernel`
+            on a refused batch and once that refusal is lifted, when the
+            groups of the core differ in their variables and `merge_rows` puts
+            the larger first. The core decides that per row, so a group which
+            has one is run on
             a single row of `NaN` and a protocol of two doses (a run on no row
             at all is never a multiple dose analysis and would leave the
             steady state and `interval_*` variables out of the order)

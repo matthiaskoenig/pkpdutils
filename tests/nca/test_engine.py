@@ -1239,6 +1239,25 @@ def test_routes_which_differ_in_their_dosing_take_the_python_path(
     assert engine.comparisons() == before
 
 
+def test_the_order_cache_tells_a_padded_protocol_from_a_real_one() -> None:
+    # the same width, routes and options: two doses per row, once with the
+    # second amount missing (no multiple dose row) and once with it. `dosed`
+    # cannot tell them apart, only the multiplicity in the key can
+    real = mixed_route_dose_batch(
+        ((Route.ORAL, 2), (Route.IV_BOLUS, 2), (Route.ORAL, 2), (Route.IV_BOLUS, 2))
+    )
+    ds = real.ds.copy(deep=True)
+    ds["dose_amount"][..., 1:] = np.nan
+    padded = Timecourses(ds)
+    assert engine._multiple_rows(padded, NCAOptions()).tolist() == [False] * 4
+    assert engine._multiple_rows(real, NCAOptions()).tolist() == [True] * 4
+    assert padded.n_dose == real.n_dose
+    for first, second in [(padded, real), (real, padded)]:
+        engine._ORDER_CACHE.clear()
+        assert_same_mapping(first)
+        assert_same_mapping(second)
+
+
 def test_the_order_cache_tells_a_multiple_dose_batch_from_a_single_dose_one() -> None:
     # the same routes in the same order and the same options, once with no
     # multiple dose row and once with one in every route: the cached order of
