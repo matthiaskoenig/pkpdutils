@@ -406,6 +406,38 @@ class TestTheKernelEntryPoint:
             python, kernel = self.both(result, method="stepwise")
             np.testing.assert_array_equal(kernel.tss.to_numpy(), python.tss.to_numpy())
 
+    def test_the_engines_agree_when_a_sample_has_fewer_troughs_than_the_others(
+        self,
+    ) -> None:
+        # the troughs of the shorter sample are the padding of its row, which the
+        # kernel must not read: every entry of `valid` counts
+        curves = [
+            superposed(0.2, n).model_copy(update={"label": f"s{n}"})
+            for n in (6, 10, 14)
+        ]
+        result = nca(
+            Timecourses.from_timecourses(curves, dim="individual"), options=LOG
+        )
+        for method in ("monoexponential", "stepwise"):
+            python, kernel = self.both(result, method=method)
+            assert np.isfinite(python.tss.to_numpy()).sum() >= 2
+            np.testing.assert_allclose(
+                kernel.tss.to_numpy(), python.tss.to_numpy(), rtol=1e-6, equal_nan=True
+            )
+
+    def test_the_stepwise_estimate_has_no_plateau_from_the_kernel(self) -> None:
+        end = np.array([[12.0, 24.0, 36.0, 48.0]])
+        answer = tss_module._kernel_estimate(
+            end,
+            np.array([[1.0, 2.0, 2.5, 2.5]]),
+            end - 12.0,
+            np.ones(end.shape, dtype=bool),
+            "stepwise",
+            0.9,
+            0.05,
+        )
+        assert answer is not None and answer[1] is None
+
     def test_a_minimum_beyond_the_range_of_the_starts_is_no_estimate_in_the_kernel(
         self,
     ) -> None:
