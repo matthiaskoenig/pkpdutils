@@ -1412,6 +1412,10 @@ def _python_statistics(values: np.ndarray, alpha: float) -> dict[str, np.ndarray
     Returns:
         One array over the leading axes per name of `_STATISTICS`.
     """
+    if values.shape[-1] == 0:
+        # an empty axis is a group of no finite value, which numpy's reductions
+        # refuse to take a minimum of
+        values = np.full((*values.shape[:-1], 1), np.nan)
     with (
         np.errstate(invalid="ignore", divide="ignore"),
         warnings.catch_warnings(),

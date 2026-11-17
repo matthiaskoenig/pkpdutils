@@ -723,14 +723,20 @@ def summary_engine(
         request: the parametrization.
         monkeypatch: restores the forced flag and the wrapped entry point.
 
+    The `kernel` parameter skips when the installed `pkpdutils-core` has no
+    `summarize` (the wheels below 0.4 which the declared floor admits).
+
     Yields:
         The name of the engine the test runs under.
     """
     calls: list[int] = []
-    real = pkpdutils_core.summarize  # ty: ignore[missing-attribute]
-    monkeypatch.setattr(
-        pkpdutils_core, "summarize", lambda *args: (calls.append(1), real(*args))[1]
-    )
+    if request.param == "kernel" and not hasattr(pkpdutils_core, "summarize"):
+        pytest.skip("this build of pkpdutils-core carries no `summarize`")
+    if hasattr(pkpdutils_core, "summarize"):
+        real = pkpdutils_core.summarize
+        monkeypatch.setattr(
+            pkpdutils_core, "summarize", lambda *args: (calls.append(1), real(*args))[1]
+        )
     monkeypatch.setattr(engine, "_force_python", request.param == "python")
     yield request.param
     if request.param == "kernel":

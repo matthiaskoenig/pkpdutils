@@ -286,6 +286,13 @@ def test_the_classification_stays_with_the_python_class(summary_engine: str) -> 
     assert {"k_median", "k_n", "plain_sd"} <= names
 
 
+needs_kernel_summary = pytest.mark.skipif(
+    not hasattr(pkpdutils_core, "summarize"),
+    reason="this build of pkpdutils-core carries no `summarize`",
+)
+
+
+@needs_kernel_summary
 def test_the_kernel_and_the_python_summary_agree_on_the_validation_dataset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -304,6 +311,7 @@ def test_the_kernel_and_the_python_summary_agree_on_the_validation_dataset(
         )
 
 
+@needs_kernel_summary
 def test_a_malformed_summary_request_is_not_a_refusal() -> None:
     request: dict[str, object] = {
         "values": np.array([1.0, 2.0, 4.0]),
@@ -326,6 +334,7 @@ def test_a_malformed_summary_request_is_not_a_refusal() -> None:
     assert not isinstance(raised.value, engine.UnsupportedError)
 
 
+@needs_kernel_summary
 def test_a_malformed_request_from_the_host_reaches_the_caller(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -348,3 +357,51 @@ def test_a_malformed_request_from_the_host_reaches_the_caller(
         table(a=[1.0, 2.0, 4.0]).summarize("s")
     assert not isinstance(raised.value, engine.UnsupportedError)
     assert python_runs == []
+
+
+def test_a_kernel_without_summarize_is_summarized_in_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # what a wheel of the declared floor (0.3.0) does: the python path answers,
+    # with the numbers of the oracle
+    columns = {"ln": [0.0, 2.0, 8.0], "k": [1.0, 2.0, 4.0]}
+    expected = table(**columns).summarize("s")
+    monkeypatch.delattr(pkpdutils_core, "summarize", raising=False)
+    python_runs: list[int] = []
+    original = result_module._python_statistics
+    monkeypatch.setattr(
+        result_module,
+        "_python_statistics",
+        lambda *args: (python_runs.append(1), original(*args))[1],
+    )
+    summary = table(**columns).summarize("s")
+    assert len(python_runs) == 2
+    assert scalar(summary, "ln_geomean") == pytest.approx(4.0, rel=1e-14)
+    assert scalar(summary, "ln") == pytest.approx(10.0 / 3.0, rel=1e-14)
+    half = student_t.isf(0.025, 2) * np.std([0.0, 2.0, 8.0], ddof=1) / np.sqrt(3)
+    assert scalar(summary, "ln_ci_high") == pytest.approx(10.0 / 3.0 + half, rel=1e-12)
+    assert scalar(summary, "k_median") == 2.0
+    for name in expected.ds.data_vars:
+        np.testing.assert_allclose(
+            summary.ds[name].values, expected.ds[name].values, rtol=1e-12, err_msg=name
+        )
+
+
+def test_an_empty_sample_axis_is_a_group_of_no_value(summary_engine: str) -> None:
+    result = Table(
+        xr.Dataset(
+            {
+                "ln": (("s",), np.zeros(0), {"units": "mg"}),
+                "flags": (("s",), np.zeros(0, dtype=int), {"units": "dimensionless"}),
+            },
+            coords={"s": np.array([], dtype=str)},
+        )
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        summary = result.summarize("s")
+    assert [str(w.message) for w in caught] == [], summary_engine
+    assert scalar(summary, "ln_n") == 0.0
+    for name in summary.ds.data_vars:
+        if name not in ("ln_n", "n", "flags"):
+            assert np.isnan(scalar(summary, str(name))), (summary_engine, name)
