@@ -15,6 +15,7 @@ from pkpdutils import (
     nca,
     nca_single,
 )
+from pkpdutils.nca import engine
 from pkpdutils.nca.options import NCAFlag, deserialize_nca_options
 
 
@@ -200,3 +201,63 @@ def test_missing_and_zero_curves_do_not_warn() -> None:
     )
     result = nca(batch, options=NCAOptions(lloq_relative=1e-8))
     assert not (result["flags"].values & int(NCAFlag.TERMINAL_LOW_CONCENTRATION)).any()
+
+
+def _python_core(batch: Timecourses, options: NCAOptions) -> xr.Dataset:
+    # these two pin the python core, not the dispatch: `nca` prefers the rust
+    # kernel, which carries the same residual formula and is fixed in its own
+    # release, so a test left on the default path would measure the kernel
+    forced = engine._force_python
+    engine._force_python = True
+    try:
+        return nca(batch, options=options).ds
+    finally:
+        engine._force_python = forced
+
+
+def _bolus_batch(values: np.ndarray, times: np.ndarray) -> Timecourses:
+    return Timecourses.from_arrays(
+        times,
+        values,
+        time_unit="hr",
+        unit="mg/l",
+        dims=("individual",),
+        dose={"amount": 100.0, "unit": "mg"},
+        route="iv_bolus",
+    )
+
+
+def test_an_exact_fit_reports_a_standard_error_of_exactly_zero() -> None:
+    # the residual sum of squares of a window is `syy_c - slope * sxy_c`, two
+    # quantities which are equal for a perfect fit, so a noise free exponential
+    # leaves only the rounding of the sums and its sign decides what is
+    # reported: clamping at zero gave 0.0 where the rounding went negative and
+    # the square root of the noise, around 1e-9, where it went positive. Over
+    # 30 000 curves that split 12 728 against 12 637, so half of a batch
+    # reported a standard error made of nothing, and which half depended on the
+    # numpy build - the engine gate caught it as a disagreement with the kernel.
+    times = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0])
+    rates = np.random.default_rng(3).uniform(0.05, 0.5, size=512)[:, None]
+    batch = _bolus_batch(10.0 * np.exp(-rates * times[None, :]), times)
+    result = _python_core(batch, NCAOptions())
+    stderr = result["lambda_z_stderr"].to_numpy()
+    assert np.all(stderr == 0.0), (
+        f"{int((stderr != 0.0).sum())} of {stderr.size} differ"
+    )
+    # the floor has not swallowed the fit itself
+    assert result["lambda_z"].to_numpy() == pytest.approx(rates[:, 0], rel=1e-9)
+    assert np.all(result["lambda_z_r2"].to_numpy() == 1.0)
+
+
+def test_a_noisy_fit_keeps_a_standard_error_far_above_the_floor() -> None:
+    # the floor must only reach an exact fit. with four samples or more a curve
+    # of 1 % noise sits at least 1.9e+05 times above it, so its standard error
+    # has to survive untouched.
+    times = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0])
+    rng = np.random.default_rng(7)
+    clean = 10.0 * np.exp(-0.2 * times)
+    values = np.abs(clean * (1.0 + rng.normal(0.0, 0.05, size=(64, times.size))))
+    stderr = _python_core(_bolus_batch(values, times), NCAOptions())[
+        "lambda_z_stderr"
+    ].to_numpy()
+    assert np.all(stderr > 1e-6), f"min {stderr.min():.3e} is at the floor"
