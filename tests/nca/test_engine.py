@@ -9,6 +9,11 @@ import pytest
 from pkpdutils import Dose, Dosing, Route, Timecourse, Timecourses
 from pkpdutils.nca import (
     Acceptance,
+    AUCMethod,
+    BLQHandling,
+    BootstrapDistribution,
+    BootstrapSpread,
+    C0Method,
     Kind,
     NCAOptions,
     NCAResult,
@@ -23,6 +28,7 @@ K, C0 = 0.5, 10.0
 TIMES = np.array([0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0])
 IV_DOSE = Dose(amount=100.0, unit="mg", route=Route.IV_BOLUS)
 ORAL_DOSE = Dose(amount=100.0, unit="mg", route=Route.ORAL)
+INFUSION_DOSE = Dose(amount=100.0, unit="mg", route=Route.IV_INFUSION, duration=0.5)
 # the tolerance of `tests/nca/test_reference.py`, which the two engines are
 # held to as well
 REL, ABS = 1e-6, 1e-12
@@ -362,12 +368,25 @@ def test_the_coordinates_of_a_study_travel_with_their_dtype() -> None:
     }
 
 
-def test_a_coordinate_of_numpy_scalars_reads_as_its_numbers() -> None:
+SCALAR_LABELS: list[tuple[str, list[Any], dict[str, list[Any]], Any]] = [
+    ("int64", [np.int64(1), np.int64(2)], {"int": [1, 2]}, 1),
+    ("bool_", [np.bool_(True), np.bool_(False)], {"bool": [True, False]}, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("what", "labels", "sent", "key"), SCALAR_LABELS, ids=[s[0] for s in SCALAR_LABELS]
+)
+def test_a_coordinate_of_numpy_scalars_reads_as_its_values(
+    what: str, labels: list[Any], sent: dict[str, list[Any]], key: Any
+) -> None:
     # a coordinate given as an object array keeps its dtype, and the objects
-    # in it are numpy scalars: `np.int64` is no instance of `int`, so a
-    # conversion which reads the python type alone sends those labels as their
-    # text while `encode_window_key` sends the key of a window as a number,
-    # and the kernel refuses a window which names a sample of the batch
+    # in it are numpy scalars: `np.int64` is no instance of `int` and
+    # `np.bool_` none of `bool`, so a conversion which reads the python type
+    # alone sends those labels as their text while `encode_window_key` sends
+    # the key of a window as a number or a truth value, and the kernel refuses
+    # a window which names a sample of the batch. `np.float64` and `np.str_`
+    # need no unwrapping, they are a `float` and a `str`
     values = C0 * np.exp(-K * TIMES)
     labelled = Timecourses.from_arrays(
         TIMES,
@@ -375,7 +394,7 @@ def test_a_coordinate_of_numpy_scalars_reads_as_its_numbers() -> None:
         time_unit="hr",
         unit="mg/l",
         dims=("subject",),
-        coords={"subject": np.array([np.int64(1), np.int64(2)], dtype=object)},
+        coords={"subject": np.array(labels, dtype=object)},
         dose=IV_DOSE,
     )
     assert labelled.ds["subject"].dtype == np.dtype("O")
@@ -383,10 +402,10 @@ def test_a_coordinate_of_numpy_scalars_reads_as_its_numbers() -> None:
         record["name"]: record["values"]
         for record in engine.batch_dict(labelled)["coords"]
     }
-    assert coords == {"subject": {"int": [1, 2]}}
-    options = NCAOptions(terminal=TerminalPhase(windows={1: (0.5, 4.0)}))
+    assert coords == {"subject": sent}, what
+    options = NCAOptions(terminal=TerminalPhase(windows={key: (0.5, 4.0)}))
     result = nca(labelled, options=options)
-    assert result.terminal_windows()[1] == (0.5, 4.0)
+    assert result.terminal_windows()[key] == (0.5, 4.0)
     assert_same_result(result, python_result(labelled, options))
     assert_same_mapping(labelled, options)
 
@@ -448,6 +467,119 @@ def test_a_batch_of_two_routes_travels_per_sample() -> None:
     # whichever engine ran it, down to the order of its variables
     assert_same_result(result, python_result(mixed))
     assert_same_mapping(mixed)
+
+
+# the one value per field of `NCAOptions` the cache key has to tell apart, by
+# the name of the field; a field added to the options has to be added here as
+# well, which `test_the_key_of_the_order_cache_separates_every_option` asserts
+OPTION_VARIANTS: dict[str, Any] = {
+    "kind": Kind.EFFECT,
+    "auc_method": AUCMethod.LOG,
+    "terminal": TerminalPhase(min_points=4),
+    "lloq": 0.05,
+    "lloq_relative": 0.1,
+    "blq": BLQHandling.ZERO_BEFORE_TMAX,
+    "c0_method": C0Method.FIRST_VALUE,
+    "extrapolation_warning": 0.3,
+    "acceptance": Acceptance(exclude=True),
+    "partial_aucs": {"auc_0_4": (0.0, 4.0)},
+    "tau": 12.0,
+    "tau_tolerance": 0.2,
+    "intervals": False,
+    "units": {"auc_last": "mg*min/l"},
+    "effect_threshold": 1.0,
+    "n_workers": 2,
+    "chunk_rows": 1000,
+    "uncertainty": UncertaintyMethod.DELTA,
+    "n_boot": 100,
+    "seed": 7,
+    "ci_level": 0.9,
+    "bootstrap_spread": BootstrapSpread.SD,
+    "bootstrap_distribution": BootstrapDistribution.LOGNORMAL,
+    "delta_step": 0.02,
+}
+
+
+def test_the_key_of_the_order_cache_separates_every_option() -> None:
+    # the key carries `repr(options)`, so two option sets which differ in any
+    # one field cannot collide; a key which named a few fields would serve the
+    # order of one analysis for another
+    assert set(OPTION_VARIANTS) == set(NCAOptions.model_fields)
+    routes = (Route.IV_BOLUS, Route.ORAL)
+    keys = {engine._order_key(routes, 1, NCAOptions())}
+    for name, value in OPTION_VARIANTS.items():
+        options = NCAOptions(**{name: value})
+        assert options != NCAOptions(), name
+        keys.add(engine._order_key(routes, 1, options))
+    assert len(keys) == len(OPTION_VARIANTS) + 1
+
+
+def test_the_order_cache_tells_three_shapes_apart() -> None:
+    # the three shapes which really report different variables: the routes
+    # decide whether `c0` and the back extrapolation appear (a bolus against
+    # an infusion) and a batch without a protocol reports no dose dependent
+    # variable at all. Every one of them is compared against the python core
+    # with the cache warm from the other two, so a key which dropped the
+    # routes or the protocol would serve one order for another shape
+    bolus_oral = Timecourses.from_timecourses(
+        [curve(), curve(dose=ORAL_DOSE)], dim="arm", labels=["a", "b"]
+    )
+    infusion_oral = Timecourses.from_timecourses(
+        [curve(dose=INFUSION_DOSE), curve(dose=ORAL_DOSE)], dim="arm", labels=["a", "b"]
+    )
+    values = C0 * np.exp(-K * TIMES)
+    undosed = Timecourses.from_arrays(
+        TIMES,
+        np.stack([values, 1.1 * values]),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("arm",),
+        coords={"arm": ["a", "b"], "route": ("arm", ["iv_bolus", "oral"])},
+    )
+    shapes = [bolus_oral, infusion_oral, undosed]
+    orders = {tuple(engine.run_kernel(one, NCAOptions())) for one in shapes}
+    assert len(orders) == 3
+    # every one of them against the python core with the cache warm from the
+    # other two, in both directions: an order of a shape with more variables
+    # filtered down to a shape with fewer can come out right by luck, where
+    # the other direction appends what it does not know at the end
+    for index, one in enumerate(shapes):
+        engine._ORDER_CACHE.clear()
+        for other in shapes[:index] + shapes[index + 1 :]:
+            engine.run_kernel(other, NCAOptions())
+        assert_same_mapping(one)
+
+
+def test_the_order_of_a_shape_is_read_from_the_cache() -> None:
+    # the dry run costs about a millisecond, which a batch of two arms would
+    # pay on every call: it is paid once per shape
+    core = importlib.import_module("pkpdutils.nca.nca")
+
+    mixed = Timecourses.from_timecourses(
+        [curve(), curve(dose=ORAL_DOSE)], dim="arm", labels=["a", "b"]
+    )
+    routes = mixed.routes
+    assert routes is not None
+    runs = 0
+    real = core.run_rows
+
+    def counted(*args: Any, **kwargs: Any) -> dict[str, np.ndarray]:
+        nonlocal runs
+        runs += 1
+        return real(*args, **kwargs)
+
+    engine._ORDER_CACHE.clear()
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(core, "run_rows", counted)
+        first = engine._python_order(
+            routes, NCAOptions(), [], dosed=mixed.n_dose, n_time=mixed.n_time
+        )
+        assert runs == 2, "one dry run per route of the batch"
+        second = engine._python_order(
+            routes, NCAOptions(), [], dosed=mixed.n_dose, n_time=mixed.n_time
+        )
+        assert runs == 2, "the second call reads the order from the cache"
+    assert first == second == []
 
 
 def test_the_order_of_a_mixed_batch_is_the_order_of_the_merge() -> None:
@@ -552,6 +684,10 @@ def test_the_two_engines_agree_on_every_analysis(
     assert_same_result(
         nca(timecourses, options=options), python_result(timecourses, options)
     )
+    if engine.unsupported_reason(timecourses, options) is None:
+        # the comparison of the two results above passes whether or not the
+        # kernel ran, the fallback being silent; this one is the kernel itself
+        assert_same_mapping(timecourses, options)
 
 
 def test_a_normalized_unit_is_converted_once() -> None:

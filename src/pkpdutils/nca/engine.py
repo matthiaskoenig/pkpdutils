@@ -581,8 +581,115 @@ def _as_computed(values: dict[str, np.ndarray], timecourses: Timecourses) -> Non
             values[name] = column / factor
 
 
+_ORDER_CACHE: dict[tuple[Any, ...], list[str]] = {}
+"""The variable order of `_python_order` per shape of a batch of several routes.
+
+The order the python core reports a batch of several routes in is a function
+of three things and of nothing else: the routes in the order of their first
+appearance, whether the batch carries doses and the options. It does not
+depend on the data, on the number of rows or on the number of time points, so
+it is computed once per shape and not once per analysis: the dry run of
+`_dry_order` costs about a millisecond per route, which is more than the whole
+analysis of the small batch of two arms every bioavailability study produces
+and would make the kernel path the slower one for that shape. A key which is
+already known costs tens of microseconds.
+
+The key carries `repr(options)`, which is every field of `NCAOptions` and of
+its nested models, rather than a list of the fields which are thought to
+matter: a key which omits one serves a wrong order from the cache, which is
+worse than the dry run it saves. `model_dump_json` is no alternative, it
+refuses a window keyed by a numpy scalar and spells the keys `1` and `"1"`
+the same way.
+"""
+
+_ORDER_CACHE_MAX: int = 64
+"""How many shapes `_ORDER_CACHE` holds before it is cleared.
+
+A process analyses a handful of shapes; a flood of keys is a caller which
+varies its options per call, and dropping the whole table costs that caller
+one dry run per batch and every other caller nothing.
+"""
+
+
+def _order_key(
+    routes: tuple[Route, ...], dosed: int, options: NCAOptions
+) -> tuple[Any, ...]:
+    """The key of `_ORDER_CACHE`: the shape the variable order depends on.
+
+    The routes in the order of their first appearance, the width of the
+    protocol and the options, as `repr(options)`, which is every field of
+    `NCAOptions` and of its nested models: a key which names the fields
+    thought to matter would serve a wrong order from the cache for the one
+    field it forgets, and a wrong order is worse than the dry run it saves.
+
+    Args:
+        routes: the routes of the batch, in the order of their first
+            appearance, every one of them once
+        dosed: the number of doses per row of the protocol, 0 without one
+        options: the options of the analysis
+
+    Returns:
+        The key, a tuple of hashable values.
+    """
+    return (routes, dosed, repr(options))
+
+
+def _dry_order(
+    routes: tuple[Route, ...], *, dosed: int, n_time: int, options: NCAOptions
+) -> list[str]:
+    """The variables of a batch of several routes, in the order the python core reports.
+
+    The core is run once per route, in the order given, on no rows at all,
+    which costs a pass of the vectorized core over empty arrays and reports
+    the variables of that route, and the mappings are merged by `merge_rows`,
+    the very function the analysis merges its groups with. That matters: the
+    order of a merge is not the order of the groups but the group which
+    reports the most variables first, ties keeping the order of the groups, a
+    rule which lives in `merge_rows` and is read from it here rather than
+    repeated.
+
+    Args:
+        routes: the routes of the batch, in the order of their first
+            appearance, every one of them once
+
+    Keyword Args:
+        dosed: the number of doses per row of the protocol, 0 for a batch
+            without doses, whose rows report no dose dependent variable
+        n_time: the number of time points of the batch
+        options: the options of the analysis
+
+    Returns:
+        The names of the variables in the order `run_rows` reports them in.
+    """
+    # `pkpdutils.nca.nca` imports this module, so the core is reached where it
+    # is needed and not at the top
+    from pkpdutils.nca.nca import merge_rows, run_rows
+
+    time = np.zeros((0, n_time))
+    amounts = np.zeros((0, dosed)) if dosed else None
+    durations = np.full((0, dosed), np.nan) if dosed else None
+    parts = [
+        run_rows(
+            time,
+            time,
+            dose_amount=amounts,
+            dose_time=amounts,
+            dose_duration=durations,
+            route=route,
+            options=options,
+        )
+        for route in routes
+    ]
+    return list(merge_rows(parts, [0] * len(parts)))
+
+
 def _python_order(
-    timecourses: Timecourses, options: NCAOptions, names: Iterable[str]
+    routes: np.ndarray,
+    options: NCAOptions,
+    names: Iterable[str],
+    *,
+    dosed: int,
+    n_time: int,
 ) -> list[str]:
     """The order the python core reports the variables of a batch of several routes in.
 
@@ -595,52 +702,44 @@ def _python_order(
     of the rows, so the kernel's answer is sorted into python's order here
     rather than python's order being left to whichever engine ran.
 
-    The order is python's own answer and no table of this module: the core is
-    run once per route of the batch, in the order of the first appearance of
-    the routes, on no rows at all, which costs a pass of the vectorized core
-    over empty arrays and reports the variables of that route, and the
-    mappings are merged by `merge_rows`, the very function the analysis merges
-    its groups with. That matters: the order of a merge is not the order of
-    the groups but the group which reports the most variables first, a rule
-    which lives in `merge_rows` and is read from it here rather than repeated.
-    A variable the dry run does not name keeps the place the kernel gave it,
-    behind the ones it does.
+    The order is python's own answer and no table of this module (`_dry_order`),
+    read from `_ORDER_CACHE` for a shape which was analysed before. A variable
+    the dry run does not name keeps the place the kernel gave it, behind the
+    ones it does.
+
+    The routes are taken as the array rather than read from the batch, since
+    the property builds it (one `Route` per sample) and the caller has it in
+    hand already.
 
     Args:
-        timecourses: the batch, of more than one route
+        routes: the route of every row of the batch
+            (`pkpdutils.nca.nca.row_routes`, `Timecourses.routes`)
         options: the options of the analysis
         names: the variables to sort, the keys of the kernel's mapping
+
+    Keyword Args:
+        dosed: the number of doses per row of the protocol (`Timecourses.n_dose`,
+            0 for a batch without a protocol, exactly where `dose_arrays`
+            reports an empty row)
+        n_time: the number of time points of the batch
 
     Returns:
         The names in the order `run_rows` would report them in.
     """
-    # `pkpdutils.nca.nca` imports this module, so the core is reached where it
-    # is needed and not at the top
-    from pkpdutils.nca.nca import merge_rows, row_routes, run_rows
-
-    _, routes = row_routes(timecourses, timecourses.n_samples)
-    if routes is None:
-        # a batch of one route ran in one group and is in python's order
-        return list(names)
-    amounts, times, durations = dose_arrays(timecourses)
-    dosed = amounts.shape[1] > 0
-    empty = np.zeros((0, timecourses.n_time))
-    parts = [
-        run_rows(
-            empty,
-            empty,
-            dose_amount=amounts[:0] if dosed else None,
-            dose_time=times[:0] if dosed else None,
-            dose_duration=durations[:0] if dosed else None,
-            route=route,
-            options=options,
-        )
-        for route in dict.fromkeys(Route(value) for value in routes.tolist())
-    ]
-    order = list(merge_rows(parts, [0] * len(parts)))
-    sortable = list(names)
-    return [name for name in order if name in sortable] + [
-        name for name in sortable if name not in order
+    # the routes of a batch are a handful of values repeated over its rows, so
+    # they are deduplicated before they are read as routes and not after
+    given = tuple(Route(value) for value in dict.fromkeys(routes.ravel().tolist()))
+    key = _order_key(given, dosed, options)
+    order = _ORDER_CACHE.get(key)
+    if order is None:
+        order = _dry_order(given, dosed=dosed, n_time=n_time, options=options)
+        if len(_ORDER_CACHE) >= _ORDER_CACHE_MAX:
+            _ORDER_CACHE.clear()
+        _ORDER_CACHE[key] = order
+    wanted = set(names)
+    named = set(order)
+    return [name for name in order if name in wanted] + [
+        name for name in names if name not in named
     ]
 
 
@@ -686,6 +785,15 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
     # route; `_python_order` moves it for a batch of several
     values["flags"] = np.asarray(result["flags"], dtype=np.float64)
     _as_computed(values, timecourses)
-    if timecourses.routes is None:
+    routes = timecourses.routes
+    if routes is None:
+        # a batch of one route ran in one group and is in python's order
         return values
-    return {name: values[name] for name in _python_order(timecourses, options, values)}
+    order = _python_order(
+        routes,
+        options,
+        values,
+        dosed=timecourses.n_dose,
+        n_time=timecourses.n_time,
+    )
+    return {name: values[name] for name in order}
