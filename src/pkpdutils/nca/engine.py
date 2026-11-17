@@ -45,6 +45,7 @@ path for good.
 """
 
 import logging
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Any
 
@@ -389,9 +390,9 @@ def _coordinate_values(values: np.ndarray) -> dict[str, list[Any]]:
     keys of `TerminalPhase.windows`, which `encode_window_key` tags the same
     way: a subject labelled `"1"` must not become the number 1 on the way
     over. An object array is read like a key of the windows, by the type of
-    its values, and anything which is no number, no truth value and no string
-    travels as its text, which is how the kernel compares a date to a label of
-    a batch.
+    its values, with a numpy scalar unwrapped first, and anything which is no
+    number, no truth value and no string travels as its text, which is how
+    the kernel compares a date to a label of a batch.
 
     Args:
         values: the values of the coordinate
@@ -408,6 +409,15 @@ def _coordinate_values(values: np.ndarray) -> dict[str, list[Any]]:
     if values.dtype.kind == "f":
         return {"float": [float(value) for value in items]}
     if values.dtype.kind == "O":
+        # a numpy scalar is no instance of the python type it holds, so it is
+        # unwrapped before it is read, exactly as `encode_window_key` unwraps
+        # the key of a terminal window: an object array of `np.int64` is what
+        # `xarray` hands over for a coordinate of integers it was given as an
+        # object array, and it has to read as the integers it holds and not as
+        # their text
+        items = [
+            value.item() if isinstance(value, np.generic) else value for value in items
+        ]
         # the order of `encode_window_key`: a truth value is an integer in
         # python and the text of a number is no number
         for tag, cls in (("bool", bool), ("str", str), ("int", int), ("float", float)):
@@ -532,8 +542,15 @@ def _as_computed(values: dict[str, np.ndarray], timecourses: Timecourses) -> Non
     `_to_result`, for two reasons: the mapping of an engine then means one
     thing, the numbers as they were computed, which is what makes the two
     engines comparable at all, and the unit of a result stays pint's answer
-    alone. A factor is an exact power of ten in every case the analysis has,
-    so `x * f / f` costs at most an ulp against a tolerance of 1e-6.
+    alone. A factor is no power of ten in general - the ones the analysis
+    really reaches include 60, for a clearance of a batch measured per minute,
+    and about 4.17e-8, for a volume of a batch in nanomolar units - but it is
+    applied once in each direction, so `x * f / f` costs at most an ulp of the
+    column against the tolerance of 1e-6 the two engines are compared with.
+
+    An integer variable is cast and never divided: it counts rather than
+    measures, so its expression is dimensionless and its factor is 1, which is
+    asserted rather than assumed.
 
     Args:
         values: the columns of the kernel, converted in place
@@ -550,13 +567,81 @@ def _as_computed(values: dict[str, np.ndarray], timecourses: Timecourses) -> Non
             time_unit=timecourses.time_unit,
             dose_unit=timecourses.dose_unit,
         )
+        if name in INTEGER_VARIABLES:
+            # every column of the kernel is a double, where the python core
+            # counts in integers what is counted (`flags`, the rule of
+            # `c0_method`); `_to_result` casts such a column and never
+            # multiplies it, so there is no factor to divide back out
+            assert factor == 1.0, (
+                f"the counted variable '{name}' carries the unit factor {factor}"
+            )
+            values[name] = column.astype(np.int64)
+            continue
         if factor != 1.0:
             values[name] = column / factor
-    # every column of the kernel is a double, where the python core counts in
-    # integers what is counted (`flags`, the rule of `c0_method`)
-    for name in INTEGER_VARIABLES:
-        if name in values:
-            values[name] = values[name].astype(np.int64)
+
+
+def _python_order(
+    timecourses: Timecourses, options: NCAOptions, names: Iterable[str]
+) -> list[str]:
+    """The order the python core reports the variables of a batch of several routes in.
+
+    The kernel analyses a batch of several routes in one call and reports one
+    union of variables, while `run_rows` runs one group per route and merges
+    their mappings (`merge_rows`), so the two agree on the variables of such a
+    batch and not on their order: `cl` and `cl_f` of a batch of a bolus arm
+    and an oral arm stand next to each other in the kernel's answer and in two
+    blocks, one per route, in python's. The mapping of an engine is the mapping
+    of the rows, so the kernel's answer is sorted into python's order here
+    rather than python's order being left to whichever engine ran.
+
+    The order is python's own answer and no table of this module: the core is
+    run once per route of the batch, in the order of the first appearance of
+    the routes, on no rows at all, which costs a pass of the vectorized core
+    over empty arrays and reports the variables of that route, and the
+    mappings are merged by `merge_rows`, the very function the analysis merges
+    its groups with. That matters: the order of a merge is not the order of
+    the groups but the group which reports the most variables first, a rule
+    which lives in `merge_rows` and is read from it here rather than repeated.
+    A variable the dry run does not name keeps the place the kernel gave it,
+    behind the ones it does.
+
+    Args:
+        timecourses: the batch, of more than one route
+        options: the options of the analysis
+        names: the variables to sort, the keys of the kernel's mapping
+
+    Returns:
+        The names in the order `run_rows` would report them in.
+    """
+    # `pkpdutils.nca.nca` imports this module, so the core is reached where it
+    # is needed and not at the top
+    from pkpdutils.nca.nca import merge_rows, row_routes, run_rows
+
+    _, routes = row_routes(timecourses, timecourses.n_samples)
+    if routes is None:
+        # a batch of one route ran in one group and is in python's order
+        return list(names)
+    amounts, times, durations = dose_arrays(timecourses)
+    dosed = amounts.shape[1] > 0
+    empty = np.zeros((0, timecourses.n_time))
+    parts = [
+        run_rows(
+            empty,
+            empty,
+            dose_amount=amounts[:0] if dosed else None,
+            dose_time=times[:0] if dosed else None,
+            dose_duration=durations[:0] if dosed else None,
+            route=route,
+            options=options,
+        )
+        for route in dict.fromkeys(Route(value) for value in routes.tolist())
+    ]
+    order = list(merge_rows(parts, [0] * len(parts)))
+    sortable = list(names)
+    return [name for name in order if name in sortable] + [
+        name for name in sortable if name not in order
+    ]
 
 
 def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.ndarray]:
@@ -564,12 +649,14 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
 
     The parameters of the kernel, its point variables as `(N, K)` arrays and
     its flags, in the layout and the order `pkpdutils.nca.nca.run_rows`
-    reports: one `(N,)` array per parameter, `flags` last, the variables the
-    host writes itself left out (`HOST_VARIABLES`) and the numbers in the
-    units the batch was measured in (`_as_computed`). The units of the kernel
-    are not adopted either: `nca` derives the unit of every variable of its
-    result with pint, from the units of the batch, whichever engine computed
-    the numbers.
+    reports: one `(N,)` array per parameter, the variables the host writes
+    itself left out (`HOST_VARIABLES`) and the numbers in the units the batch
+    was measured in (`_as_computed`). `flags` is the last variable of a batch
+    of one route; a batch of several is sorted into python's order by
+    `_python_order`, which carries `flags` inside the block of the group
+    `merge_rows` reports first. The units of the kernel are not adopted
+    either: `nca` derives the unit of every variable of its result with pint,
+    from the units of the batch, whichever engine computed the numbers.
 
     Args:
         timecourses: the batch
@@ -595,7 +682,10 @@ def run_kernel(timecourses: Timecourses, options: NCAOptions) -> dict[str, np.nd
         values[name] = np.asarray(variable["values"], dtype=np.float64).reshape(
             n_rows, width
         )
-    # `flags` is the last variable of the mapping, as the python core reports it
+    # `flags` goes last, where the python core reports it for a batch of one
+    # route; `_python_order` moves it for a batch of several
     values["flags"] = np.asarray(result["flags"], dtype=np.float64)
     _as_computed(values, timecourses)
-    return values
+    if timecourses.routes is None:
+        return values
+    return {name: values[name] for name in _python_order(timecourses, options, values)}

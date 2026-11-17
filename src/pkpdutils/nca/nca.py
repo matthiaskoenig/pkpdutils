@@ -1119,7 +1119,12 @@ def reference_dose(
         None if a is None else np.asarray(a, dtype=np.float64)
         for a in (dose_amount, dose_time, dose_duration)
     ]
-    shaped = [None if a is None else a.reshape(a.shape[0], -1) for a in arrays]
+    # the width is read from the array rather than left to `-1`, which is
+    # ambiguous for a batch of no rows: a 1-D array is one dose per row
+    shaped = [
+        None if a is None else a.reshape(a.shape[0], 1 if a.ndim == 1 else a.shape[-1])
+        for a in arrays
+    ]
     if all(a is None for a in shaped):
         return None, None, None
     valid: np.ndarray | None = None
@@ -1171,9 +1176,15 @@ def is_multiple_dose(
         return np.zeros(n_rows, dtype=bool)
     amounts = np.asarray(dose_amount, dtype=np.float64)
     times = np.asarray(dose_time, dtype=np.float64)
-    given = np.isfinite(amounts.reshape(n_rows, -1)) & np.isfinite(
-        times.reshape(n_rows, -1)
-    )
+
+    def rows(array: np.ndarray) -> np.ndarray:
+        """One row per sample, the width the array carries itself."""
+        # `reshape(n_rows, -1)` is ambiguous for a batch of no rows, which
+        # every selection and every filter of a batch can produce; a 1-D
+        # array is one dose per row
+        return array.reshape(n_rows, 1 if array.ndim == 1 else array.shape[-1])
+
+    given = np.isfinite(rows(amounts)) & np.isfinite(rows(times))
     return given.sum(axis=1) >= 2
 
 

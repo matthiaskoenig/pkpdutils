@@ -687,3 +687,26 @@ def test_span_is_nan_without_a_terminal_phase() -> None:
     assert np.isnan(q["lambda_z_span"].magnitude)
     assert np.isnan(q["lambda_z_t_last"].magnitude)
     assert "SPAN_LOW" not in result.flags()
+
+
+def test_a_batch_of_no_samples_with_a_dose() -> None:
+    # every selection and every filter can leave a batch without a sample, and
+    # the width of its dosing protocol is then carried by arrays of no rows,
+    # whose `reshape(0, -1)` is ambiguous (`is_multiple_dose`,
+    # `reference_dose`): the analysis reports the empty column of every
+    # variable rather than raising
+    t = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12])
+    empty = Timecourses.from_arrays(
+        t,
+        np.zeros((0, t.size)),
+        time_unit="hr",
+        unit="mg/l",
+        dims=("subject",),
+        coords={"subject": np.array([], dtype=object)},
+        dose=IV_DOSE,
+    )
+    assert empty.n_samples == 0
+    result = nca(empty)
+    assert result.ds.sizes["subject"] == 0
+    for name in ("auc_last", "cmax", "cl", "vz", "flags"):
+        assert result.ds[name].to_numpy().shape == (0,), name

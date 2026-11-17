@@ -304,3 +304,9 @@ A release is made from `develop`. Since `develop` only accepts pull requests, th
     ```
 
 9. once Zenodo has archived the release, update the citation information, i.e., `date-released` in `CITATION.cff` and the version, date and version DOI of the release in the citation of `README.md` and `docs/index.md`. `bump-my-version` only updates the version, not the date and the DOI, which are only known after the release. These changes go in through a pull request like everything else
+
+### The floor of the rust kernel { #kernel-floor }
+
+The analyses of an eligible batch run in `pkpdutils-core`, a hard dependency whose two contracts are closed (`pkpdutils.nca.engine`): `options_dict` sends every field of `NCAOptions` and `batch_dict` every field of the batch, and a build which does not know one of them refuses the whole call. That refusal is no `UnsupportedError` and no fallback to the python core, so it raises for every batch the kernel would have analysed.
+
+A field added to `NCAOptions`, a new member of one of its enumerations and every other change of the two contracts therefore goes out together with the `pkpdutils-core` release which reads it: the same pull request raises the floor `pkpdutils-core>=x.y.z` in `pyproject.toml` to that release, runs `uv lock` and adds the python side, as every one of our libraries is used at its latest release.
