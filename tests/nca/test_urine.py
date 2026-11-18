@@ -12,6 +12,8 @@ factor of the interval length alone, which is why `lambda_z` is exact in both
 fixtures as long as the intervals have the same length.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -370,13 +372,13 @@ def test_a_plasma_result_reaching_past_the_collections_is_reported(
 def run_both(
     monkeypatch: pytest.MonkeyPatch,
     excretion: Excretion,
-    **kwargs: object,
+    **kwargs: Any,
 ) -> tuple[NCAResult, NCAResult]:
     """The urine analysis through the kernel and, forced, through python."""
-    kernel = nca_urine(excretion, **kwargs)  # ty: ignore[invalid-argument-type]
+    kernel = nca_urine(excretion, **kwargs)
     with monkeypatch.context() as patch:
         patch.setattr(engine, "_force_python", True)
-        python = nca_urine(excretion, **kwargs)  # ty: ignore[invalid-argument-type]
+        python = nca_urine(excretion, **kwargs)
     return kernel, python
 
 
@@ -400,6 +402,16 @@ def test_both_engines_agree_variable_by_variable(
     kernel, python = run_both(monkeypatch, collected(), plasma=plasma_curve())
     assert "clr" in python.ds.data_vars
     assert_same(kernel, python)
+    # an excretion without a dose, whose route the kernel is sent as oral
+    start, end = EDGES[:-1], EDGES[1:]
+    nodose = Excretion(
+        start=start,
+        end=end,
+        amount=AMOUNT * (np.exp(-K * start) - np.exp(-K * end)),
+        unit="mg",
+        time_unit="hr",
+    )
+    assert_same(*run_both(monkeypatch, nodose))
 
 
 def test_the_kernel_is_really_used_when_it_is_available(
@@ -444,7 +456,7 @@ def test_the_placebo_arm_agrees_between_the_engines(
 
 
 def test_a_unit_the_kernel_cannot_read_takes_the_python_path(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The refusal as `UnsupportedError` is answered by python, with the forced answer."""
     if not hasattr(engine.pkpdutils_core, "nca_urine"):
@@ -457,7 +469,10 @@ def test_a_unit_the_kernel_cannot_read_takes_the_python_path(
         unit="grain",
         time_unit="hr",
     )
-    kernel, python = run_both(monkeypatch, exc)
+    with caplog.at_level("INFO", logger="pkpdutils.nca.urine"):
+        kernel, python = run_both(monkeypatch, exc)
+    # the refusal really happened, else the test would pass without a fallback
+    assert "the urine analysis takes the python path" in caplog.text
     assert kernel.units("amount_recovered") == "grain"
     assert_same(kernel, python)
 

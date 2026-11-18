@@ -343,6 +343,28 @@ def _plasma_area(
     return float(np.asarray(area.to_numpy()).reshape(-1)[0]), str(area.attrs["units"])
 
 
+def _curve_options(options: NCAOptions) -> NCAOptions:
+    """The options a rate curve is read with, on both engines.
+
+    The rules which read a concentration (`lloq`, `blq`, `partial_aucs`, `tau`,
+    `acceptance`, the uncertainty) do not apply to a rate, which has no limit of
+    quantification, so only `auc_method`, `c0_method`, `terminal` and
+    `extrapolation_warning` are kept.
+
+    Args:
+        options: the options of the analysis.
+
+    Returns:
+        The narrowed options.
+    """
+    return NCAOptions(
+        auc_method=options.auc_method,
+        c0_method=options.c0_method,
+        terminal=options.terminal,
+        extrapolation_warning=options.extrapolation_warning,
+    )
+
+
 def _kernel_urine(
     excretion: Excretion,
     *,
@@ -398,7 +420,7 @@ def _kernel_urine(
         "dose_unit": None if dose is None else dose.unit,
         "area": area,
         "area_unit": area_unit,
-        "options": engine.options_dict(options),
+        "options": engine.options_dict(_curve_options(options)),
     }
     try:
         return kernel(request)
@@ -429,14 +451,7 @@ def _python_urine(
     Raises:
         ValueError: if the recovered amount cannot be compared with the dose.
     """
-    # the rate curve is read with the rules of a curve, not with the rules
-    # which read a concentration (a rate has no limit of quantification)
-    curve_options = NCAOptions(
-        auc_method=options.auc_method,
-        c0_method=options.c0_method,
-        terminal=options.terminal,
-        extrapolation_warning=options.extrapolation_warning,
-    )
+    curve_options = _curve_options(options)
     midpoint = excretion.midpoint
     rate = excretion.rate
     values = compute_parameters(
@@ -614,13 +629,19 @@ def nca_urine(
 
     data_vars: dict[str, Any] = {}
     for name, value in answer["parameters"].items():
+        if np.asarray(value).size != 1:
+            raise ValueError(
+                f"the urine analysis of '{name}' holds {np.asarray(value).size} "
+                "values, one subject has exactly one"
+            )
         data_vars[name] = xr.DataArray(
-            float(value[0]), attrs={"units": answer["units"][name]}
+            float(np.asarray(value).reshape(-1)[0]),
+            attrs={"units": answer["units"][name]},
         )
     for name, point in answer["point_variables"].items():
         data_vars[name] = xr.DataArray(
             np.asarray(point["values"], dtype=np.float64),
-            dims=COLLECTION_DIM,
+            dims=point["dim"],
             attrs={"units": answer["units"][name]},
         )
     data_vars["flags"] = xr.DataArray(

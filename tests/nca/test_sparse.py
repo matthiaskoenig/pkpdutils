@@ -410,13 +410,16 @@ def test_the_explicit_auc_method_warning_stays_on_the_kernel_path(
 
 
 def test_a_unit_the_kernel_cannot_read_takes_the_python_path(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The refusal as `UnsupportedError` is answered by python, not raised."""
     if not hasattr(engine.pkpdutils_core, "nca_sparse"):
         pytest.skip("this build of pkpdutils-core carries no `nca_sparse`")
     values = serial_values()
-    kernel = nca_sparse(TIMES, values, time_unit="hr", unit="grain")
+    with caplog.at_level("INFO", logger="pkpdutils.nca.sparse"):
+        kernel = nca_sparse(TIMES, values, time_unit="hr", unit="grain")
+    # the refusal really happened, else the test would pass without a fallback
+    assert "the sparse analysis takes the python path" in caplog.text
     with monkeypatch.context() as patch:
         patch.setattr(engine, "_force_python", True)
         python = nca_sparse(TIMES, values, time_unit="hr", unit="grain")
