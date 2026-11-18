@@ -22,6 +22,7 @@ from pkpdutils import (
     Dose,
     NCAOptions,
     Route,
+    TerminalPhase,
     Timecourse,
     nca_single,
 )
@@ -516,3 +517,30 @@ def test_nothing_recovered_over_a_zero_plasma_area_is_nan(
     """0 over 0 is `nan` on both engines."""
     result = nca_urine(placebo(), plasma=zero_plasma())
     assert np.isnan(float(result["clr"]))
+
+
+@pytest.mark.parametrize("dosed", [False, True], ids=["dose-less", "dosed"])
+@pytest.mark.parametrize(
+    "points", [[3, 4, 5], [0, 1, 2, 3, 4, 5]], ids=["last3", "all"]
+)
+def test_a_manual_terminal_window_agrees_between_the_engines(
+    urine_engine: str, monkeypatch: pytest.MonkeyPatch, dosed: bool, points: list[int]
+) -> None:
+    """A manual window regresses the given collections on both engines, flags and NaN exact."""
+    exc = Excretion(
+        start=np.arange(0.0, 12.0, 2.0),
+        end=np.arange(2.0, 14.0, 2.0),
+        amount=np.array([300.0, 200.0, 120.0, 70.0, 42.0, 25.0]),
+        unit="mg",
+        time_unit="hr",
+        dose=Dose(amount=1.0, unit="g", route=Route.ORAL) if dosed else None,
+    )
+    options = NCAOptions(terminal=TerminalPhase(method="manual", points=points))
+    result = nca_urine(exc, options=options)
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "_force_python", True)
+        python = nca_urine(exc, options=options)
+    assert np.isfinite(float(python["lambda_z"]))
+    assert_same(result, python)
+    expected = {(False, 3): 1024, (False, 6): 0, (True, 3): 1040, (True, 6): 16}
+    assert int(result["flags"]) == expected[(dosed, len(points))]
