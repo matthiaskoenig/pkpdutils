@@ -519,12 +519,23 @@ def test_nothing_recovered_over_a_zero_plasma_area_is_nan(
     assert np.isnan(float(result["clr"]))
 
 
-@pytest.mark.parametrize("dosed", [False, True], ids=["dose-less", "dosed"])
 @pytest.mark.parametrize(
-    "points", [[3, 4, 5], [0, 1, 2, 3, 4, 5]], ids=["last3", "all"]
+    ("route", "points", "flags"),
+    [
+        (None, [3, 4, 5], 1024),
+        (None, [0, 1, 2, 3, 4, 5], 0),
+        (Route.ORAL, [3, 4, 5], 1040),
+        (Route.ORAL, [0, 1, 2, 3, 4, 5], 16),
+        (Route.IV_BOLUS, [3, 4, 5], 1024),
+    ],
+    ids=["dose-less-last3", "dose-less-all", "oral-last3", "oral-all", "bolus-last3"],
 )
 def test_a_manual_terminal_window_agrees_between_the_engines(
-    urine_engine: str, monkeypatch: pytest.MonkeyPatch, dosed: bool, points: list[int]
+    urine_engine: str,
+    monkeypatch: pytest.MonkeyPatch,
+    route: Route | None,
+    points: list[int],
+    flags: int,
 ) -> None:
     """A manual window regresses the given collections on both engines, flags and NaN exact."""
     exc = Excretion(
@@ -533,7 +544,7 @@ def test_a_manual_terminal_window_agrees_between_the_engines(
         amount=np.array([300.0, 200.0, 120.0, 70.0, 42.0, 25.0]),
         unit="mg",
         time_unit="hr",
-        dose=Dose(amount=1.0, unit="g", route=Route.ORAL) if dosed else None,
+        dose=None if route is None else Dose(amount=1.0, unit="g", route=route),
     )
     options = NCAOptions(terminal=TerminalPhase(method="manual", points=points))
     result = nca_urine(exc, options=options)
@@ -542,5 +553,5 @@ def test_a_manual_terminal_window_agrees_between_the_engines(
         python = nca_urine(exc, options=options)
     assert np.isfinite(float(python["lambda_z"]))
     assert_same(result, python)
-    expected = {(False, 3): 1024, (False, 6): 0, (True, 3): 1040, (True, 6): 16}
-    assert int(result["flags"]) == expected[(dosed, len(points))]
+    assert int(python["flags"]) == flags
+    assert int(result["flags"]) == flags
