@@ -415,6 +415,9 @@ def _kernel_urine(
         "unit": excretion.unit,
         "time_unit": excretion.time_unit,
         "volume_unit": excretion.volume_unit or "liter",
+        # The wire requires a route string and rejects None. Without a dose the value is invented and
+        # the kernel discards it: it derives the route from the dose. It becomes live if the kernel
+        # ever reads `route` for anything beyond the dose insertion.
         "route": "oral" if dose is None else str(dose.route.value),
         "dose_amount": None if dose is None else float(dose.amount),
         "dose_unit": None if dose is None else dose.unit,
