@@ -212,10 +212,12 @@ def test_the_counts_alone_do_not_refuse_a_batch() -> None:
     assert engine.unsupported_reason(counted, NCAOptions()) is None
 
 
-def test_one_count_per_sample_is_no_field_of_the_contract() -> None:
-    # `batch/1` carries a count per time point only, and a count per sample
-    # sent under that key is a length the kernel refuses; `nca` writes `n`
-    # from `Timecourses.n_subjects` itself either way
+def test_one_count_per_sample_travels_as_the_count_of_every_point() -> None:
+    # `batch/1` carries a count per time point only, so a count the batch keeps
+    # per sample is broadcast over the points of that sample, which is the same
+    # statement in the form the contract has: the kernel reads the count rather
+    # than only reporting it, since its bootstrap converts `sd` and `se` into
+    # each other with `sqrt(n)` and scales the log variance of `x_geocv` by `n`
     per_sample = Timecourses.from_arrays(
         TIMES,
         (C0 * np.exp(-K * TIMES))[None, :],
@@ -228,7 +230,10 @@ def test_one_count_per_sample_is_no_field_of_the_contract() -> None:
     )
     assert per_sample.n is not None
     assert per_sample.n.shape == (1,)
-    assert engine.batch_dict(per_sample)["n"] is None
+    sent = engine.batch_dict(per_sample)["n"]
+    assert sent is not None
+    assert sent.shape == (1, TIMES.size)
+    assert sent == pytest.approx(6.0)
     assert engine.unsupported_reason(per_sample, NCAOptions()) is None
     result = nca(per_sample)
     assert result.ds["n"].to_numpy() == pytest.approx(6.0)

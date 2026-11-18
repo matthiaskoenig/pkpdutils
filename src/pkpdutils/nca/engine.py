@@ -493,10 +493,7 @@ def batch_dict(timecourses: Timecourses) -> dict[str, Any]:
         "values": _rows(timecourses.values, n_rows, n_time),
         "sd": _optional_points(timecourses.sd, n_rows, n_time),
         "se": _optional_points(timecourses.se, n_rows, n_time),
-        # the counts of a batch which keeps one per sample instead of one per
-        # time point are no field of `batch/1`, which has the second form
-        # only; `nca` writes `n` from `Timecourses.n_subjects` itself either way
-        "n": _optional_points(counts, n_rows, n_time),
+        "n": _subject_counts(counts, n_rows, n_time),
         "nominal_time": _optional_points(nominal_time, n_rows, n_time),
         "lloq": None
         if lloq is None
@@ -546,6 +543,39 @@ def _optional_points(
     if values is None or values.size != n_rows * n_time:
         return None
     return _rows(values, n_rows, n_time)
+
+
+def _subject_counts(
+    values: np.ndarray | None, n_rows: int, n_time: int
+) -> np.ndarray | None:
+    """The subjects behind every point, broadcasting a count the batch keeps per sample.
+
+    `batch/1` has the per-point form only, and the kernel reads it rather than
+    reporting it: the bootstrap converts the two spread scales into each other
+    with `sqrt(n)` and scales the log variance of `x_geocv` by `n`, so a batch
+    whose count never arrived would carry no `x_sd` and no `x_geocv` at all. A
+    batch which keeps one count per sample has that count behind every one of
+    its points, which is what `resolve_spread` reads from it as well (`n`
+    reshaped to `(n_rows, -1)` and broadcast over the points), so the broadcast
+    is the per-point form of the same statement and not an assumption.
+
+    Args:
+        values: the array of shape `(*sample_shape, n_time)` or `(*sample_shape,)`,
+            or `None`
+        n_rows: number of samples
+        n_time: number of time points per sample
+
+    Returns:
+        The array of shape `(n_rows, n_time)`, or `None` for a batch without counts.
+    """
+    if values is None:
+        return None
+    if values.size == n_rows * n_time:
+        return _rows(values, n_rows, n_time)
+    if values.size == n_rows:
+        per_sample = np.ascontiguousarray(values, dtype=np.float64).reshape(n_rows, 1)
+        return np.ascontiguousarray(np.repeat(per_sample, n_time, axis=1))
+    return None
 
 
 def _route_name(route: Route | None) -> str | None:
