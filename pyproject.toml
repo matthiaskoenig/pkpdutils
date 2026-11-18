@@ -42,7 +42,7 @@ dependencies = [
     # every column the kernel reports, so one new parameter of a future release
     # raises for every eligible batch. It is lifted by the pull request which
     # raises the floor to that release, see docs/development.md#kernel-floor
-    "pkpdutils-core>=0.5.0,<0.6",
+    "pkpdutils-core>=0.5.1,<0.6",
     # numerics, data structures and units
     "numpy>=2.2.2",
     "scipy>=1.15.0",
