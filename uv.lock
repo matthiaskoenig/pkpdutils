@@ -1127,7 +1127,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.0" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pint", specifier = ">=0.25.3" },
-    { name = "pkpdutils-core", specifier = ">=0.6.0,<0.7" },
+    { name = "pkpdutils-core", specifier = ">=0.7.0,<0.8" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.2" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
@@ -1145,18 +1145,18 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "pkpdutils-core"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/ed/023e9638cbe14c4e2b6e5ea578abf3a1412c25430b1fac409bd651f881fd/pkpdutils_core-0.6.0.tar.gz", hash = "sha256:034a8a0f02944e2375725719f0d69e9cdec7b8e608eb444dc9ee75e8055cdc28", size = 504303, upload-time = "2026-11-18T19:15:31.01Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/5a/d76d45f420ecfa0c151a4ef8fcae8d2260a46945c327d97ce60b74e5b83b/pkpdutils_core-0.7.0.tar.gz", hash = "sha256:55f4f687b5643b0ed7be0adf185a531f67cff313feb3e90f3d007a3df017a62c", size = 510120, upload-time = "2026-11-18T22:07:44.999Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/66/6ba1a29bcc6d88e226e5676d7c765bcf1066cbada6bed324d0587c6abb2a/pkpdutils_core-0.6.0-cp313-abi3-macosx_10_12_x86_64.whl", hash = "sha256:9d6c3353f73d5c96456de109355464604fc22e17ae9beac443f046f99f7ab795", size = 614516, upload-time = "2026-11-18T19:15:23.954Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/69/86efc852048e3d4f48291d76865d880bd7bbfc3f3196f3599707041bbb47/pkpdutils_core-0.6.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:87e6d3593b91268377f07ebeb32f86d78cfb7e875ac29de51d80e60f9b643ac8", size = 591076, upload-time = "2026-11-18T19:15:25.389Z" },
-    { url = "https://files.pythonhosted.org/packages/76/de/1d8ed7dc9c4d27ae936d1ed3cc37c6917ea15e07534b36b283216b5e58f7/pkpdutils_core-0.6.0-cp313-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b5de2dc29ca99492f14a54fff70a5a690574c89290b64019355c2aa511dd68f1", size = 741281, upload-time = "2026-11-18T19:15:26.95Z" },
-    { url = "https://files.pythonhosted.org/packages/fd/cd/5f3c22a0830333f5abf11b8ed09f2dc5992f314d0e9d0329651cea0ed68a/pkpdutils_core-0.6.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d55ea1b72d31c1bb4867686d51a0fa623e80c7a3674740d04c141d4f33efa223", size = 715586, upload-time = "2026-11-18T19:15:28.316Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/85/787ecc2ee45ababeee5400e0eca460ed14772f05ade25f237ec31b65665d/pkpdutils_core-0.6.0-cp313-abi3-win_amd64.whl", hash = "sha256:b0212d9fd32ea13e28d81a2ab9e4510ddb6306d6f726bcaf4d8e1b97ff94b4db", size = 546357, upload-time = "2026-11-18T19:15:29.752Z" },
+    { url = "https://files.pythonhosted.org/packages/82/43/251278e7fc305382c2a027f279b89a5b9257ef4de4bce67ee5d4ee339cff/pkpdutils_core-0.7.0-cp313-abi3-macosx_10_12_x86_64.whl", hash = "sha256:887ea3545713aa7c0328c7f7f734a9af4917f4c2b6ae30ae0e29a57043755ad4", size = 613532, upload-time = "2026-11-18T22:07:37.528Z" },
+    { url = "https://files.pythonhosted.org/packages/18/0e/272a8965fe4e58e3ef53ba1a9d8065f856f9a6ad5509e34bdd985af4a64f/pkpdutils_core-0.7.0-cp313-abi3-macosx_11_0_arm64.whl", hash = "sha256:9707a3bf1664f709bf9dacba745e90b8998671c3b6e106923563b2bda82d4dd2", size = 590650, upload-time = "2026-11-18T22:07:39.174Z" },
+    { url = "https://files.pythonhosted.org/packages/77/fb/5e0bf89caac21a5e29428619fe8f9ccb5140b627a949e3a253ffe36abc38/pkpdutils_core-0.7.0-cp313-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ddee81790d22c579fa69f52868efbff3baff404c4a57e9bd63fd07ade2f7fbcf", size = 740906, upload-time = "2026-11-18T22:07:40.716Z" },
+    { url = "https://files.pythonhosted.org/packages/16/b5/4a33e2c0c58aa18aef6ffae9278ea725129dbbf67d7af1d64e97489c11f5/pkpdutils_core-0.7.0-cp313-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:386731946aba4aa0218d87608e7b4c13d3ac6c10ae63786059fe36d4439ba9be", size = 715222, upload-time = "2026-11-18T22:07:42.159Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/bf/893f5bd6cb868553ba7600599105a96d547e54e505cf546113ae9cb69522/pkpdutils_core-0.7.0-cp313-abi3-win_amd64.whl", hash = "sha256:57e3055fb5005a889520c50dc5a6c67031d2f3a477dedecf25f6087a0e2b77dd", size = 546361, upload-time = "2026-11-18T22:07:43.487Z" },
 ]
 
 [[package]]
