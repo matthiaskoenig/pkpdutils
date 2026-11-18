@@ -2,6 +2,8 @@
 
 A urine study does not sample a concentration over time. The urine of a subject is collected over intervals, the volume of every collection is recorded and the substance is measured in it, and the question is how much of the dose left the body unchanged and how fast. `pkpdutils.nca.urine` reads such a study as an `Excretion` and analyses it as the *excretion rate curve*, the convention of every tool in the field, so that the machinery of the [non-compartmental analysis](nca.md) applies unchanged: the same trapezoid rules, the same terminal regression, the same result container. The renal clearance, which Phoenix WinNonlin, PKanalix and Pumas all leave to the user, is part of the result.
 
+The analysis dispatches to the rust kernel `pkpdutils-core` when it is installed and falls back to the python implementation otherwise, also for a request the kernel does not support, such as a unit its registry does not read. `PKPDUTILS_COMPARE_ENGINES=1` does not cover this call; `pkpdutils.nca.engine._force_python` switches the kernel off, e.g. to bisect a difference. See [NCA](nca.md#the-two-engines).
+
 ## Concepts
 
 **Collection intervals.** A collection is an interval \([s_k, e_k]\) with a volume \(V_k\) and either the concentration \(c_k\) measured in it or the amount \(A_k = c_k V_k\) it contains. The intervals are sorted by their start, are strictly increasing and may not overlap; a gap between two of them is allowed, since a subject does not void continuously. The concentration is given in `unit / volume_unit`: with `unit="mg"` and `volume_unit="ml"` it is in mg/ml, because the amount of a collection is the concentration times the volume and nothing else converts between them.

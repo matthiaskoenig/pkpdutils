@@ -783,3 +783,77 @@ def tss_engine(
         assert calls, "the kernel was never asked for the time to steady state"
     else:
         assert not calls, "the forced python path reached the kernel"
+
+
+@pytest.fixture(params=["kernel", "python"])
+def sparse_engine(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[str]:
+    """Run a test of `nca_sparse` once through each engine.
+
+    The twin of `summary_engine` for `pkpdutils_core.nca_sparse`: `"python"`
+    forces the numpy path, `"kernel"` leaves the dispatch alone, and at
+    teardown the fixture asserts the engine the test names is the one which
+    ran. The `kernel` parameter skips when the installed `pkpdutils-core` has
+    no `nca_sparse`.
+
+    Args:
+        request: the parametrization.
+        monkeypatch: restores the forced flag and the wrapped entry point.
+
+    Yields:
+        The name of the engine the test runs under.
+    """
+    calls: list[int] = []
+    if request.param == "kernel" and not hasattr(pkpdutils_core, "nca_sparse"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_sparse`")
+    if hasattr(pkpdutils_core, "nca_sparse"):
+        real = pkpdutils_core.nca_sparse
+        monkeypatch.setattr(
+            pkpdutils_core,
+            "nca_sparse",
+            lambda *args: (calls.append(1), real(*args))[1],
+        )
+    monkeypatch.setattr(engine, "_force_python", request.param == "python")
+    yield request.param
+    if request.param == "kernel":
+        assert calls, "the kernel was never asked for the sparse analysis"
+    else:
+        assert not calls, "the forced python path reached the kernel"
+
+
+@pytest.fixture(params=["kernel", "python"])
+def urine_engine(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[str]:
+    """Run a test of `nca_urine` once through each engine.
+
+    The twin of `summary_engine` for `pkpdutils_core.nca_urine`: `"python"`
+    forces the numpy path, `"kernel"` leaves the dispatch alone, and at
+    teardown the fixture asserts the engine the test names is the one which
+    ran. The `kernel` parameter skips when the installed `pkpdutils-core` has
+    no `nca_urine`.
+
+    Args:
+        request: the parametrization.
+        monkeypatch: restores the forced flag and the wrapped entry point.
+
+    Yields:
+        The name of the engine the test runs under.
+    """
+    calls: list[int] = []
+    if request.param == "kernel" and not hasattr(pkpdutils_core, "nca_urine"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_urine`")
+    if hasattr(pkpdutils_core, "nca_urine"):
+        real = pkpdutils_core.nca_urine
+        monkeypatch.setattr(
+            pkpdutils_core,
+            "nca_urine",
+            lambda *args: (calls.append(1), real(*args))[1],
+        )
+    monkeypatch.setattr(engine, "_force_python", request.param == "python")
+    yield request.param
+    if request.param == "kernel":
+        assert calls, "the kernel was never asked for the urine analysis"
+    else:
+        assert not calls, "the forced python path reached the kernel"

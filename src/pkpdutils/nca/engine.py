@@ -72,12 +72,19 @@ What the gate does **not** reach is every analysis the dispatch refuses, since
 a batch which never goes to the kernel is held against nothing: the
 propagation of the uncertainty of a group curve, the acceptance criteria, the
 named partial areas, the effect curve and the unit conversion of a result
-(`unsupported_reason`, the table of `docs/benchmark.md`). The urine analysis is out of reach for another
-reason: `pkpdutils.nca.urine.nca_urine` calls `compute_parameters` of the
-python core directly and never passes through `nca`, so `rate` and `midpoint`
-are no answer of an engine at all. Every one of those is held to the python
-core alone, by the reference tests of the suite, and the day the kernel carries
-one of them the gate compares it without a word being changed here.
+(`unsupported_reason`, the table of `docs/benchmark.md`). Every one of those is
+held to the python core alone, by the reference tests of the suite, and the day
+the kernel carries one of them the gate compares it without a word being
+changed here.
+
+The analyses which are dispatched to the kernel but never pass through `nca`
+are no business of the gate either: `ParameterResult.summarize`,
+`time_to_steady_state`, `nca_sparse` and `nca_urine` (whose `rate` and
+`midpoint` are point variables of the kernel's own answer). Each of them is
+held by a fixture of `tests/conftest.py` (`summary_engine`, `tss_engine`,
+`sparse_engine`, `urine_engine`) which runs every test of it through both
+engines and asserts at teardown that the engine the test names is the one
+which ran, and by one test which compares the two answers variable by variable.
 
 Where a reference table does cover a variable, the gate's value is breadth and
 diagnosis rather than a sensitivity the suite lacks: of that `aumc_inf_pred`

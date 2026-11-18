@@ -12,6 +12,8 @@ factor of the interval length alone, which is why `lambda_z` is exact in both
 fixtures as long as the intervals have the same length.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -20,9 +22,12 @@ from pkpdutils import (
     Dose,
     NCAOptions,
     Route,
+    TerminalPhase,
     Timecourse,
     nca_single,
 )
+from pkpdutils.nca import engine
+from pkpdutils.nca.result import NCAResult
 from pkpdutils.nca.urine import Excretion, nca_urine
 
 #: total amount excreted over an infinite collection, in mg
@@ -153,7 +158,7 @@ def test_excretion_sorts_and_validates_the_intervals() -> None:
         )
 
 
-def test_amount_recovered_is_the_analytic_cumulative_amount() -> None:
+def test_amount_recovered_is_the_analytic_cumulative_amount(urine_engine: str) -> None:
     """The recovered amount is the sum of the collections, the analytic cumulative amount."""
     exc = collected()
     result = nca_urine(exc)
@@ -169,7 +174,7 @@ def test_amount_recovered_is_the_analytic_cumulative_amount() -> None:
     assert result.units("percent_recovered") == "percent"
 
 
-def test_lambda_z_recovers_the_rate_constant() -> None:
+def test_lambda_z_recovers_the_rate_constant(urine_engine: str) -> None:
     """The regression of the log rate against the midpoint recovers `k` and its half-life."""
     for excretion in (collected(), midpoint_rates()):
         result = nca_urine(excretion)
@@ -178,7 +183,9 @@ def test_lambda_z_recovers_the_rate_constant() -> None:
         assert result.units("lambda_z") == "1 / hour"
 
 
-def test_the_areas_of_the_rate_curve_are_the_excreted_amounts() -> None:
+def test_the_areas_of_the_rate_curve_are_the_excreted_amounts(
+    urine_engine: str,
+) -> None:
     """`aurc_inf_obs` is the total amount and `aurc_last` the amount up to the last midpoint."""
     exc = midpoint_rates()
     result = nca_urine(exc, options=NCAOptions(auc_method=AUCMethod.LOG))
@@ -198,7 +205,7 @@ def test_the_areas_of_the_rate_curve_are_the_excreted_amounts() -> None:
     assert result.units("max_rate") == "milligram / hour"
 
 
-def test_the_peak_of_the_rate_curve() -> None:
+def test_the_peak_of_the_rate_curve(urine_engine: str) -> None:
     """The peak rate is the first collection, whose midpoint is `tmax_rate`."""
     exc = midpoint_rates()
     result = nca_urine(exc)
@@ -206,7 +213,7 @@ def test_the_peak_of_the_rate_curve() -> None:
     assert float(result["tmax_rate"]) == pytest.approx(float(exc.midpoint[0]))
 
 
-def test_the_rate_curve_is_a_point_variable_of_the_result() -> None:
+def test_the_rate_curve_is_a_point_variable_of_the_result(urine_engine: str) -> None:
     """`rate` and `midpoint` are point variables over the collection dimension."""
     exc = collected()
     result = nca_urine(exc)
@@ -220,7 +227,7 @@ def test_the_rate_curve_is_a_point_variable_of_the_result() -> None:
     assert "rate" not in result.to_dataframe().columns
 
 
-def test_renal_clearance_against_the_analytic_plasma_area() -> None:
+def test_renal_clearance_against_the_analytic_plasma_area(urine_engine: str) -> None:
     """`clr` is the recovered amount over the plasma area of the collection span."""
     exc = collected()
     curve = plasma_curve()
@@ -233,7 +240,7 @@ def test_renal_clearance_against_the_analytic_plasma_area() -> None:
     assert float(result["clr"]) == pytest.approx(amount / area)
 
 
-def test_renal_clearance_from_a_plasma_result() -> None:
+def test_renal_clearance_from_a_plasma_result(urine_engine: str) -> None:
     """A plasma `NCAResult` contributes its `auc_last` instead of the partial area."""
     exc = collected()
     plasma = nca_single(plasma_curve(), options=NCAOptions(auc_method=AUCMethod.LOG))
@@ -243,9 +250,9 @@ def test_renal_clearance_from_a_plasma_result() -> None:
     )
 
 
-def test_without_a_dose_there_is_no_percentage_and_without_plasma_no_clearance() -> (
-    None
-):
+def test_without_a_dose_there_is_no_percentage_and_without_plasma_no_clearance(
+    urine_engine: str,
+) -> None:
     """A collection without a dose has no `percent_recovered`, one without plasma no `clr`."""
     start, end = EDGES[:-1], EDGES[1:]
     exc = Excretion(
@@ -261,7 +268,7 @@ def test_without_a_dose_there_is_no_percentage_and_without_plasma_no_clearance()
     assert "clr" not in result.ds.data_vars
 
 
-def test_a_dose_in_an_incompatible_unit_is_rejected() -> None:
+def test_a_dose_in_an_incompatible_unit_is_rejected(urine_engine: str) -> None:
     """The recovered amount and the dose have to be comparable."""
     start, end = EDGES[:-1], EDGES[1:]
     exc = Excretion(
@@ -293,7 +300,7 @@ def placebo(dose_unit: str = "mg") -> Excretion:
     )
 
 
-def test_a_placebo_arm_has_no_percentage_and_is_no_error() -> None:
+def test_a_placebo_arm_has_no_percentage_and_is_no_error(urine_engine: str) -> None:
     """A dose of 0 gives `percent_recovered` as `NaN`, as every dose divided parameter."""
     result = nca_urine(placebo())
     assert np.isnan(float(result["percent_recovered"]))
@@ -303,7 +310,9 @@ def test_a_placebo_arm_has_no_percentage_and_is_no_error() -> None:
     assert float(result["vol_ur"]) == pytest.approx(1e-3 * VOLUME.sum())
 
 
-def test_a_placebo_arm_in_an_incompatible_unit_is_still_rejected() -> None:
+def test_a_placebo_arm_in_an_incompatible_unit_is_still_rejected(
+    urine_engine: str,
+) -> None:
     """The dose of 0 does not skip the unit check, which is about the units."""
     with pytest.raises(ValueError, match="cannot be compared"):
         nca_urine(placebo(dose_unit="mmole"))
@@ -338,6 +347,7 @@ def test_a_contradicting_amount_concentration_and_volume_is_rejected() -> None:
 
 
 def test_a_plasma_result_reaching_past_the_collections_is_reported(
+    urine_engine: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """`clr` from a result divides by the whole curve, which is logged when the windows differ."""
@@ -358,3 +368,190 @@ def test_a_plasma_result_reaching_past_the_collections_is_reported(
     with caplog.at_level("INFO", logger="pkpdutils.nca.urine"):
         nca_urine(collected(), plasma=curve)
     assert "collections end at" not in caplog.text
+
+
+def run_both(
+    monkeypatch: pytest.MonkeyPatch,
+    excretion: Excretion,
+    **kwargs: Any,
+) -> tuple[NCAResult, NCAResult]:
+    """The urine analysis through the kernel and, forced, through python."""
+    kernel = nca_urine(excretion, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "_force_python", True)
+        python = nca_urine(excretion, **kwargs)
+    return kernel, python
+
+
+def assert_same(kernel: NCAResult, python: NCAResult) -> None:
+    """Every variable: names, dtype, NaN positions exact, numbers at 1e-12, units."""
+    assert list(kernel.ds.data_vars) == list(python.ds.data_vars)
+    for name in map(str, python.ds.data_vars):
+        a, b = kernel[name].to_numpy(), python[name].to_numpy()
+        assert a.dtype == b.dtype, name
+        np.testing.assert_array_equal(np.isnan(a), np.isnan(b), err_msg=name)
+        np.testing.assert_allclose(a, b, rtol=1e-12, equal_nan=True, err_msg=name)
+        assert kernel.units(name) == python.units(name), name
+
+
+def test_both_engines_agree_variable_by_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every variable with a dose and a plasma curve: NaN positions exact, numbers at 1e-12."""
+    if not hasattr(engine.pkpdutils_core, "nca_urine"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_urine`")
+    kernel, python = run_both(monkeypatch, collected(), plasma=plasma_curve())
+    assert "clr" in python.ds.data_vars
+    assert_same(kernel, python)
+    # an excretion without a dose, whose route the kernel is sent as oral
+    start, end = EDGES[:-1], EDGES[1:]
+    nodose = Excretion(
+        start=start,
+        end=end,
+        amount=AMOUNT * (np.exp(-K * start) - np.exp(-K * end)),
+        unit="mg",
+        time_unit="hr",
+    )
+    assert_same(*run_both(monkeypatch, nodose))
+
+
+def test_the_kernel_is_really_used_when_it_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the kernel present and not forced off the call goes through it."""
+    if not hasattr(engine.pkpdutils_core, "nca_urine"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_urine`")
+    calls: list[int] = []
+    real = engine.pkpdutils_core.nca_urine
+    monkeypatch.setattr(
+        engine.pkpdutils_core, "nca_urine", lambda r: (calls.append(1), real(r))[1]
+    )
+    monkeypatch.setattr(engine, "_force_python", False)
+    nca_urine(collected())
+    assert calls == [1]
+
+
+def test_a_forced_python_run_does_not_touch_the_kernel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_force_python` keeps the urine analysis on the python path."""
+
+    def refuse(request: object) -> None:
+        raise AssertionError("the kernel was called")
+
+    monkeypatch.setattr(engine.pkpdutils_core, "nca_urine", refuse, raising=False)
+    monkeypatch.setattr(engine, "_force_python", True)
+    result = nca_urine(collected())
+    assert float(result["lambda_z"]) == pytest.approx(K)
+
+
+def test_the_placebo_arm_agrees_between_the_engines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dose of 0 and nothing excreted: `percent_recovered` is NaN on both engines."""
+    if not hasattr(engine.pkpdutils_core, "nca_urine"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_urine`")
+    kernel, python = run_both(monkeypatch, placebo())
+    assert_same(kernel, python)
+    assert np.isnan(float(kernel["percent_recovered"]))
+
+
+def test_a_unit_the_kernel_cannot_read_takes_the_python_path(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The refusal as `UnsupportedError` is answered by python, with the forced answer."""
+    if not hasattr(engine.pkpdutils_core, "nca_urine"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_urine`")
+    start, end = EDGES[:-1], EDGES[1:]
+    exc = Excretion(
+        start=start,
+        end=end,
+        amount=AMOUNT * (np.exp(-K * start) - np.exp(-K * end)),
+        unit="grain",
+        time_unit="hr",
+    )
+    with caplog.at_level("INFO", logger="pkpdutils.nca.urine"):
+        kernel, python = run_both(monkeypatch, exc)
+    # the refusal really happened, else the test would pass without a fallback
+    assert "the urine analysis takes the python path" in caplog.text
+    assert kernel.units("amount_recovered") == "grain"
+    assert_same(kernel, python)
+
+
+def test_a_malformed_request_still_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `ValueError` of the kernel is no refusal and is not answered by python."""
+
+    def malformed(request: object) -> None:
+        raise ValueError("malformed")
+
+    monkeypatch.setattr(engine.pkpdutils_core, "nca_urine", malformed, raising=False)
+    monkeypatch.setattr(engine, "_force_python", False)
+    with pytest.raises(ValueError, match="malformed"):
+        nca_urine(collected())
+
+
+def zero_plasma() -> Timecourse:
+    """A plasma curve of zero concentrations, whose area is exactly 0."""
+    return Timecourse(
+        time=np.array([0.0, 6.0, 12.0, 24.0]),
+        value=np.zeros(4),
+        time_unit="hr",
+        unit="mg/l",
+        dose=DOSE,
+        substance="drug",
+    )
+
+
+def test_a_zero_plasma_area_gives_an_infinite_clearance(
+    urine_engine: str,
+) -> None:
+    """The recovered amount over an area of 0 is `inf`, not a `ZeroDivisionError`."""
+    result = nca_urine(collected(), plasma=zero_plasma())
+    assert float(result["clr"]) == np.inf
+    assert result.units("clr") == "liter / hour"
+
+
+def test_nothing_recovered_over_a_zero_plasma_area_is_nan(
+    urine_engine: str,
+) -> None:
+    """0 over 0 is `nan` on both engines."""
+    result = nca_urine(placebo(), plasma=zero_plasma())
+    assert np.isnan(float(result["clr"]))
+
+
+@pytest.mark.parametrize(
+    ("route", "points", "flags"),
+    [
+        (None, [3, 4, 5], 1024),
+        (None, [0, 1, 2, 3, 4, 5], 0),
+        (Route.ORAL, [3, 4, 5], 1040),
+        (Route.ORAL, [0, 1, 2, 3, 4, 5], 16),
+        (Route.IV_BOLUS, [3, 4, 5], 1024),
+    ],
+    ids=["dose-less-last3", "dose-less-all", "oral-last3", "oral-all", "bolus-last3"],
+)
+def test_a_manual_terminal_window_agrees_between_the_engines(
+    urine_engine: str,
+    monkeypatch: pytest.MonkeyPatch,
+    route: Route | None,
+    points: list[int],
+    flags: int,
+) -> None:
+    """A manual window regresses the given collections on both engines, flags and NaN exact."""
+    exc = Excretion(
+        start=np.arange(0.0, 12.0, 2.0),
+        end=np.arange(2.0, 14.0, 2.0),
+        amount=np.array([300.0, 200.0, 120.0, 70.0, 42.0, 25.0]),
+        unit="mg",
+        time_unit="hr",
+        dose=None if route is None else Dose(amount=1.0, unit="g", route=route),
+    )
+    options = NCAOptions(terminal=TerminalPhase(method="manual", points=points))
+    result = nca_urine(exc, options=options)
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "_force_python", True)
+        python = nca_urine(exc, options=options)
+    assert np.isfinite(float(python["lambda_z"]))
+    assert_same(result, python)
+    assert int(python["flags"]) == flags
+    assert int(result["flags"]) == flags

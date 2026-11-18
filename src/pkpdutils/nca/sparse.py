@@ -339,6 +339,115 @@ def sparse_mean(
     )
 
 
+def _python_sparse(
+    t: np.ndarray, y: np.ndarray
+) -> tuple[dict[str, float], np.ndarray, int, int]:
+    """The sparse parameters in python, the reference the kernel is checked against.
+
+    Args:
+        t: the nominal times.
+        y: the values `(n_animals, n_time)`.
+
+    Returns:
+        The magnitudes of `SPARSE_VARIABLES`, the animals per time, the flags
+        and the number of batches; `bailer_variance` logs the single animal
+        batches itself.
+    """
+    n, mean, sd = point_statistics(y)
+    observed = n > 0
+    flags = int(NCAFlag.NONE)
+    if int(observed.sum()) < 2:
+        flags |= int(NCAFlag.NO_DATA)
+
+    all_weights = np.zeros(t.shape)
+    if int(observed.sum()) > 1:
+        all_weights[observed] = trapezoid_weights(t[observed])
+    last_weights = np.zeros(t.shape)
+    through_last = area_window(observed, mean)
+    if int(through_last.sum()) > 1:
+        last_weights[through_last] = trapezoid_weights(t[through_last])
+
+    auc_last = float(np.nansum(last_weights * np.nan_to_num(mean)))
+    auc_all = float(np.nansum(all_weights * np.nan_to_num(mean)))
+    variance, df, n_batches = bailer_variance(last_weights, y)
+
+    peak = int(np.nanargmax(np.where(observed, mean, -np.inf))) if observed.any() else 0
+    cmax = float(mean[peak]) if observed.any() else np.nan
+    tmax = float(t[peak]) if observed.any() else np.nan
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cmax_se = (
+            float(sd[peak] / np.sqrt(n[peak]))
+            if observed.any() and n[peak] > 1
+            else np.nan
+        )
+
+    magnitudes: dict[str, float] = {
+        "auc_last": auc_last if last_weights.any() else np.nan,
+        "auc_last_se": float(np.sqrt(variance)),
+        "auc_last_df": float(df),
+        "auc_all": auc_all if all_weights.any() else np.nan,
+        "cmax": cmax,
+        "cmax_se": cmax_se,
+        "tmax": tmax,
+    }
+    return magnitudes, n, flags, n_batches
+
+
+def _kernel_sparse(
+    times: np.ndarray,
+    values: np.ndarray,
+    *,
+    design: str,
+    unit: str,
+    time_unit: str,
+    dose_unit: str | None,
+) -> dict[str, Any] | None:
+    """The answer of the rust kernel, `None` where the python path runs.
+
+    The kernel is not used while `pkpdutils.nca.engine._force_python` is set, so
+    that the python implementation stays the reference, nor when the installed
+    `pkpdutils-core` predates `nca_sparse`. A refusal as `UnsupportedError` (a
+    unit the registry of the kernel does not read) is the kernel saying that the
+    python path has to answer, and so returns `None`. A request the kernel
+    rejects as malformed raises `ValueError` and is never answered by the python
+    path, so that a defect is not hidden behind the fallback.
+
+    Args:
+        times: the nominal times.
+        values: the values `(n_animals, n_time)`.
+        design: `"serial"` or `"batch"`.
+        unit: unit of the values.
+        time_unit: unit of the times.
+        dose_unit: unit of the dose, `None` without one.
+
+    Returns:
+        The answer of `pkpdutils_core.nca_sparse`, or `None`.
+
+    Raises:
+        ValueError: if the kernel rejects the request as malformed.
+    """
+    from pkpdutils.nca import engine  # deferred, the engine imports the nca package
+
+    kernel = getattr(engine.pkpdutils_core, "nca_sparse", None)
+    if kernel is None or engine._force_python:
+        return None
+    request = {
+        "times": np.ascontiguousarray(times, dtype=np.float64),
+        "values": np.ascontiguousarray(values, dtype=np.float64).reshape(-1),
+        "n_rows": values.shape[0],
+        "n_cols": values.shape[1],
+        "design": design,
+        "unit": unit,
+        "time_unit": time_unit,
+        "dose_unit": dose_unit,
+    }
+    try:
+        return kernel(request)
+    except engine.UnsupportedError as refusal:
+        logger.info("the sparse analysis takes the python path: %s", refusal)
+        return None
+
+
 def nca_sparse(
     times: Any,
     values: Any,
@@ -421,23 +530,30 @@ def nca_sparse(
             logger.debug("%s", message)
     t, y = _as_values(times, values)
     _check_design(y, design)
-    n, mean, sd = point_statistics(y)
-    observed = n > 0
-    flags = int(NCAFlag.NONE)
-    if int(observed.sum()) < 2:
-        flags |= int(NCAFlag.NO_DATA)
-
-    all_weights = np.zeros(t.shape)
-    if int(observed.sum()) > 1:
-        all_weights[observed] = trapezoid_weights(t[observed])
-    last_weights = np.zeros(t.shape)
-    through_last = area_window(observed, mean)
-    if int(through_last.sum()) > 1:
-        last_weights[through_last] = trapezoid_weights(t[through_last])
-
-    auc_last = float(np.nansum(last_weights * np.nan_to_num(mean)))
-    auc_all = float(np.nansum(all_weights * np.nan_to_num(mean)))
-    variance, df, n_batches = bailer_variance(last_weights, y)
+    dose_unit = None if dose is None else dose.unit
+    answer = _kernel_sparse(
+        t, y, design=design, unit=unit, time_unit=time_unit, dose_unit=dose_unit
+    )
+    if answer is None:
+        magnitudes, n, flags, n_batches = _python_sparse(t, y)
+    else:
+        magnitudes = {
+            name: float(answer["parameters"][name][0]) for name in SPARSE_VARIABLES
+        }
+        # the point variables of the kernel are floats, the result carries counts
+        n = np.asarray(answer["point_variables"]["n_animals"]["values"]).astype(
+            np.int64
+        )
+        flags = int(np.asarray(answer["flags"]).reshape(-1)[0])
+        n_batches = int(answer["n_batches"])
+        if singletons := int(answer["singletons"]):
+            # `bailer_variance` is not called on this path, its diagnostic is
+            logger.warning(
+                "%d of %d batches hold a single animal: the variance of the area "
+                "cannot be estimated",
+                singletons,
+                n_batches,
+            )
     logger.debug(
         "sparse %s design: %d animals, %d nominal times, %d batches",
         design,
@@ -445,27 +561,6 @@ def nca_sparse(
         t.size,
         n_batches,
     )
-
-    peak = int(np.nanargmax(np.where(observed, mean, -np.inf))) if observed.any() else 0
-    cmax = float(mean[peak]) if observed.any() else np.nan
-    tmax = float(t[peak]) if observed.any() else np.nan
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cmax_se = (
-            float(sd[peak] / np.sqrt(n[peak]))
-            if observed.any() and n[peak] > 1
-            else np.nan
-        )
-
-    magnitudes: dict[str, float] = {
-        "auc_last": auc_last if last_weights.any() else np.nan,
-        "auc_last_se": float(np.sqrt(variance)),
-        "auc_last_df": float(df),
-        "auc_all": auc_all if all_weights.any() else np.nan,
-        "cmax": cmax,
-        "cmax_se": cmax_se,
-        "tmax": tmax,
-    }
-    dose_unit = None if dose is None else dose.unit
     data_vars: dict[str, Any] = {}
     for name in SPARSE_VARIABLES:
         parameter_unit_string, factor = parameter_unit(

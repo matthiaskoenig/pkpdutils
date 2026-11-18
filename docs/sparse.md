@@ -2,6 +2,8 @@
 
 A preclinical study rarely samples one animal repeatedly: the animal is sacrificed for its sample (a destructive design, one sample per animal) or contributes a few samples out of the schedule (a batch design). There is no curve per animal then, only a mean curve over the animals of every nominal time, and the exposure of the study is the area under that mean curve. `pkpdutils.nca.sparse` estimates it with the standard error of Bailer[^bailer], the degrees of freedom of Nedelman, Gibiansky and Lau[^nedelman] and, for a batch design, the extension of Nedelman and Jia[^nedelman_jia] in the form Holder[^holder] gives it, so the area of a toxicokinetic study comes with an interval rather than as a bare number. It is the design ICH S3A[^ich_s3a] describes and the one every comparable tool supports (Phoenix WinNonlin models 200 to 202 and 210 to 212 with `SE_AUClast`, PKanalix since 2024R1, PKNCA `sparse_auclast`, the R package `PK`).
 
+The analysis dispatches to the rust kernel `pkpdutils-core` when it is installed and falls back to the python implementation otherwise, also for a request the kernel does not support, such as a unit its registry does not read. `PKPDUTILS_COMPARE_ENGINES=1` does not cover this call; `pkpdutils.nca.engine._force_python` switches the kernel off, e.g. to bisect a difference. See [NCA](nca.md#the-two-engines).
+
 ## Concepts
 
 **The design as a matrix.** The data is one row per animal and one column per nominal time, `NaN` where the animal has no sample at that time. A serial design has one finite value per row, a batch design several; the same matrix describes both and `design="serial"` is the promise that every row carries a single sample, which is checked.

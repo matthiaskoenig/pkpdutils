@@ -343,6 +343,222 @@ def _plasma_area(
     return float(np.asarray(area.to_numpy()).reshape(-1)[0]), str(area.attrs["units"])
 
 
+def _curve_options(options: NCAOptions) -> NCAOptions:
+    """The options a rate curve is read with, on both engines.
+
+    The rules which read a concentration (`lloq`, `blq`, `partial_aucs`, `tau`,
+    `acceptance`, the uncertainty) do not apply to a rate, which has no limit of
+    quantification, so only `auc_method`, `c0_method`, `terminal` and
+    `extrapolation_warning` are kept.
+
+    Args:
+        options: the options of the analysis.
+
+    Returns:
+        The narrowed options.
+    """
+    return NCAOptions(
+        auc_method=options.auc_method,
+        c0_method=options.c0_method,
+        terminal=options.terminal,
+        extrapolation_warning=options.extrapolation_warning,
+    )
+
+
+def _kernel_urine(
+    excretion: Excretion,
+    *,
+    options: NCAOptions,
+    area: float | None,
+    area_unit: str | None,
+) -> dict[str, Any] | None:
+    """The answer of the rust kernel, `None` where the python path runs.
+
+    The kernel is not used while `pkpdutils.nca.engine._force_python` is set, so
+    that the python implementation stays the reference, nor when the installed
+    `pkpdutils-core` predates `nca_urine`. A refusal as `UnsupportedError` (a
+    unit the registry of the kernel does not read) is the kernel saying that the
+    python path has to answer, and so returns `None`. A `ValueError` is a
+    malformed request and propagates, so that a defect is never hidden behind
+    the fallback.
+
+    Args:
+        excretion: the collections of one subject.
+        options: the options of the analysis.
+        area: the plasma area over the collection span, `None` without plasma.
+        area_unit: unit of the area, `None` without plasma.
+
+    Returns:
+        The answer of `pkpdutils_core.nca_urine`, or `None`.
+
+    Raises:
+        ValueError: if the kernel rejects the request as malformed.
+    """
+    from pkpdutils.nca import engine  # deferred, the engine imports the nca package
+
+    kernel = getattr(engine.pkpdutils_core, "nca_urine", None)
+    if kernel is None or engine._force_python:
+        return None
+    dose = excretion.dose
+    assert excretion.amount is not None
+    request = {
+        "start": np.ascontiguousarray(excretion.start, dtype=np.float64),
+        "end": np.ascontiguousarray(excretion.end, dtype=np.float64),
+        "amount": np.ascontiguousarray(excretion.amount, dtype=np.float64),
+        # `None` only for an excretion without volumes: an array of `NaN` is
+        # an excretion with volumes, whose `vol_ur` is 0 and not `NaN`
+        "volume": (
+            None
+            if excretion.volume is None
+            else np.ascontiguousarray(excretion.volume, dtype=np.float64)
+        ),
+        "unit": excretion.unit,
+        "time_unit": excretion.time_unit,
+        "volume_unit": excretion.volume_unit or "liter",
+        # The wire requires a route string and rejects None. Without a dose the value is invented and
+        # the kernel discards it: it derives the route from the dose. It becomes live if the kernel
+        # ever reads `route` for anything beyond the dose insertion.
+        "route": "oral" if dose is None else str(dose.route.value),
+        "dose_amount": None if dose is None else float(dose.amount),
+        "dose_unit": None if dose is None else dose.unit,
+        "area": area,
+        "area_unit": area_unit,
+        "options": engine.options_dict(_curve_options(options)),
+    }
+    try:
+        return kernel(request)
+    except engine.UnsupportedError as refusal:
+        logger.info("the urine analysis takes the python path: %s", refusal)
+        return None
+
+
+def _python_urine(
+    excretion: Excretion,
+    *,
+    options: NCAOptions,
+    area: float | None,
+    area_unit: str | None,
+) -> dict[str, Any]:
+    """The urine parameters in python, the reference the kernel is checked against.
+
+    Args:
+        excretion: the collections of one subject.
+        options: the options of the rate curve.
+        area: the plasma area over the collection span, `None` without plasma.
+        area_unit: unit of the area, `None` without plasma.
+
+    Returns:
+        The dict of `pkpdutils_core.nca_urine`: `parameters` (one entry arrays),
+        `units`, `point_variables` (`midpoint` and `rate`) and `flags`.
+
+    Raises:
+        ValueError: if the recovered amount cannot be compared with the dose.
+    """
+    curve_options = _curve_options(options)
+    midpoint = excretion.midpoint
+    rate = excretion.rate
+    values = compute_parameters(
+        midpoint[None, :],
+        rate[None, :],
+        dose_amount=None,
+        dose_time=None,
+        dose_duration=None,
+        route=excretion.route,
+        options=curve_options,
+    )
+
+    parameters: dict[str, np.ndarray] = {}
+    units: dict[str, str] = {}
+    # a study without recorded volumes reports `vol_ur` as `NaN` liter, the
+    # canonical volume of the package, rather than without a unit
+    volume_unit = excretion.volume_unit or "liter"
+
+    def resolve(expression: str) -> tuple[str, float]:
+        """The unit of an expression of the excretion and the factor to it."""
+        return parameter_unit(
+            expression,
+            unit="dimensionless",
+            time_unit=excretion.time_unit,
+            dose_unit=None if excretion.dose is None else excretion.dose.unit,
+            amount_unit=excretion.unit,
+            volume_unit=volume_unit,
+        )
+
+    def write(name: str, value: float, expression: str) -> None:
+        """Write one scalar variable of the result, converted to its canonical unit."""
+        unit, factor = resolve(expression)
+        parameters[name] = np.array([float(value) * factor])
+        units[name] = unit
+
+    for name, source in RATE_PARAMETERS.items():
+        write(name, float(values[source][0]), PARAMETER_UNITS[name])
+    write(
+        "amount_recovered", excretion.total_amount, PARAMETER_UNITS["amount_recovered"]
+    )
+    write("vol_ur", excretion.total_volume, PARAMETER_UNITS["vol_ur"])
+
+    percent = np.nan
+    if excretion.dose is not None:
+        # the recovered amount in multiples of **one** unit of the dose, which
+        # is the unit check and carries the factor between the two units; the
+        # amount of the dose is divided out afterwards and not here, so that a
+        # dose of 0 does not divide at all
+        try:
+            recovered = (
+                Q_(excretion.total_amount, excretion.unit)
+                / Q_(1.0, excretion.dose.unit)
+            ).to("dimensionless")
+        except Exception as error:  # pint raises several exception types
+            raise ValueError(
+                f"the recovered amount in '{excretion.unit}' cannot be compared "
+                f"with the dose in '{excretion.dose.unit}'"
+            ) from error
+        if excretion.dose.amount > 0.0:
+            percent = 100.0 * float(recovered.magnitude) / excretion.dose.amount
+        else:
+            # a dose of 0 is the encoding of a placebo arm (`Dose.amount` is
+            # non-negative) and the fraction of the dose recovered is not
+            # defined for it, so it is `NaN`, as every parameter which divides
+            # by the dose (`pkpdutils.nca.nca.positive_dose`). It is no error:
+            # the units are compatible, which the conversion above asserted,
+            # and a placebo arm is an arm of a study and not a malformed one
+            logger.debug(
+                "urine analysis of %s: a dose of 0, so 'percent_recovered' is NaN",
+                excretion.label or excretion.substance,
+            )
+    write("percent_recovered", percent, PARAMETER_UNITS["percent_recovered"])
+
+    if area is not None and area_unit is not None:
+        # `({amount}) / (({unit}) * ({time}))` of `PARAMETER_UNITS["clr"]`,
+        # spelled with the concrete units of the two quantities, since the
+        # concentration unit of the plasma curve is not a unit of the excretion
+        clr_unit, factor = parameter_unit(
+            f"({excretion.unit}) / ({area_unit})",
+            unit="dimensionless",
+            time_unit=excretion.time_unit,
+            dose_unit=None,
+        )
+        # both operands are python floats, which raise on a division by zero
+        # where numpy answers `inf` (an area of 0) or `nan` (0 over 0), the
+        # answer of the kernel
+        with np.errstate(divide="ignore", invalid="ignore"):
+            clr = float(np.divide(excretion.total_amount, area))
+        parameters["clr"] = np.array([clr * factor])
+        units["clr"] = clr_unit
+
+    points: dict[str, dict[str, Any]] = {}
+    for name, array in (("midpoint", midpoint), ("rate", rate)):
+        unit, factor = resolve(PARAMETER_UNITS[name])
+        points[name] = {"dim": COLLECTION_DIM, "values": array * factor}
+        units[name] = unit
+    return {
+        "parameters": parameters,
+        "units": units,
+        "point_variables": points,
+        "flags": values["flags"],
+    }
+
+
 def nca_urine(
     excretion: Excretion,
     *,
@@ -405,107 +621,35 @@ def nca_urine(
         dimension `collection`.
     """
     options = options or NCAOptions()
-    # the rate curve is read with the rules of a curve, not with the rules
-    # which read a concentration (a rate has no limit of quantification)
-    curve_options = NCAOptions(
-        auc_method=options.auc_method,
-        c0_method=options.c0_method,
-        terminal=options.terminal,
-        extrapolation_warning=options.extrapolation_warning,
+    area, area_unit = (
+        (None, None) if plasma is None else _plasma_area(plasma, excretion, options)
     )
-    midpoint = excretion.midpoint
-    rate = excretion.rate
-    values = compute_parameters(
-        midpoint[None, :],
-        rate[None, :],
-        dose_amount=None,
-        dose_time=None,
-        dose_duration=None,
-        route=excretion.route,
-        options=curve_options,
-    )
+    answer = _kernel_urine(excretion, options=options, area=area, area_unit=area_unit)
+    if answer is None:
+        answer = _python_urine(
+            excretion, options=options, area=area, area_unit=area_unit
+        )
 
     data_vars: dict[str, Any] = {}
-    # a study without recorded volumes reports `vol_ur` as `NaN` liter, the
-    # canonical volume of the package, rather than without a unit
-    volume_unit = excretion.volume_unit or "liter"
-
-    def resolve(expression: str) -> tuple[str, float]:
-        """The unit of an expression of the excretion and the factor to it."""
-        return parameter_unit(
-            expression,
-            unit="dimensionless",
-            time_unit=excretion.time_unit,
-            dose_unit=None if excretion.dose is None else excretion.dose.unit,
-            amount_unit=excretion.unit,
-            volume_unit=volume_unit,
-        )
-
-    def write(name: str, value: float, expression: str) -> None:
-        """Write one scalar variable of the result, converted to its canonical unit."""
-        unit, factor = resolve(expression)
-        data_vars[name] = xr.DataArray(float(value) * factor, attrs={"units": unit})
-
-    for name, source in RATE_PARAMETERS.items():
-        write(name, float(values[source][0]), PARAMETER_UNITS[name])
-    write(
-        "amount_recovered", excretion.total_amount, PARAMETER_UNITS["amount_recovered"]
-    )
-    write("vol_ur", excretion.total_volume, PARAMETER_UNITS["vol_ur"])
-
-    percent = np.nan
-    if excretion.dose is not None:
-        # the recovered amount in multiples of **one** unit of the dose, which
-        # is the unit check and carries the factor between the two units; the
-        # amount of the dose is divided out afterwards and not here, so that a
-        # dose of 0 does not divide at all
-        try:
-            recovered = (
-                Q_(excretion.total_amount, excretion.unit)
-                / Q_(1.0, excretion.dose.unit)
-            ).to("dimensionless")
-        except Exception as error:  # pint raises several exception types
+    for name, value in answer["parameters"].items():
+        if np.asarray(value).size != 1:
             raise ValueError(
-                f"the recovered amount in '{excretion.unit}' cannot be compared "
-                f"with the dose in '{excretion.dose.unit}'"
-            ) from error
-        if excretion.dose.amount > 0.0:
-            percent = 100.0 * float(recovered.magnitude) / excretion.dose.amount
-        else:
-            # a dose of 0 is the encoding of a placebo arm (`Dose.amount` is
-            # non-negative) and the fraction of the dose recovered is not
-            # defined for it, so it is `NaN`, as every parameter which divides
-            # by the dose (`pkpdutils.nca.nca.positive_dose`). It is no error:
-            # the units are compatible, which the conversion above asserted,
-            # and a placebo arm is an arm of a study and not a malformed one
-            logger.debug(
-                "urine analysis of %s: a dose of 0, so 'percent_recovered' is NaN",
-                excretion.label or excretion.substance,
+                f"the urine analysis of '{name}' holds {np.asarray(value).size} "
+                "values, one subject has exactly one"
             )
-    write("percent_recovered", percent, PARAMETER_UNITS["percent_recovered"])
-
-    if plasma is not None:
-        area, area_unit = _plasma_area(plasma, excretion, options)
-        # `({amount}) / (({unit}) * ({time}))` of `PARAMETER_UNITS["clr"]`,
-        # spelled with the concrete units of the two quantities, since the
-        # concentration unit of the plasma curve is not a unit of the excretion
-        clr_unit, factor = parameter_unit(
-            f"({excretion.unit}) / ({area_unit})",
-            unit="dimensionless",
-            time_unit=excretion.time_unit,
-            dose_unit=None,
-        )
-        with np.errstate(divide="ignore", invalid="ignore"):
-            clr = excretion.total_amount / area
-        data_vars["clr"] = xr.DataArray(clr * factor, attrs={"units": clr_unit})
-
-    for name, array in (("midpoint", midpoint), ("rate", rate)):
-        unit, factor = resolve(PARAMETER_UNITS[name])
         data_vars[name] = xr.DataArray(
-            array * factor, dims=COLLECTION_DIM, attrs={"units": unit}
+            float(np.asarray(value).reshape(-1)[0]),
+            attrs={"units": answer["units"][name]},
+        )
+    for name, point in answer["point_variables"].items():
+        data_vars[name] = xr.DataArray(
+            np.asarray(point["values"], dtype=np.float64),
+            dims=point["dim"],
+            attrs={"units": answer["units"][name]},
         )
     data_vars["flags"] = xr.DataArray(
-        np.int64(values["flags"][0]), attrs={"units": "dimensionless"}
+        np.int64(np.asarray(answer["flags"]).reshape(-1)[0]),
+        attrs={"units": "dimensionless"},
     )
 
     ds = xr.Dataset(
