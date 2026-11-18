@@ -329,6 +329,22 @@ def resolve_spread(
     )
 
 
+def draw_seed() -> int:
+    """A seed of the bootstrap, drawn from the entropy of the operating system.
+
+    `NCAOptions.seed` of `None` means the host draws the seed, because the
+    kernel reads none: it has no entropy in a wasm instance, and a kernel which
+    reached for the operating system would not build for one
+    (`pkpdutils.nca.engine.kernel_normals`). `nca` draws it before it dispatches
+    and writes it into the options of the result, so that the two engines run
+    the same bootstrap and a run can be repeated exactly as it ran.
+
+    Returns:
+        A seed, uniform over `[0, 2**64)`.
+    """
+    return int(np.random.default_rng().integers(0, 2**64, dtype=np.uint64))
+
+
 def resample_values(
     c: np.ndarray,
     spread: np.ndarray,
@@ -576,14 +592,7 @@ def bootstrap(
     spread = resolve_spread(timecourses, options)
     with np.errstate(invalid="ignore"):
         any_usable = (np.isfinite(spread) & (spread > 0)).any(axis=1)
-    # `seed=None` means the host draws the seed, because the kernel reads no
-    # entropy: it has none in a wasm instance, and a kernel which reached for
-    # the operating system would not build there
-    seed = (
-        int(np.random.default_rng().integers(0, 2**64, dtype=np.uint64))
-        if options.seed is None
-        else int(options.seed)
-    )
+    seed = draw_seed() if options.seed is None else int(options.seed)
     b = options.n_boot
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
 

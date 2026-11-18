@@ -493,7 +493,6 @@ def refusal_rows() -> list[tuple[str, str]]:
             refuses, which would make the row of the page a wrong claim.
     """
     batch = mono_batch(2)
-    group = mono_batch(2, spread=True)
     cases: list[tuple[str, Timecourses, NCAOptions]] = [
         ("an effect curve", batch, NCAOptions(kind=Kind.EFFECT)),
         (
@@ -506,7 +505,6 @@ def refusal_rows() -> list[tuple[str, str]]:
             batch,
             NCAOptions(partial_aucs={"auc_0_4": (0.0, 4.0)}),
         ),
-        ("the uncertainty of a group curve", group, NCAOptions()),
         (
             "routes which differ in their dosing",
             mixed_route_batch(),

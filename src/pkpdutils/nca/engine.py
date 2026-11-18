@@ -69,13 +69,22 @@ and `EXTRAPOLATED_TROUGH`, and a last interval completed within `tau_tolerance`)
   kernel reports for every variable, which the host neither adopts nor drops.
 
 What the gate does **not** reach is every analysis the dispatch refuses, since
-a batch which never goes to the kernel is held against nothing: the
-propagation of the uncertainty of a group curve, the acceptance criteria, the
-named partial areas, the effect curve and the unit conversion of a result
-(`unsupported_reason`, the table of `docs/benchmark.md`). Every one of those is
-held to the python core alone, by the reference tests of the suite, and the day
-the kernel carries one of them the gate compares it without a word being
-changed here.
+a batch which never goes to the kernel is held against nothing: the acceptance
+criteria, the named partial areas, the effect curve and the unit conversion of
+a result (`unsupported_reason`, the table of `docs/benchmark.md`). Every one of
+those is held to the python core alone, by the reference tests of the suite,
+and the day the kernel carries one of them the gate compares it without a word
+being changed here.
+
+The uncertainty of a group curve is the case that day came for: the kernel
+propagates it inside `analyze_batch` and the python core propagates it inside
+`python_rows` of `nca`, which are the two answers the gate already holds
+against each other, so every `x_sd`, `x_se`, `x_ci_low`, `x_ci_high`,
+`x_geomean` and `x_geocv` of a group batch is compared without a line of gate
+code of its own. The bootstrap is comparable at all because both engines draw
+from the kernel (`kernel_normals`) and `nca` resolves the seed before it
+dispatches, so the two run the same replicates rather than two samples of one
+distribution.
 
 The analyses which are dispatched to the kernel but never pass through `nca`
 are no business of the gate either: `ParameterResult.summarize`,
@@ -120,7 +129,7 @@ from pkpdutils.nca.options import (
     encode_window_key,
 )
 from pkpdutils.nca.result import parameter_unit
-from pkpdutils.result import sample_coordinates
+from pkpdutils.result import base_name, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourses
 
 try:
@@ -314,11 +323,13 @@ def unsupported_reason(
     """Why the kernel would refuse this analysis, `None` when it would run it.
 
     The kernel decides, the host forwards: every refusal of the kernel (an
-    effect curve, the acceptance criteria, the named partial areas, the
-    propagation of the uncertainty of a group curve, the unit conversion of a
-    result, and whatever a later release adds) is the answer of
+    effect curve, the acceptance criteria, the named partial areas, a bootstrap
+    whose seed the options leave open, the unit conversion of a result, and
+    whatever a later release adds) is the answer of
     `pkpdutils_core.is_supported`, text and order included, so that a release
     which changes a refusal changes it here without a change of the host.
+    `nca` draws the seed of a bootstrap before it asks, so the refusal of a
+    seedless one is one a caller of `nca` never meets.
 
     The host answers before it asks only what the kernel cannot see, which is
     a statement about the python objects and no refusal of the kernel's, and
@@ -1215,16 +1226,30 @@ def run_kernel(
     if units is not None:
         units.update(result["units"])
     n_rows = timecourses.n_samples
-    values: dict[str, np.ndarray] = {
+    columns: dict[str, np.ndarray] = {
         name: np.asarray(column, dtype=np.float64)
         for name, column in result["parameters"].items()
         if name not in HOST_VARIABLES
+    }
+    # the uncertainty variables go after the point variables, where the python
+    # core reports them: it propagates an uncertainty on top of an answer which
+    # already carries the per-interval variables, while the kernel appends its
+    # uncertainty columns to the parameters of that same answer
+    values: dict[str, np.ndarray] = {
+        name: column for name, column in columns.items() if base_name(name) is None
     }
     for name, variable in result["point_variables"].items():
         width = int(variable["size"])
         values[name] = np.asarray(variable["values"], dtype=np.float64).reshape(
             n_rows, width
         )
+    values.update(
+        {
+            name: column
+            for name, column in columns.items()
+            if base_name(name) is not None
+        }
+    )
     # `flags` goes last, where the python core reports it for a batch of one
     # route; `_python_order` moves it for a batch of several
     values["flags"] = np.asarray(result["flags"], dtype=np.float64)
