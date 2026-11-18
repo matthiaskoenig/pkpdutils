@@ -320,11 +320,11 @@ def run_both(
 
 
 def test_both_engines_agree_variable_by_variable(
-    sparse_engine: str, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every variable of a batch design: NaN positions exact, numbers at 1e-12."""
-    if sparse_engine == "python":
-        pytest.skip("the comparison runs both engines itself")
+    if not hasattr(engine.pkpdutils_core, "nca_sparse"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_sparse`")
     kernel, python = run_both(monkeypatch, "batch", batch_values())
     assert set(kernel.ds.data_vars) == set(python.ds.data_vars)
     for name in map(str, python.ds.data_vars):
