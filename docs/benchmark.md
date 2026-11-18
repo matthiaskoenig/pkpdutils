@@ -51,7 +51,6 @@ An analysis `pkpdutils-core` does not carry takes the python path, with the numb
 | an effect curve | the analysis of an effect curve (Kind::Effect) |
 | the acceptance criteria of the terminal phase | the acceptance criteria (NcaOptions::acceptance) |
 | a named partial area | the named partial areas (NcaOptions::partial_aucs) |
-| the uncertainty of a group curve | the propagation of the uncertainty of a group curve |
 | routes which differ in their dosing | a batch of several routes of which only some have a multiple dose row, whose variables the python core reports per route |
 | the reporting units of a result | the unit conversion of a result (NcaOptions::units) |
 <!-- refusals:end -->

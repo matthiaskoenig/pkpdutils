@@ -857,3 +857,91 @@ def urine_engine(
         assert calls, "the kernel was never asked for the urine analysis"
     else:
         assert not calls, "the forced python path reached the kernel"
+
+
+def uncertainty_reason() -> str | None:
+    """Why this build of `pkpdutils-core` would not propagate an uncertainty.
+
+    A behavioural probe and not a version comparison: the kernel is the
+    authority on what it carries (`pkpdutils.nca.engine.unsupported_reason`),
+    so the question is asked of a group batch with a seeded bootstrap rather
+    than of `pkpdutils_core.__version__`, which a locally built wheel of a
+    development tree shares with the release it was branched from.
+
+    Returns:
+        The reason the dispatch would give, or `None` when the kernel
+        propagates the uncertainty itself.
+    """
+    times = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
+    values = 10.0 * np.exp(-0.1 * times)
+    batch = Timecourses.from_arrays(
+        time=times,
+        values=values[None, :],
+        se=(0.1 * values)[None, :],
+        n=np.array([9.0]),
+        time_unit="hr",
+        unit="mg/l",
+        dose={"amount": 100.0, "unit": "mg"},
+        route="oral",
+        dims=("subject",),
+    )
+    return engine.unsupported_reason(batch, NCAOptions(seed=1, n_boot=8))
+
+
+@pytest.fixture
+def kernel_uncertainty() -> None:
+    """Skip a test which needs a kernel that propagates the uncertainty itself.
+
+    The companion of `uncertainty_engine` for a test which compares the two
+    engines itself rather than running once through each.
+
+    Raises:
+        Skipped: when this build of `pkpdutils-core` does not carry the
+            propagation (the wheels below 0.6 which the declared floor admits).
+    """
+    reason = uncertainty_reason()
+    if reason is not None:
+        pytest.skip(f"this build of pkpdutils-core refuses it: {reason}")
+
+
+@pytest.fixture(params=["kernel", "python"])
+def uncertainty_engine(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[str]:
+    """Run a test of the uncertainty of a group curve once through each engine.
+
+    The twin of `summary_engine` for the propagation of an uncertainty, which
+    is no entry point of its own: an engine answers it inside the one call
+    which analyses the batch (`pkpdutils_core.analyze_batch` for the kernel,
+    `python_rows` of `nca` for the python core), so the fixture counts the
+    calls of `analyze_batch` and asserts at teardown that the engine the test
+    names is the one which ran.
+
+    Args:
+        request: the parametrization.
+        monkeypatch: restores the forced flag and the wrapped entry point.
+
+    The `kernel` parameter skips when the installed `pkpdutils-core` does not
+    carry the propagation (the wheels below 0.6 which the declared floor
+    admits), with the reason the dispatch gives for it.
+
+    Yields:
+        The name of the engine the test runs under.
+    """
+    calls: list[int] = []
+    if request.param == "kernel":
+        reason = uncertainty_reason()
+        if reason is not None:
+            pytest.skip(f"this build of pkpdutils-core refuses it: {reason}")
+    real = pkpdutils_core.analyze_batch  # ty: ignore[missing-attribute]
+    monkeypatch.setattr(
+        pkpdutils_core,
+        "analyze_batch",
+        lambda *args, **kwargs: (calls.append(1), real(*args, **kwargs))[1],
+    )
+    monkeypatch.setattr(engine, "_force_python", request.param == "python")
+    yield request.param
+    if request.param == "kernel":
+        assert calls, "the kernel was never asked to analyse the batch"
+    else:
+        assert not calls, "the forced python path reached the kernel"

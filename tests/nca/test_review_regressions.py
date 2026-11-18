@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from pkpdutils import Timecourse, Timecourses
-from pkpdutils.nca import NCAOptions, nca, nca_single
+from pkpdutils.nca import NCAOptions, engine, nca, nca_single
 
 
 @pytest.mark.parametrize("scale", [1.0, 1e6, 1e-6, 1e-200, 1e200])
@@ -189,6 +189,9 @@ def test_terminal_regression_handles_offsets_and_small_slopes(
 
 
 def test_delta_bounds_generated_perturbations(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the blocking of the perturbations is the python core's, and the kernel
+    # answers the delta method of a group batch itself, so this one is forced
+    monkeypatch.setattr(engine, "_force_python", True)
     core = importlib.import_module("pkpdutils.nca.nca")
     original = core.run_analysis_rows
     seen = []
@@ -209,6 +212,9 @@ def test_delta_bounds_generated_perturbations(monkeypatch: pytest.MonkeyPatch) -
 def test_bootstrap_reduces_each_block_before_next_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # the order of the analysis and the reduction of a block is the python
+    # core's; the kernel blocks its own replicates and is held by its own tests
+    monkeypatch.setattr(engine, "_force_python", True)
     core = importlib.import_module("pkpdutils.nca.nca")
     uncertainty = importlib.import_module("pkpdutils.nca.uncertainty")
     original_run = core.run_analysis_rows

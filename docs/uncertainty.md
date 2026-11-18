@@ -129,10 +129,10 @@ print(f"se   {delta.to_quantities()['auc_inf_obs_se']:~P} (delta)")
 
 ```text
 auc  20.468797968630433 h⋅mg/l
-se   0.5528011615788205 h⋅mg/l
-ci   19.457701487836186 h⋅mg/l - 21.548631339792216 h⋅mg/l
-sd   1.771977691454522 h⋅mg/l
-se   0.5507979713871599 h⋅mg/l (delta)
+se   0.5518742702801419 h⋅mg/l
+ci   19.40132555167697 h⋅mg/l - 21.558707734324997 h⋅mg/l
+sd   1.787227358953787 h⋅mg/l
+se   0.5507979713871618 h⋅mg/l (delta)
 ```
 
 The bootstrap and the delta method agree on the standard error of an area, which is linear in the points; the standard deviation over the individuals is about \(\sqrt{10}\) times the standard error of the mean, the two scales the concepts above describe.

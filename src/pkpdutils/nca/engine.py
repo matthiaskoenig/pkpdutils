@@ -69,13 +69,22 @@ and `EXTRAPOLATED_TROUGH`, and a last interval completed within `tau_tolerance`)
   kernel reports for every variable, which the host neither adopts nor drops.
 
 What the gate does **not** reach is every analysis the dispatch refuses, since
-a batch which never goes to the kernel is held against nothing: the
-propagation of the uncertainty of a group curve, the acceptance criteria, the
-named partial areas, the effect curve and the unit conversion of a result
-(`unsupported_reason`, the table of `docs/benchmark.md`). Every one of those is
-held to the python core alone, by the reference tests of the suite, and the day
-the kernel carries one of them the gate compares it without a word being
-changed here.
+a batch which never goes to the kernel is held against nothing: the acceptance
+criteria, the named partial areas, the effect curve and the unit conversion of
+a result (`unsupported_reason`, the table of `docs/benchmark.md`). Every one of
+those is held to the python core alone, by the reference tests of the suite,
+and the day the kernel carries one of them the gate compares it without a word
+being changed here.
+
+The uncertainty of a group curve is the case that day came for: the kernel
+propagates it inside `analyze_batch` and the python core propagates it inside
+`python_rows` of `nca`, which are the two answers the gate already holds
+against each other, so every `x_sd`, `x_se`, `x_ci_low`, `x_ci_high`,
+`x_geomean` and `x_geocv` of a group batch is compared without a line of gate
+code of its own. The bootstrap is comparable at all because both engines draw
+from the kernel (`kernel_normals`) and `nca` resolves the seed before it
+dispatches, so the two run the same replicates rather than two samples of one
+distribution.
 
 The analyses which are dispatched to the kernel but never pass through `nca`
 are no business of the gate either: `ParameterResult.summarize`,
@@ -120,7 +129,7 @@ from pkpdutils.nca.options import (
     encode_window_key,
 )
 from pkpdutils.nca.result import parameter_unit
-from pkpdutils.result import sample_coordinates
+from pkpdutils.result import base_name, sample_coordinates
 from pkpdutils.timecourse import Route, Timecourses
 
 try:
@@ -314,11 +323,13 @@ def unsupported_reason(
     """Why the kernel would refuse this analysis, `None` when it would run it.
 
     The kernel decides, the host forwards: every refusal of the kernel (an
-    effect curve, the acceptance criteria, the named partial areas, the
-    propagation of the uncertainty of a group curve, the unit conversion of a
-    result, and whatever a later release adds) is the answer of
+    effect curve, the acceptance criteria, the named partial areas, a bootstrap
+    whose seed the options leave open, the unit conversion of a result, and
+    whatever a later release adds) is the answer of
     `pkpdutils_core.is_supported`, text and order included, so that a release
     which changes a refusal changes it here without a change of the host.
+    `nca` draws the seed of a bootstrap before it asks, so the refusal of a
+    seedless one is one a caller of `nca` never meets.
 
     The host answers before it asks only what the kernel cannot see, which is
     a statement about the python objects and no refusal of the kernel's, and
@@ -364,6 +375,47 @@ def unsupported_reason(
     batch, kernel_options = prepared.dicts
     reason: str | None = is_supported(batch, kernel_options)
     return reason
+
+
+NORMALS_PER_CALL = 1 << 22
+"""The draws one call of `kernel_normals` asks the kernel for, 4 Mi of them, 32 MB.
+
+The kernel hands out at most 16 Mi in one call and says to ask for a long
+range in pieces, since the draws of a piece are those of the whole. This is
+that piece, a quarter of the kernel's own ceiling, so that the peak of a large
+request is a fraction of the array it fills rather than a second copy of it.
+"""
+
+
+def kernel_normals(seed: int, start: int, count: int) -> np.ndarray:
+    """The standard normal draws of a range of flat indices, from the kernel.
+
+    The bootstrap's draws are the kernel's on both paths, whether the kernel
+    analysed the batch or the python core did (`pkpdutils_core.bootstrap_normals`).
+    They are a pure function of the seed and the index, so a seed gives one
+    answer whichever engine ran and whether in python or in the browser, which
+    numpy's generator cannot promise: it guarantees its stream only on the same
+    build, in the same environment, on the same machine, and reserves the right
+    to change a distribution method.
+
+    Args:
+        seed: the seed of the bootstrap; every integer of `[0, 2**64)` is one,
+            `0` included
+        start: the flat index of the first draw, in the C order of
+            `(n_rows, n_boot, n_time)`
+        count: how many draws
+
+    Returns:
+        The `count` draws as a `float64` array.
+    """
+    draws = pkpdutils_core.bootstrap_normals  # ty: ignore[missing-attribute]
+    if count <= NORMALS_PER_CALL:
+        return draws(seed, start, count)
+    out = np.empty(count, dtype=np.float64)
+    for offset in range(0, count, NORMALS_PER_CALL):
+        piece = min(NORMALS_PER_CALL, count - offset)
+        out[offset : offset + piece] = draws(seed, start + offset, piece)
+    return out
 
 
 def dose_arrays(
@@ -452,10 +504,7 @@ def batch_dict(timecourses: Timecourses) -> dict[str, Any]:
         "values": _rows(timecourses.values, n_rows, n_time),
         "sd": _optional_points(timecourses.sd, n_rows, n_time),
         "se": _optional_points(timecourses.se, n_rows, n_time),
-        # the counts of a batch which keeps one per sample instead of one per
-        # time point are no field of `batch/1`, which has the second form
-        # only; `nca` writes `n` from `Timecourses.n_subjects` itself either way
-        "n": _optional_points(counts, n_rows, n_time),
+        "n": _subject_counts(counts, n_rows, n_time),
         "nominal_time": _optional_points(nominal_time, n_rows, n_time),
         "lloq": None
         if lloq is None
@@ -505,6 +554,39 @@ def _optional_points(
     if values is None or values.size != n_rows * n_time:
         return None
     return _rows(values, n_rows, n_time)
+
+
+def _subject_counts(
+    values: np.ndarray | None, n_rows: int, n_time: int
+) -> np.ndarray | None:
+    """The subjects behind every point, broadcasting a count the batch keeps per sample.
+
+    `batch/1` has the per-point form only, and the kernel reads it rather than
+    reporting it: the bootstrap converts the two spread scales into each other
+    with `sqrt(n)` and scales the log variance of `x_geocv` by `n`, so a batch
+    whose count never arrived would carry no `x_sd` and no `x_geocv` at all. A
+    batch which keeps one count per sample has that count behind every one of
+    its points, which is what `resolve_spread` reads from it as well (`n`
+    reshaped to `(n_rows, -1)` and broadcast over the points), so the broadcast
+    is the per-point form of the same statement and not an assumption.
+
+    Args:
+        values: the array of shape `(*sample_shape, n_time)` or `(*sample_shape,)`,
+            or `None`
+        n_rows: number of samples
+        n_time: number of time points per sample
+
+    Returns:
+        The array of shape `(n_rows, n_time)`, or `None` for a batch without counts.
+    """
+    if values is None:
+        return None
+    if values.size == n_rows * n_time:
+        return _rows(values, n_rows, n_time)
+    if values.size == n_rows:
+        per_sample = np.ascontiguousarray(values, dtype=np.float64).reshape(n_rows, 1)
+        return np.ascontiguousarray(np.repeat(per_sample, n_time, axis=1))
+    return None
 
 
 def _route_name(route: Route | None) -> str | None:
@@ -1144,16 +1226,30 @@ def run_kernel(
     if units is not None:
         units.update(result["units"])
     n_rows = timecourses.n_samples
-    values: dict[str, np.ndarray] = {
+    columns: dict[str, np.ndarray] = {
         name: np.asarray(column, dtype=np.float64)
         for name, column in result["parameters"].items()
         if name not in HOST_VARIABLES
+    }
+    # the uncertainty variables go after the point variables, where the python
+    # core reports them: it propagates an uncertainty on top of an answer which
+    # already carries the per-interval variables, while the kernel appends its
+    # uncertainty columns to the parameters of that same answer
+    values: dict[str, np.ndarray] = {
+        name: column for name, column in columns.items() if base_name(name) is None
     }
     for name, variable in result["point_variables"].items():
         width = int(variable["size"])
         values[name] = np.asarray(variable["values"], dtype=np.float64).reshape(
             n_rows, width
         )
+    values.update(
+        {
+            name: column
+            for name, column in columns.items()
+            if base_name(name) is not None
+        }
+    )
     # `flags` goes last, where the python core reports it for a batch of one
     # route; `_python_order` moves it for a batch of several
     values["flags"] = np.asarray(result["flags"], dtype=np.float64)

@@ -78,7 +78,7 @@ from pkpdutils.nca.result import (
     parameter_unit,
 )
 from pkpdutils.nca.terminal import CANDIDATE_DIM, CANDIDATE_PREFIX, terminal_fit
-from pkpdutils.nca.uncertainty import bootstrap, delta
+from pkpdutils.nca.uncertainty import bootstrap, delta, draw_seed
 from pkpdutils.parallel import (
     NCA_WORKER_THRESHOLD,
     resolve_workers,
@@ -1680,7 +1680,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
         """
         route, routes = row_routes(timecourses, n_rows)
         batch_lloq = timecourses.lloq
-        return run_analysis_rows(
+        values = run_analysis_rows(
             timecourses.times.reshape(n_rows, timecourses.n_time),
             timecourses.values.reshape(n_rows, timecourses.n_time),
             dose_amount=dose_amount,
@@ -1692,12 +1692,46 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             windows=windows,
             routes=routes,
         )
+        # The uncertainty of a group curve is part of the answer of an engine
+        # and no step on top of it: the kernel propagates it inside the one call
+        # it is given, so the python core propagates it here. There is one place
+        # each, which is what lets the differential gate compare the uncertainty
+        # variables without a line of its own.
+        if method is not UncertaintyMethod.NONE:
+            # `flags` is the last variable of an answer and the uncertainty
+            # variables go before it, which is where the kernel writes them too:
+            # the differential gate compares the order of the variables and the
+            # two engines have to agree on it before `nca` lays out the result
+            flags = values.pop("flags")
+            if method is UncertaintyMethod.BOOTSTRAP:
+                values.update(bootstrap(timecourses, options, values))
+            else:
+                uncertainty = delta(timecourses, options, values)
+                # the delta method reports the rows whose terminal window moved;
+                # its flags join the flags of the analysis rather than replacing
+                # them
+                flags = flags | uncertainty.pop("flags").astype(flags.dtype)
+                values.update(uncertainty)
+            values["flags"] = flags
+        return values
 
     # outside the dispatch below, since it also checks the keys of
     # `TerminalPhase.windows` against the samples of the batch and a batch
     # which names a sample it does not have is refused the same way whichever
     # engine would analyse it
     windows = sample_windows(timecourses, options.terminal)
+
+    # The uncertainty is resolved before the dispatch, because an engine answers
+    # the whole analysis in one call: the kernel propagates the uncertainty
+    # inside `analyze_batch` and refuses a bootstrap whose seed the options leave
+    # open, since it reads no entropy. The seed is therefore drawn here, once,
+    # for whichever engine runs, and it travels into
+    # `NCAResult.attrs["nca_options"]` with the resolved method, so that a run
+    # which was given no seed can be repeated exactly as it ran.
+    method = options.resolve_uncertainty(timecourses.has_uncertainty)
+    if method is UncertaintyMethod.BOOTSTRAP and options.seed is None:
+        options = options.model_copy(update={"seed": draw_seed()})
+    options = options.model_copy(update={"uncertainty": method})
 
     # the rust kernel of `pkpdutils.nca.engine` runs the analyses it carries
     # and the python core of `run_analysis_rows` every other one; the two
@@ -1759,14 +1793,6 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
             dict.fromkeys(options.partial_aucs, PARAMETER_UNITS["auc_partial"])
         )
 
-    method = options.resolve_uncertainty(timecourses.has_uncertainty)
-    if method is UncertaintyMethod.BOOTSTRAP:
-        values.update(bootstrap(timecourses, options, values))
-    elif method is UncertaintyMethod.DELTA:
-        uncertainty = delta(timecourses, options, values)
-        # the delta method reports the rows whose terminal window moved
-        flags = flags | uncertainty.pop("flags").astype(flags.dtype)
-        values.update(uncertainty)
     n_subjects = timecourses.n_subjects
     values["n"] = (
         np.full(n_rows, np.nan)
@@ -1805,8 +1831,7 @@ def nca(timecourses: Timecourses, *, options: NCAOptions | None = None) -> NCARe
     )
     log_zero_doses(dose)
     result = _to_result(values, timecourses, shape, dose=dose, units=units)
-    resolved = options.model_copy(update={"uncertainty": method})
-    result.ds.attrs["nca_options"] = serialize_nca_options(resolved)
+    result.ds.attrs["nca_options"] = serialize_nca_options(options)
     if options.partial_aucs:
         # the intervals travel with the result, so that a figure can shade a
         # named area without being given the options again (`NCAResult.partial_aucs`)

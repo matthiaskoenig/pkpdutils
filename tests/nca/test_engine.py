@@ -197,10 +197,17 @@ def test_a_multiple_dose_batch_is_eligible() -> None:
     )
 
 
-def test_a_group_batch_is_not() -> None:
+def test_a_group_batch_is_eligible_and_a_seedless_bootstrap_is_not() -> None:
+    # the kernel propagates the uncertainty of a group curve, and the one part
+    # of a bootstrap it cannot do is draw the seed: it reads no entropy, so
+    # `nca` draws it before it dispatches and a caller never meets this refusal
+    assert engine.unsupported_reason(group_batch(), NCAOptions(seed=7)) is None
     reason = engine.unsupported_reason(group_batch(), NCAOptions())
     assert reason is not None
-    assert "uncertainty" in reason
+    assert "seed" in reason
+    # the delta method draws nothing, so it needs no seed
+    options = NCAOptions(uncertainty=UncertaintyMethod.DELTA)
+    assert engine.unsupported_reason(group_batch(), options) is None
 
 
 def test_the_counts_alone_do_not_refuse_a_batch() -> None:
@@ -212,10 +219,12 @@ def test_the_counts_alone_do_not_refuse_a_batch() -> None:
     assert engine.unsupported_reason(counted, NCAOptions()) is None
 
 
-def test_one_count_per_sample_is_no_field_of_the_contract() -> None:
-    # `batch/1` carries a count per time point only, and a count per sample
-    # sent under that key is a length the kernel refuses; `nca` writes `n`
-    # from `Timecourses.n_subjects` itself either way
+def test_one_count_per_sample_travels_as_the_count_of_every_point() -> None:
+    # `batch/1` carries a count per time point only, so a count the batch keeps
+    # per sample is broadcast over the points of that sample, which is the same
+    # statement in the form the contract has: the kernel reads the count rather
+    # than only reporting it, since its bootstrap converts `sd` and `se` into
+    # each other with `sqrt(n)` and scales the log variance of `x_geocv` by `n`
     per_sample = Timecourses.from_arrays(
         TIMES,
         (C0 * np.exp(-K * TIMES))[None, :],
@@ -228,7 +237,10 @@ def test_one_count_per_sample_is_no_field_of_the_contract() -> None:
     )
     assert per_sample.n is not None
     assert per_sample.n.shape == (1,)
-    assert engine.batch_dict(per_sample)["n"] is None
+    sent = engine.batch_dict(per_sample)["n"]
+    assert sent is not None
+    assert sent.shape == (1, TIMES.size)
+    assert sent == pytest.approx(6.0)
     assert engine.unsupported_reason(per_sample, NCAOptions()) is None
     result = nca(per_sample)
     assert result.ds["n"].to_numpy() == pytest.approx(6.0)
@@ -272,7 +284,11 @@ def test_the_acceptance_criteria_without_a_threshold_are_eligible() -> None:
 
 AGREEMENT: list[tuple[str, Timecourses, NCAOptions]] = [
     ("a single dose batch", batch(), NCAOptions()),
-    ("a group batch", group_batch(), NCAOptions()),
+    # the subject counts as well, since the default spread of the bootstrap is
+    # `se` and a batch of `sd` alone cannot derive one, and a seed, because the
+    # two engines are compared across two calls of `nca` here and a call which
+    # is given no seed draws its own
+    ("a group batch", group_batch(counts=True), NCAOptions(seed=20261118)),
     ("the counts alone", group_batch(sd=False, counts=True), NCAOptions()),
     (
         "a spread with no method",
@@ -965,18 +981,29 @@ def test_an_eligible_batch_gives_the_same_result() -> None:
 def test_the_two_engines_agree_on_every_analysis(
     what: str, timecourses: Timecourses, options: NCAOptions
 ) -> None:
-    if options.resolve_uncertainty(timecourses.has_uncertainty) is not (
-        UncertaintyMethod.NONE
+    if (
+        options.resolve_uncertainty(timecourses.has_uncertainty)
+        is not UncertaintyMethod.NONE
+        and not timecourses.has_uncertainty
     ):
-        # a bootstrap draws its replicates and the delta method needs a spread
-        # the batch of this case does not carry; both run in the python core
-        pytest.skip("the propagation of an uncertainty is the python core's own")
+        # a method on a batch which carries no spread at all is a `ValueError`
+        # of the batch in both engines and no analysis to hold against anything
+        pytest.skip("the batch carries no spread for the method of this case")
     assert_same_result(
         nca(timecourses, options=options), python_result(timecourses, options)
     )
-    if engine.unsupported_reason(timecourses, options) is None:
+    if engine.unsupported_reason(timecourses, options) is None and (
+        options.resolve_uncertainty(timecourses.has_uncertainty)
+        is UncertaintyMethod.NONE
+    ):
         # the comparison of the two results above passes whether or not the
-        # kernel ran, the fallback being silent; this one is the kernel itself
+        # kernel ran, the fallback being silent; this one is the kernel itself.
+        # It holds the kernel against `run_analysis_rows`, the python core
+        # without the uncertainty step `nca` wraps it in, so an analysis which
+        # propagates one is held by the armed gate instead
+        # (`test_the_armed_gate_agrees_on_every_analysis`), which compares the
+        # two mappings inside one call of `nca`, where both engines share the
+        # seed it drew
         assert_same_mapping(timecourses, options)
 
 
@@ -1716,12 +1743,12 @@ def test_the_armed_gate_agrees_on_every_analysis(
     timecourses: Timecourses,
     options: NCAOptions,
 ) -> None:
-    if options.resolve_uncertainty(timecourses.has_uncertainty) is not (
-        UncertaintyMethod.NONE
+    if (
+        options.resolve_uncertainty(timecourses.has_uncertainty)
+        is not UncertaintyMethod.NONE
+        and not timecourses.has_uncertainty
     ):
-        # a bootstrap draws its replicates and the delta method needs a spread
-        # the batch of this case does not carry; both run in the python core
-        pytest.skip("the propagation of an uncertainty is the python core's own")
+        pytest.skip("the batch carries no spread for the method of this case")
     # the gate itself as the comparison, on the analyses of `AGREEMENT`: it
     # raises on a name, an order, a shape, a dtype, a NaN position, a number or
     # a unit the two engines do not share
