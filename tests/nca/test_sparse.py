@@ -407,3 +407,32 @@ def test_the_explicit_auc_method_warning_stays_on_the_kernel_path(
             unit="mg/l",
             options=NCAOptions(auc_method=AUCMethod.LOG),
         )
+
+
+def test_a_unit_the_kernel_cannot_read_takes_the_python_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal as `UnsupportedError` is answered by python, not raised."""
+    if not hasattr(engine.pkpdutils_core, "nca_sparse"):
+        pytest.skip("this build of pkpdutils-core carries no `nca_sparse`")
+    values = serial_values()
+    kernel = nca_sparse(TIMES, values, time_unit="hr", unit="grain")
+    with monkeypatch.context() as patch:
+        patch.setattr(engine, "_force_python", True)
+        python = nca_sparse(TIMES, values, time_unit="hr", unit="grain")
+    assert kernel.units("auc_last") == "grain * hour"
+    assert float(kernel["auc_last"]) == float(python["auc_last"])
+
+
+def test_a_malformed_sparse_request_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `ValueError` of the kernel is no refusal and is not answered by python."""
+
+    def malformed(request: object) -> None:
+        raise ValueError("malformed")
+
+    monkeypatch.setattr(engine.pkpdutils_core, "nca_sparse", malformed, raising=False)
+    monkeypatch.setattr(engine, "_force_python", False)
+    with pytest.raises(ValueError, match="malformed"):
+        nca_sparse(TIMES, serial_values(), time_unit="hr", unit="mg/l")

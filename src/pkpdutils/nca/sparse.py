@@ -406,8 +406,11 @@ def _kernel_sparse(
 
     The kernel is not used while `pkpdutils.nca.engine._force_python` is set, so
     that the python implementation stays the reference, nor when the installed
-    `pkpdutils-core` predates `nca_sparse`. A request the kernel rejects raises
-    `ValueError` and is never answered by the python path.
+    `pkpdutils-core` predates `nca_sparse`. A refusal as `UnsupportedError` (a
+    unit the registry of the kernel does not read) is the kernel saying that the
+    python path has to answer, and so returns `None`. A request the kernel
+    rejects as malformed raises `ValueError` and is never answered by the python
+    path, so that a defect is not hidden behind the fallback.
 
     Args:
         times: the nominal times.
@@ -428,18 +431,21 @@ def _kernel_sparse(
     kernel = getattr(engine.pkpdutils_core, "nca_sparse", None)
     if kernel is None or engine._force_python:
         return None
-    return kernel(
-        {
-            "times": np.ascontiguousarray(times, dtype=np.float64),
-            "values": np.ascontiguousarray(values, dtype=np.float64).reshape(-1),
-            "n_rows": values.shape[0],
-            "n_cols": values.shape[1],
-            "design": design,
-            "unit": unit,
-            "time_unit": time_unit,
-            "dose_unit": dose_unit,
-        }
-    )
+    request = {
+        "times": np.ascontiguousarray(times, dtype=np.float64),
+        "values": np.ascontiguousarray(values, dtype=np.float64).reshape(-1),
+        "n_rows": values.shape[0],
+        "n_cols": values.shape[1],
+        "design": design,
+        "unit": unit,
+        "time_unit": time_unit,
+        "dose_unit": dose_unit,
+    }
+    try:
+        return kernel(request)
+    except engine.UnsupportedError as refusal:
+        logger.info("the sparse analysis takes the python path: %s", refusal)
+        return None
 
 
 def nca_sparse(
