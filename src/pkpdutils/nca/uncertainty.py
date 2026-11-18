@@ -333,10 +333,11 @@ def resample_values(
     c: np.ndarray,
     spread: np.ndarray,
     n_boot: int,
-    rng: np.random.Generator,
+    seed: int,
     distribution: BootstrapDistribution,
     *,
     clip_at_zero: bool = True,
+    first_index: int = 0,
 ) -> np.ndarray:
     """Draw bootstrap replicates of every time point of every row.
 
@@ -351,19 +352,36 @@ def resample_values(
         spread: spread per point `(N, n)`; a point without a finite positive
             spread is copied
         n_boot: number of replicates `B`
-        rng: random generator
+        seed: the seed of the bootstrap, which with the index of a draw is the
+            whole of its state (`pkpdutils.nca.engine.kernel_normals`)
         distribution: normal or log-normal with the same mean and spread
         clip_at_zero: whether normal draws below 0 are set to 0; `True` for
             concentrations, which cannot be negative, and `False` for effects,
             whose values are legitimately negative. Clipping biases the mean of
             a point whose spread is large against its value upwards, see
             `BootstrapDistribution.LOGNORMAL` for an alternative.
+        first_index: the flat index of the draw of the first point of the first
+            row, in the C order of `(n_rows, n_boot, n_time)` of the **whole**
+            batch. A block of rows passes the index of its first row, so that
+            the draws of a block are those of an unblocked run.
 
     Returns:
         The replicates `(N, B, n)`.
     """
+    # `nca.result` imports this module and `nca.engine` imports `nca.result`, so
+    # the wire of the draws is reached here rather than at the top, as the core
+    # of the analysis is in the two functions below
+    from pkpdutils.nca.engine import kernel_normals
+
     n_rows, n_time = c.shape
-    z = rng.standard_normal((n_rows, n_boot, n_time))
+    # the draws are the kernel's on this path as well, so that one seed gives
+    # one answer whichever engine analysed the batch, and a point whose spread
+    # is not usable still consumes its draw: python draws for every point and
+    # masks below, and matching the mask rather than the draw would shift every
+    # later number
+    z = kernel_normals(seed, first_index, n_rows * n_boot * n_time).reshape(
+        n_rows, n_boot, n_time
+    )
     mean = c[:, None, :]
     s = spread[:, None, :]
     with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
@@ -558,7 +576,14 @@ def bootstrap(
     spread = resolve_spread(timecourses, options)
     with np.errstate(invalid="ignore"):
         any_usable = (np.isfinite(spread) & (spread > 0)).any(axis=1)
-    rng = np.random.default_rng(options.seed)
+    # `seed=None` means the host draws the seed, because the kernel reads no
+    # entropy: it has none in a wasm instance, and a kernel which reached for
+    # the operating system would not build there
+    seed = (
+        int(np.random.default_rng().integers(0, 2**64, dtype=np.uint64))
+        if options.seed is None
+        else int(options.seed)
+    )
     b = options.n_boot
     logger.info("bootstrap: %d curves x %d replicates", n_rows, b)
 
@@ -567,8 +592,8 @@ def bootstrap(
     # replicate of the batch never exists at once; a block carries as many
     # replicate rows as the analysis would process at once anyway, so the core
     # sees the same chunks (`chunk_rows` per worker) as an unblocked run and
-    # the draws, which are generated row block after row block from the same
-    # generator, are the same numbers. The worker count of the replicate rows
+    # the draws, which a block asks for by index, are the same numbers whatever
+    # the blocking. The worker count of the replicate rows
     # decides the size of a block, so that an automatic run
     # (`options.n_workers is None`) fills every thread of `run_rows` too.
     workers = resolve_workers(options.n_workers, n_rows * b)
@@ -594,9 +619,10 @@ def bootstrap(
             c[start:stop],
             spread[start:stop],
             b,
-            rng,
+            seed,
             options.bootstrap_distribution,
             clip_at_zero=options.kind is Kind.CONCENTRATION,
+            first_index=start * b * n_time,
         )
         block = run_analysis_rows(
             np.repeat(t[start:stop], b, axis=0),

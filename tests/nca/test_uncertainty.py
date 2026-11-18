@@ -127,17 +127,18 @@ def test_nca_of_a_ragged_group_curve() -> None:
 
 
 def test_resample_values_shapes_and_distribution() -> None:
-    rng = np.random.default_rng(0)
     c = np.array([[10.0, 5.0, np.nan, 1.0]])
     spread = np.array([[1.0, np.nan, 1.0, 0.5]])
-    draws = resample_values(c, spread, 20000, rng, BootstrapDistribution.NORMAL)
+    draws = resample_values(c, spread, 20000, 0, BootstrapDistribution.NORMAL)
     assert draws.shape == (1, 20000, 4)
     assert np.isnan(draws[0, :, 2]).all()
     np.testing.assert_allclose(draws[0, :, 1], 5.0)  # no spread: copied
     assert draws[0, :, 0].mean() == pytest.approx(10.0, abs=0.05)
     assert draws[0, :, 0].std() == pytest.approx(1.0, abs=0.05)
     assert (draws[0, :, 3] >= 0).all()  # clipped at 0
-    logn = resample_values(c, spread, 20000, rng, BootstrapDistribution.LOGNORMAL)
+    # the same seed and the same index, so the two distributions shape the same
+    # draws, which is what makes their moments comparable here
+    logn = resample_values(c, spread, 20000, 0, BootstrapDistribution.LOGNORMAL)
     assert (logn[0, :, 3] > 0).all()
     assert logn[0, :, 0].mean() == pytest.approx(10.0, abs=0.05)
     assert logn[0, :, 0].std() == pytest.approx(1.0, abs=0.05)
@@ -375,14 +376,76 @@ def test_bootstrap_effect_values_are_not_clipped_at_zero() -> None:
 
 
 def test_resample_values_without_clipping() -> None:
-    rng = np.random.default_rng(0)
     c = np.array([[-1.0]])
     spread = np.array([[0.3]])
     draws = resample_values(
-        c, spread, 5000, rng, BootstrapDistribution.NORMAL, clip_at_zero=False
+        c, spread, 5000, 0, BootstrapDistribution.NORMAL, clip_at_zero=False
     )
     assert draws.min() < 0
     assert draws.std() == pytest.approx(0.3, abs=0.02)
+
+
+def test_the_draws_come_from_the_kernel() -> None:
+    """The bootstrap's draws are the kernel's, not numpy's, and a seed fixes them.
+
+    numpy promises its stream only on the same build, in the same environment,
+    on the same machine, and reserves the right to change a distribution
+    method, so a bootstrap pinned to it is not reproducible across releases,
+    platforms or the browser. The kernel's draws are, which is why the host
+    asks for them (`pkpdutils.nca.engine.kernel_normals`).
+    """
+    c = np.array([[10.0, 5.0, 1.0]])
+    spread = np.array([[1.0, 0.5, 0.1]])
+    first = resample_values(c, spread, 32, 7, BootstrapDistribution.NORMAL)
+    again = resample_values(c, spread, 32, 7, BootstrapDistribution.NORMAL)
+    np.testing.assert_array_equal(first, again)
+    assert not np.array_equal(
+        first, resample_values(c, spread, 32, 8, BootstrapDistribution.NORMAL)
+    )
+
+    # and they are not numpy's, which is the anti-goal of the design as a test
+    z = np.random.default_rng(7).standard_normal((1, 32, 3))
+    assert not np.allclose(first, c[:, None, :] + spread[:, None, :] * z)
+
+    # a block asks for its own range by index, so the draws of the second row
+    # of a batch are the draws of that row analysed on its own
+    both = resample_values(
+        np.vstack([c, c]),
+        np.vstack([spread, spread]),
+        32,
+        7,
+        BootstrapDistribution.NORMAL,
+    )
+    second = resample_values(
+        c, spread, 32, 7, BootstrapDistribution.NORMAL, first_index=1 * 32 * 3
+    )
+    np.testing.assert_array_equal(both[1], second[0])
+
+
+def test_the_blocking_does_not_move_the_draws() -> None:
+    """One batch, two block sizes, the same uncertainty down to the bits."""
+    c = C0 * np.exp(-K * T)
+    sd = np.vstack([(0.1 + 0.02 * i) * c for i in range(6)])
+    tcs = Timecourses.from_arrays(
+        time=T,
+        values=np.vstack([c] * 6),
+        sd=sd,
+        n=np.full(6, 8),
+        time_unit="hr",
+        unit="mg/l",
+        dose={"amount": 100.0, "unit": "mg"},
+        route="oral",
+        dims=("subject",),
+    )
+    options = NCAOptions(
+        uncertainty=UncertaintyMethod.BOOTSTRAP, n_boot=64, seed=11, chunk_rows=6
+    )
+    whole = nca(tcs, options=options)
+    cut = nca(tcs, options=options.model_copy(update={"chunk_rows": 2}))
+    for name in whole.ds.data_vars:
+        np.testing.assert_array_equal(
+            whole.ds[name].values, cut.ds[name].values, err_msg=name
+        )
 
 
 def test_bootstrap_row_without_spread_is_nan() -> None:

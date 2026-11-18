@@ -366,6 +366,47 @@ def unsupported_reason(
     return reason
 
 
+NORMALS_PER_CALL = 1 << 22
+"""The draws one call of `kernel_normals` asks the kernel for, 4 Mi of them, 32 MB.
+
+The kernel hands out at most 16 Mi in one call and says to ask for a long
+range in pieces, since the draws of a piece are those of the whole. This is
+that piece, a quarter of the kernel's own ceiling, so that the peak of a large
+request is a fraction of the array it fills rather than a second copy of it.
+"""
+
+
+def kernel_normals(seed: int, start: int, count: int) -> np.ndarray:
+    """The standard normal draws of a range of flat indices, from the kernel.
+
+    The bootstrap's draws are the kernel's on both paths, whether the kernel
+    analysed the batch or the python core did (`pkpdutils_core.bootstrap_normals`).
+    They are a pure function of the seed and the index, so a seed gives one
+    answer whichever engine ran and whether in python or in the browser, which
+    numpy's generator cannot promise: it guarantees its stream only on the same
+    build, in the same environment, on the same machine, and reserves the right
+    to change a distribution method.
+
+    Args:
+        seed: the seed of the bootstrap; every integer of `[0, 2**64)` is one,
+            `0` included
+        start: the flat index of the first draw, in the C order of
+            `(n_rows, n_boot, n_time)`
+        count: how many draws
+
+    Returns:
+        The `count` draws as a `float64` array.
+    """
+    draws = pkpdutils_core.bootstrap_normals  # ty: ignore[missing-attribute]
+    if count <= NORMALS_PER_CALL:
+        return draws(seed, start, count)
+    out = np.empty(count, dtype=np.float64)
+    for offset in range(0, count, NORMALS_PER_CALL):
+        piece = min(NORMALS_PER_CALL, count - offset)
+        out[offset : offset + piece] = draws(seed, start + offset, piece)
+    return out
+
+
 def dose_arrays(
     timecourses: Timecourses,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
