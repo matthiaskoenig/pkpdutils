@@ -23,10 +23,11 @@ _MISSING = [
     if not hasattr(pkpdutils_core, name)
 ]
 if _MISSING:
-    # the floor `pkpdutils-core>=0.3.0` admits the published 0.3.0 wheel, which has none of the
-    # quantiles and reports the same version as a build which has them, so the attributes are
-    # what is asked and not the version. Without this the module raises while it is collected
-    # and pytest runs nothing at all.
+    # the attributes are what is asked and not the version: the floor
+    # `pkpdutils-core>=0.5.1` admits no published wheel without the quantiles, but a local
+    # `maturin develop` of a checkout before they landed reports a version which looks new
+    # enough. Without this the module raises while it is collected and pytest runs nothing
+    # at all.
     pytest.skip(
         f"pkpdutils_core {getattr(pkpdutils_core, '__version__', '?')} lacks {', '.join(_MISSING)}: rebuild the "
         "kernel into this environment (`maturin develop`) or raise the pkpdutils-core floor",
