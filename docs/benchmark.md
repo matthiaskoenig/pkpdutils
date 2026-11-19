@@ -1,45 +1,96 @@
 # Performance
 
-The non-compartmental analysis of `pkpdutils` runs in two engines: the rust kernel [`pkpdutils-core`](https://github.com/matthiaskoenig/pkpdutils-core), which is installed with the package, and the python core of `pkpdutils.nca.nca`. `nca()` takes the decision once per batch and the two compute the same numbers, so the only difference a caller sees is the time it takes. This page measures that difference. `ParameterResult.summarize`, `time_to_steady_state`, `nca_urine` and `nca_sparse` dispatch to the kernel in the same way, each with its python implementation as the fallback; all four are small next to an analysis and none is timed here.
+The non-compartmental analysis (NCA) runs through the Rust kernel [`pkpdutils-core`](https://github.com/matthiaskoenig/pkpdutils-core), installed with the package, or the Python implementation in `pkpdutils.nca.nca`. This benchmark measures the speedup of the public `nca()` call and profiles where both paths spend their time.
 
-The short answer is a crossover and not a headline: the kernel is worth more than an order of magnitude on the largest batch measured here and costs a fraction of a millisecond on a small one, because converting a batch and calling into the kernel costs the same whether the batch holds one curve or a hundred thousand. The figures are the sentences below the table, which the benchmark writes together with it.
+The workload is reproducible, seeded, noisy mono-exponential intravenous bolus profiles, with a single dose, automatic terminal-window selection, and no uncertainty propagation. The sweep covers both short and densely sampled profiles. Imports and fixture construction are excluded. These results do not measure bootstrap, delta-method uncertainty, multiple dosing, other routes, or the separate summary, urine, sparse and steady-state APIs. Use the other hot-path cases to investigate those workloads.
 
-That the two compute the same numbers is measured and not assumed: with `PKPDUTILS_COMPARE_ENGINES=1` every batch which reaches the kernel is analysed by the python core as well and the two answers are held against each other variable by variable, down to the positions of `NaN`, the dtype of every column and the unit of every variable. Continuous integration runs the whole test suite that way. The gate is the analysis alone: the summary, the time to steady state, the urine analysis and the sparse analysis are held to their python implementations by tests which run both engines on the same input, which is where their one documented difference is pinned as well (see [NCA](nca.md#the-two-engines)).
+Every case checks dispatch eligibility and compares warmed results, including values, missing values, dtypes and unit attributes, before timing. The benchmark refuses to run with `PKPDUTILS_COMPARE_ENGINES=1`: that differential gate runs both engines inside the Rust path and would invalidate the speedup. Continuous integration uses the gate separately to check numerical parity across the test suite; see [NCA](nca.md#the-two-engines).
 
 ## The two engines on one batch
 
-One batch of single dose intravenous bolus curves, analysed through `nca()` with the defaults, is timed through both engines by `scripts/benchmark.py`. Every case runs in a fresh interpreter and alternates the two engines run after run in that one process, kernel, python, kernel, python: the two halves are measured in the same window, so a ratio is not an artefact of whatever else the machine did between two blocks of runs. The python column is the python core of the same installation, reached through the switch `pkpdutils.nca.engine._force_python`. Before anything is timed the benchmark asks four questions a published ratio cannot be read back from, and fails the case rather than answering any of them with a plausible number: whether the dispatch sends this batch to the kernel at all, whether the forced python path is really forced, whether the differential gate is armed (which would run the python core inside the kernel half and halve the ratio) and whether the kernel accepts the batch when it is really called, since a refusal would be answered with a warning and the python path. `points` is the work of the analysis, the curves times the points per curve; `speedup` is the python median over the kernel median, so a number above 1 is the factor the kernel saves and a number below 1 the factor it costs.
+`scripts/benchmark.py` runs each shape in a fresh interpreter. Both engines use the same prebuilt batch and options. Each engine warms once, then timed pairs alternate order: Rust/Python, Python/Rust. Garbage collection runs before each measurement, outside its timer. The Python path uses the private benchmark switch `pkpdutils.nca.engine._force_python`.
+
+Times are median wall times. Each adjacent IQR column is the difference between the 75th and 25th percentiles of that engine's samples, not a confidence interval. Speedup is the Python median divided by the Rust median; values above 1 favor Rust. Small differences near 1 need reruns. [Raw samples and machine metadata](data/nca_benchmark.json) retain every run, dependency versions, CPU affinity, worker policy and thread environment.
 
 <!-- timings:start -->
-Measured on 2026-11-17, python 3.14.10 on Linux x86_64 with 20 cores, `pkpdutils` 1.4.0 with `pkpdutils-core` 0.3.0, 9 timed runs per engine and case after one warm-up run each.
+Measured on 2026-11-19, python 3.14.10 on Linux x86_64, 12th Gen Intel(R) Core(TM) i7-12700, with 20 logical CPUs, `pkpdutils` 1.7.0 with `pkpdutils-core` 0.7.0, 15 timed runs per engine and case after one warm-up run each, with automatic workers.
 
-| case | size | points | kernel ms | python ms | speedup | peak RSS MB |
-|---|---|---|---|---|---|---|
-| engine-1x12 | 1 curve x 12 points | 12 | 3.16 | 2.85 | 0.90x | 169 |
-| engine-100x12 | 100 curves x 12 points | 1 200 | 3.24 | 3.17 | 0.98x | 169 |
-| engine-10x200 | 10 curves x 200 points | 2 000 | 3.22 | 3.25 | 1.01x | 169 |
-| engine-250x12 | 250 curves x 12 points | 3 000 | 3.35 | 3.56 | 1.06x | 172 |
-| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 3.74 | 5.40 | 1.44x | 185 |
-| engine-100x200 | 100 curves x 200 points | 20 000 | 3.56 | 7.47 | 2.10x | 187 |
-| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 7.46 | 32.36 | 4.34x | 211 |
-| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 5.18 | 52.37 | 10.10x | 235 |
-| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 68.10 | 123.27 | 1.81x | 572 |
-| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 22.81 | 558.63 | 24.49x | 510 |
+| case | size | points | kernel ms | IQR ms | python ms | IQR ms | speedup | peak RSS MB |
+|---|---|---|---|---|---|---|---|---|
+| engine-1x12 | 1 curve x 12 points | 12 | 1.29 | 0.05 | 1.57 | 0.06 | 1.22x | 171 |
+| engine-100x12 | 100 curves x 12 points | 1 200 | 1.36 | 0.03 | 1.89 | 0.07 | 1.38x | 171 |
+| engine-10x200 | 10 curves x 200 points | 2 000 | 1.41 | 0.04 | 1.97 | 0.04 | 1.39x | 172 |
+| engine-250x12 | 250 curves x 12 points | 3 000 | 1.47 | 0.05 | 2.29 | 0.07 | 1.56x | 174 |
+| engine-1000x12 | 1 000 curves x 12 points | 12 000 | 1.77 | 0.24 | 4.19 | 0.14 | 2.37x | 187 |
+| engine-100x200 | 100 curves x 200 points | 20 000 | 1.64 | 0.26 | 6.00 | 0.33 | 3.66x | 189 |
+| engine-10000x12 | 10 000 curves x 12 points | 120 000 | 5.27 | 0.22 | 30.95 | 0.49 | 5.88x | 216 |
+| engine-1000x200 | 1 000 curves x 200 points | 200 000 | 3.50 | 0.55 | 52.06 | 1.94 | 14.89x | 238 |
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 52.13 | 2.68 | 97.03 | 5.31 | 1.86x | 615 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 18.91 | 1.83 | 477.87 | 9.11 | 25.27x | 511 |
 
-The largest ratio of this run is 24.49x, at 10 000 curves x 200 points, and the smallest 0.90x, at 1 curve x 12 points. The two engines cost the same between 1 200 and 2 000 points: 100 curves x 12 points is 0.98x and 10 curves x 200 points is 1.01x. Below the crossover the kernel path costs at most 0.31 ms more per call, and the ratios there run from 0.90x to 0.98x. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 4.34x and 1 000 curves x 200 points at 10.10x. From 1 000 curves x 12 points on every shape of this run is a clear win, the first of them at 1.44x.
+The largest ratio of this run is 25.27x, at 10 000 curves x 200 points, and the smallest 1.22x, at 1 curve x 12 points. Every shape of this run is at or above 1.00x; no crossover is observed among the measured shapes. Of two shapes of nearly equal work the ratios differ most between 10 000 curves x 12 points at 5.88x and 1 000 curves x 200 points at 14.89x. From 100 curves x 12 points on every shape of this run is a clear win, the first of them at 1.38x.
 <!-- timings:end -->
 
-## Where the crossover is
+## Interpreting batch size and workers
 
-Below the crossover named under the table the kernel is the slower of the two, which is what lying below it means, and the sentence there names the range those ratios span and the largest amount the kernel path costs in milliseconds. The loss is bounded rather than a factor: the kernel path pays the conversion of the batch and the call into the kernel whatever the shape, which is a fixed cost and no multiple of the analysis. A ratio below 1 is that fixed cost against an analysis which is itself a few milliseconds, so which of the small shapes carries the smallest ratio of a run is noise and no property of the sweep. The ratio right at the crossover is worth no more than its first digit: it moves by a few percent between runs, and the sentence to read instead is the shape the clear wins start at, which is far enough above 1 to survive a rerun. From there the gain grows with the work, which the `points` and the `speedup` columns of the table show side by side.
+Dispatch and dataset construction impose a fixed per-call cost, while array conversion, output copies and numerical work also scale with batch size. Batching profiles amortizes the fixed part. Shape matters too: equal point counts do not imply equal timings, since every profile produces its own output parameters and terminal-window search. The generated sentences report the measured range rather than assuming a crossover or a monotone speedup.
 
-What crosses over is the work rather than the shape of a batch, which is why the sweep carries a sparse and a dense case at every size - 10 curves of 200 points next to 100 curves of 12 points - rather than rows alone. How far that holds is a figure of the run and no claim of this paragraph: the sentence under the table names the two shapes of nearly equal work whose ratios differ most, which is the pair it holds least well for. The practical reading is that a bioequivalence study of two arms of 24 subjects pays the fixed cost that sentence bounds in milliseconds and nothing else, and that a simulation sweep or a population of thousands of profiles is the case the kernel was written for.
+Both columns use automatic workers. Python switches to a shared thread pool at `NCA_WORKER_THRESHOLD` (20 000 profiles); Rust uses its own shard policy. This is the speedup of the installed defaults, including their worker policies, not an equal-thread comparison of languages. Use `--n-workers 1` for a controlled serial comparison, or an explicit count for scaling studies. Profile counts and sampling density should both inform future worker-threshold tuning.
 
-The sweep is not monotone in its ratio, and that is a property of the defaults rather than of this run: a batch is spread over several threads by **both** engines, by the python core above `NCA_WORKER_THRESHOLD` (20 000 rows, `pkpdutils.parallel`) and by the kernel under its own shard plan, so every shape above that many rows holds two parallel analyses against each other where every shape below it holds two serial ones. The ratio of such a shape need not follow the trend of the smaller ones and can fall below any of them, which is why the sentences under the table are read off the sweep in the order of the work: a run which crosses 1.00x at more than one shape names no single crossover and says so, instead of naming the largest and the smallest shape of the run as if they were neighbours. It is also why the pair of nearly equal work under the table leaves out the pair which straddles that threshold, however far apart its two ratios are: a parallel analysis against a serial one is a figure about the worker pools and none about the shape of a batch. The ratios of the defaults are what a caller gets; `NCAOptions(n_workers=1)` on both sides is a different and larger ratio.
+### Serial control
+
+Both engines use `n_workers=1` in these controls, measured in fresh processes after the automatic-worker sweep, with the same repeat count. The comparison includes host and binding costs; it does not isolate language arithmetic. Machine load can differ between cases, so compare dispersion as well as medians. The raw JSON retains these cases under `serial_rows`.
+
+<!-- serial:start -->
+| case | size | points | kernel ms | IQR ms | python ms | IQR ms | speedup | peak RSS MB |
+|---|---|---|---|---|---|---|---|---|
+| engine-100000x12 | 100 000 curves x 12 points | 1 200 000 | 100.07 | 9.05 | 273.66 | 2.35 | 2.73x | 467 |
+| engine-10000x200 | 10 000 curves x 200 points | 2 000 000 | 88.37 | 3.32 | 474.16 | 10.16 | 5.37x | 503 |
+<!-- serial:end -->
+
+## Profiling the timings
+
+The phase table comes from separate instrumented calls after each case's speed measurements. These are **mean wall times**, not the medians above: phases are exclusive, and their means sum to the mean total before rounding. Instrumentation adds overhead, so use the first table for speedup. The raw JSON includes every phase sample for every shape; this table shows representative shapes.
+
+<!-- profiles:start -->
+| case | engine | total ms | input + dispatch ms | binding ms | output adaptation ms | Python compute ms | result ms | other ms |
+|---|---|---|---|---|---|---|---|---|
+| engine-1x12 | kernel | 1.224 | 0.207 | 0.106 | 0.079 | 0.000 | 0.559 | 0.273 |
+| engine-1x12 | python | 1.536 | 0.002 | 0.000 | 0.000 | 0.663 | 0.562 | 0.310 |
+| engine-1000x200 | kernel | 3.339 | 0.656 | 1.532 | 0.117 | 0.000 | 0.667 | 0.368 |
+| engine-1000x200 | python | 52.066 | 0.001 | 0.000 | 0.000 | 50.872 | 0.661 | 0.532 |
+| engine-100000x12 | kernel | 55.603 | 3.218 | 44.559 | 0.335 | 0.000 | 4.244 | 3.248 |
+| engine-100000x12 | python | 100.028 | 0.001 | 0.000 | 0.000 | 91.610 | 4.256 | 4.161 |
+| engine-10000x200 | kernel | 18.426 | 3.846 | 12.877 | 0.149 | 0.000 | 0.926 | 0.627 |
+| engine-10000x200 | python | 474.506 | 0.001 | 0.000 | 0.000 | 471.941 | 0.909 | 1.655 |
+
+For one curve, result assembly is 45.7 % of the profiled Rust path and the binding is 8.6 %. For 10 000 curves x 200 points, the binding is 69.9 % and result assembly is 5.0 %. Even eliminating the entire binding call would cap further speedup on that shape at 3.32x with the remaining costs unchanged. For 100 000 curves x 12 points, output adaptation is 0.6 % and result assembly is 7.6 % of the profiled Rust path. The independent serial Python function profile of the dense batch ranks `auc.py:60(segment_areas)` (191.73 ms self time), `terminal.py:106(window_statistics)` (105.04 ms self time), `_shape_base_impl.py:60(take_along_axis)` (33.35 ms self time) highest.
+<!-- profiles:end -->
+
+The boundaries are:
+
+- **Input + dispatch:** preparing the batch and options dictionaries and checking kernel support. The JSON separates input preparation from the rest of dispatch.
+- **Binding:** `pkpdutils_core.analyze_batch`, including PyO3 input copies, native computation, native workers and Python output conversion. This is not a measurement of pure Rust computation.
+- **Output adaptation:** the rest of `engine.run_kernel`, including parameter mapping, dtype and unit normalization, excluding the binding and any input preparation.
+- **Python compute:** `run_analysis_rows`, including NumPy computation and any thread-pool wait. No Python computation runs in the eligible Rust path.
+- **Result:** `_to_result`, including parameter scaling, array copies, coordinates, units and the xarray result dataset.
+- **Other:** the remaining host orchestration, validation, flags, dose handling and option serialization, plus instrumentation overhead outside the named boundaries.
+
+`--profile` also collects an independent `cProfile` run for each engine and case, using `n_workers=1` in both engines so Python numerical functions stay in the calling thread. These are diagnostic profiles of the serial paths, not timings of the automatic worker policy. Their overhead varies with Python call count; function times are never used in either table. The JSON retains the highest self and cumulative times. `--profile-dir` additionally saves `.prof` and `.txt` files, sorted by cumulative and self time. Python profiling cannot split native Rust work from conversion inside the binding. Use phase timers for parallel wall-time attribution and native sampling with symbols before attributing a Rust cost to a specific algorithm.
+
+## Further improvements to investigate
+
+These are candidates supported by the measured boundaries and code inspection, not measured gains from changes:
+
+1. **Reduce result copies and repeated result construction.** `_to_result` multiplies numeric columns even when the unit factor is 1, and casts integer columns again after the Rust adapter normalizes their dtype. Investigate reusing arrays for identity conversions and `astype(copy=False)`, while preserving result ownership and independence. Reuse validated schema and unit metadata where inputs permit it. The result share in the phase table bounds the benefit.
+2. **Avoid decoding the same inputs twice.** The support predicate and the analysis binding each decode the input batch into owned Rust buffers. Consider a validated prepared-input handle, or a support check that reads only metadata, while preserving fallback semantics and safe buffer ownership when the GIL is released. The input/dispatch phase and binding phase contain this work, but the profile does not isolate its share. Rust output vectors already transfer to NumPy without copying; a new output buffer interface alone would not remove these input costs. Returning computation-unit columns could also avoid reversing and reapplying scale factors, but the measured output-adaptation share is small.
+3. **Batch small analyses.** Submit many compatible profiles in one `Timecourses` object to amortize dispatch and xarray construction. Measure the actual workload: combining profiles changes output size and worker selection as well as call count.
+4. **Tune workers against both dimensions.** Compare serial and automatic runs on the same machine. Benchmark profile counts near the Python threshold, long profiles and concurrent callers before changing shard sizes or thresholds. Avoid inferring thread efficiency from the default speedup alone.
+5. **Profile inside Rust before changing its algorithms.** Native sampling or kernel microbenchmarks can distinguish terminal-window fitting, AUC integration, allocations and binding conversion. The serial Python hotspots identify costs the Rust path already avoids; they do not identify Rust hotspots. The optimistic binding-removal bound applies only to changes inside that boundary with all other costs held constant.
 
 ## What the memory column says
 
-`peak RSS MB` is the peak resident set size of the whole case process, which ran both engines, so it is the high-water mark of the larger of the two and not a per-engine figure. Most of it is the data and what the analysis computes over it: the batch of a million points and the 51 variables of its result are some 60 MB of float64, both cores work over whole columns rather than row by row, and the smallest cases of the table show what an interpreter which has imported `pkpdutils` costs before any batch exists. The wheel of `pkpdutils-core` also allocates through mimalloc, which its own benchmark measured at about 22 % less CPU on a batch of 100 000 rows by 12 points for about a third more peak resident set size on that shape, so this column reads a little higher than a glibc build of the same analysis would.
+`peak RSS MB` is the process high-water mark after both uninstrumented engines have run, before profiling. It includes imports, fixture construction, warm-up validation and both engine allocations. It is not a per-engine comparison or an incremental allocation measurement. Allocator retention can keep RSS above the size of live arrays.
 
 ## What the kernel does not carry
 
@@ -61,13 +112,23 @@ A batch of several routes is analysed by whichever engine the dispatch picked, i
 
 ```bash
 uv run python scripts/benchmark.py engines          # the table above
-uv run python scripts/benchmark.py --write          # the table above, pasted into this page
+uv run python scripts/benchmark.py --write --repeat 15 # speedups, serial control, phases and JSON
 uv run python scripts/benchmark.py --check          # exit 1 if the page no longer matches the cases
 uv run python scripts/benchmark.py all --repeat 5   # the hot paths of the package as well
+
+# Save phases, raw samples and independent Python profiles for the same run.
+uv run python scripts/benchmark.py --write --repeat 15 --profile-dir /tmp/nca-profiles
+
+# Controlled worker comparison without replacing the automatic-worker page.
+uv run python scripts/benchmark.py engine-100000x12 engine-10000x200 \
+  --n-workers 1 --repeat 9 --profile --output /tmp/nca-serial.json
+
+# Read the independent function profile interactively.
+python -m pstats /tmp/nca-profiles/engine-10000x200-kernel.prof
 ```
 
 The numbers are of the machine named above the table, and of its load on that day. They are comparable against another run of the same script on the same machine, which is what a change to either engine is measured with, and they are no promise about another machine: the crossover in particular moves with the cost of a python call against the cost of a memory copy. Rerun `--write` after a release of `pkpdutils-core`, after a change to the dispatch or to the python core, and on the machine whose numbers you want to quote.
 
-`--check` compares what the script controls and not what the machine does: the cases, their size labels, the columns of the table and that every measured cell is a number, plus the refusal table word for word, since that one is the dispatch's own text. It cannot tell whether a timing was measured or invented, which is why the timings belong to `--write` alone and never to a hand edit. `tests/docs/test_benchmark.py` runs the check, so a case added, removed, renamed or reshaped fails the test suite until the page is rewritten.
+`--check` compares what the script controls: the cases, size labels, timing and phase columns, numeric cells, and the refusal table. It does not impose machine-specific speed thresholds. `tests/docs/test_benchmark.py` runs this check; profiling tests check accounting, actual engine selection and restoration of instrumentation. Timings and measured summary sentences are written by `--write`.
 
-A figure in a paragraph is the one staleness neither of them can see, which is why the sentences under the table are generated with it and the prose of this page leans on them instead of repeating a number. The prose that is left makes claims which survive a rerun on another machine, a crossover between two named shapes and a gain which grows with the work; if a `--write` ever moves the table far enough that one of them stops being true, the paragraphs are what has to be rewritten, and no check will say so.
+The JSON preserves provenance and dispersion so a rerun can be assessed instead of comparing rounded headline ratios. The phase percentages and binding-removal bound are generated from that run, alongside the tables.
