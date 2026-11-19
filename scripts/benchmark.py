@@ -10,6 +10,8 @@ as they do in a script a user runs.
 uv run python scripts/benchmark.py all
 uv run python scripts/benchmark.py nca-large bootstrap --repeat 5
 uv run python scripts/benchmark.py engines
+uv run python scripts/benchmark.py engines --profile --output /tmp/nca.json
+uv run python scripts/benchmark.py --write --repeat 9 --profile-dir /tmp/nca-profiles
 ```
 
 The `engine-*` cases are the second table: one single dose analysis measured
@@ -25,6 +27,12 @@ uv run python scripts/benchmark.py --write
 uv run python scripts/benchmark.py --check
 ```
 
+`--profile` measures exclusive wall-time phases in a separate pass, after the
+uninstrumented engine timings. `--profile-dir` also saves independent cProfile
+files, `--output` retains raw samples and metadata, and `--n-workers 1` compares
+the serial paths. `--write` includes phases and saves the raw report beside
+the documentation. Profile means are additive; timing medians are not.
+
 The absolute numbers are machine specific and only comparable against another
 run of the same script on the same machine; the point of the table is the
 before and after of a change.
@@ -32,26 +40,33 @@ before and after of a change.
 
 import argparse
 import contextlib
+import cProfile
 import functools
 import gc
+import hashlib
+import importlib
 import itertools
 import json
 import os
 import platform
+import pstats
 import re
 import statistics
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Generator
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field, replace
+from datetime import UTC, date, datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pkpdutils_core
+import xarray as xr
 
 import pkpdutils
 from pkpdutils import (
@@ -78,6 +93,9 @@ CHILD_ENV = "PKPDUTILS_BENCHMARK_CHILD"
 
 #: the page the comparison of the two engines is pasted into
 PAGE_PATH: Path = Path(__file__).resolve().parent.parent / "docs" / "benchmark.md"
+
+#: Published samples and metadata from the same run as the documentation tables.
+DATA_PATH: Path = PAGE_PATH.parent / "data" / "nca_benchmark.json"
 
 
 @dataclass(frozen=True)
@@ -390,6 +408,161 @@ ENGINE_CASES: dict[str, Callable[[], EngineCase]] = {
     for name, (n_rows, n_time) in ENGINE_SHAPES.items()
 }
 
+#: Representative shapes in the documentation's phase table. JSON retains all cases.
+PROFILE_CASES: tuple[str, ...] = (
+    "engine-1x12",
+    "engine-1000x200",
+    "engine-100000x12",
+    "engine-10000x200",
+)
+
+#: Serial controls separate the default worker policies from per-engine speedup.
+SERIAL_CASES: tuple[str, ...] = ("engine-100000x12", "engine-10000x200")
+
+#: Exclusive wall-time phases, measured in a separate pass through public nca().
+PHASES: tuple[str, ...] = (
+    "input",
+    "dispatch",
+    "binding",
+    "adaptation",
+    "python",
+    "result",
+    "other",
+)
+
+
+@dataclass
+class PhaseTimer:
+    """Time nested main-thread boundaries without double-counting their children.
+
+    The Python numerical boundary includes worker wait, and the Rust binding
+    boundary includes input/output conversion. No worker function is patched.
+    """
+
+    seconds: dict[str, float] = field(
+        default_factory=lambda: dict.fromkeys(PHASES, 0.0)
+    )
+    calls: dict[str, int] = field(default_factory=dict)
+    stack: list[str] = field(default_factory=list)
+
+    def wrap(self, phase: str, operation: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap a boundary, charging its elapsed time only to the active phase."""
+
+        @functools.wraps(operation)
+        def timed(*args: Any, **kwargs: Any) -> Any:
+            self.calls[phase] = self.calls.get(phase, 0) + 1
+            self.stack.append(phase)
+            start = time.perf_counter()
+            try:
+                return operation(*args, **kwargs)
+            finally:
+                elapsed = time.perf_counter() - start
+                self.seconds[phase] += elapsed
+                self.stack.pop()
+                if self.stack:
+                    self.seconds[self.stack[-1]] -= elapsed
+
+        return timed
+
+
+def profile_once(case: EngineCase, forced: bool) -> dict[str, float]:
+    """Measure disjoint phases of one real analysis, restoring every patch on exit."""
+    module = importlib.import_module("pkpdutils.nca.nca")
+    timer = PhaseTimer()
+    boundaries = (
+        (engine, "batch_dict", "input"),
+        (engine, "options_dict", "input"),
+        (engine, "unsupported_reason", "dispatch"),
+        (engine, "run_kernel", "adaptation"),
+        (pkpdutils_core, "analyze_batch", "binding"),
+        (module, "run_analysis_rows", "python"),
+        (module, "_to_result", "result"),
+    )
+    with python_path(forced), contextlib.ExitStack() as patches:
+        for owner, name, phase in boundaries:
+            patches.enter_context(
+                patch.object(owner, name, timer.wrap(phase, getattr(owner, name)))
+            )
+        start = time.perf_counter()
+        case.run()
+        total = time.perf_counter() - start
+    expected = "python" if forced else "binding"
+    forbidden = "binding" if forced else "python"
+    if timer.calls.get(expected) != 1 or timer.calls.get(forbidden, 0):
+        raise RuntimeError(
+            f"profile did not run exactly one {expected} path: {timer.calls}"
+        )
+    timer.seconds["other"] = total - sum(timer.seconds.values())
+    return {"total": total, **timer.seconds}
+
+
+def cprofile_case(
+    case: EngineCase, name: str, forced: bool, directory: Path | None
+) -> dict[str, Any]:
+    """Save a serial diagnostic run so Python numerical frames stay in one thread."""
+    case = replace(case, options=case.options.model_copy(update={"n_workers": 1}))
+    half = "python" if forced else "kernel"
+    profiler = cProfile.Profile()
+    with python_path(forced):
+        profiler.runcall(case.run)
+    if directory is not None:
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / f"{name}-{half}.prof"
+        profiler.dump_stats(str(destination))
+        with destination.with_suffix(".txt").open("w", encoding="utf-8") as stream:
+            stats = pstats.Stats(profiler, stream=stream)
+            stats.strip_dirs().sort_stats("cumulative").print_stats(30)
+            stats.sort_stats("tottime").print_stats(30)
+    stats = pstats.Stats(profiler)
+    # The saved .prof retains full paths; the JSON is portable between machines.
+    entries = [
+        {
+            "function": f"{Path(filename).name}:{line}({function})",
+            "calls": calls,
+            "self_s": self_s,
+            "cumulative_s": cumulative_s,
+        }
+        for (filename, line, function), (
+            _,
+            calls,
+            self_s,
+            cumulative_s,
+            _,
+            # Stats.stats is documented by pstats but absent from its type stub.
+        ) in stats.stats.items()  # ty: ignore[missing-attribute]
+    ]
+    return {
+        "n_workers": 1,
+        "top_self": sorted(entries, key=lambda row: row["self_s"], reverse=True)[:10],
+        "top_cumulative": sorted(
+            entries, key=lambda row: row["cumulative_s"], reverse=True
+        )[:10],
+    }
+
+
+def profile_engines(
+    case: EngineCase, name: str, repeat: int, directory: Path | None
+) -> dict[str, Any]:
+    """Profile after this case's uninstrumented timings; report additive means."""
+    samples: dict[str, list[dict[str, float]]] = {"kernel": [], "python": []}
+    for index in range(repeat):
+        # Reverse each pair on alternate runs to balance ordering effects.
+        halves = (("kernel", False), ("python", True))
+        for half, forced in halves[:: (-1 if index % 2 else 1)]:
+            gc.collect()
+            samples[half].append(profile_once(case, forced))
+    report: dict[str, Any] = {}
+    for half, forced in (("kernel", False), ("python", True)):
+        report[half] = {
+            "samples_s": samples[half],
+            "mean_s": {
+                phase: statistics.mean(sample[phase] for sample in samples[half])
+                for phase in ("total", *PHASES)
+            },
+        }
+        report[half]["cprofile"] = cprofile_case(case, name, forced, directory)
+    return report
+
 
 @contextlib.contextmanager
 def python_path(forced: bool) -> Generator[None]:
@@ -536,7 +709,8 @@ def peak_rss_mb() -> float:
     # importable where the module is not
     import resource
 
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return rss / (1024.0**2 if sys.platform == "darwin" else 1024.0)
 
 
 def measure(name: str, repeat: int) -> dict[str, Any]:
@@ -568,7 +742,14 @@ def measure(name: str, repeat: int) -> dict[str, Any]:
     }
 
 
-def measure_engines(name: str, repeat: int) -> dict[str, Any]:
+def measure_engines(
+    name: str,
+    repeat: int,
+    *,
+    profile: bool = False,
+    n_workers: int | None = None,
+    profile_dir: Path | None = None,
+) -> dict[str, Any]:
     """Time one analysis through both engines, alternating in one process.
 
     The batch is built once and analysed `repeat` times by each engine, kernel
@@ -585,16 +766,29 @@ def measure_engines(name: str, repeat: int) -> dict[str, Any]:
         their ratio and the peak RSS of the process, which ran both.
     """
     case = ENGINE_CASES[name]()
+    if n_workers is not None:
+        case = replace(
+            case, options=case.options.model_copy(update={"n_workers": n_workers})
+        )
     check_dispatch(name, case)
     times: dict[str, list[float]] = {"kernel": [], "python": []}
     halves = (("kernel", False), ("python", True))
+    warm: list[NCAResult] = []
     for forced in (False, True):
         # one warm-up run per engine, so that no timed run pays the first touch
         # of a cache either of them keeps
         with python_path(forced):
-            case.run()
-    for _ in range(repeat):
-        for half, forced in halves:
+            warm.append(case.run())
+    xr.testing.assert_allclose(
+        warm[0].ds, warm[1].ds, rtol=engine.COMPARE_REL, atol=engine.COMPARE_ABS
+    )
+    for variable in warm[0].ds.data_vars:
+        left, right = warm[0].ds[variable], warm[1].ds[variable]
+        if left.dtype != right.dtype or left.attrs != right.attrs:
+            raise RuntimeError(f"engine dtype or unit mismatch for {variable}")
+    del warm
+    for index in range(repeat):
+        for half, forced in halves[:: (-1 if index % 2 else 1)]:
             with python_path(forced):
                 gc.collect()
                 start = time.perf_counter()
@@ -602,17 +796,35 @@ def measure_engines(name: str, repeat: int) -> dict[str, Any]:
                 times[half].append(time.perf_counter() - start)
     kernel_s = statistics.median(times["kernel"])
     python_s = statistics.median(times["python"])
-    return {
+    row = {
         "case": name,
         "size": case.size,
         "kernel_s": kernel_s,
         "python_s": python_s,
         "speedup": python_s / kernel_s,
+        "kernel_iqr_s": float(np.subtract(*np.percentile(times["kernel"], [75, 25]))),
+        "python_iqr_s": float(np.subtract(*np.percentile(times["python"], [75, 25]))),
+        "samples_s": times,
+        "n_workers": n_workers,
+        "shape": list(ENGINE_SHAPES[name]),
+        "seed": 0,
+        "options": case.options.model_dump(mode="json"),
+        "validated": True,
         "peak_rss_mb": peak_rss_mb(),
     }
+    if profile:
+        row["profile"] = profile_engines(case, name, repeat, profile_dir)
+    return row
 
 
-def run_isolated(name: str, repeat: int) -> dict[str, Any]:
+def run_isolated(
+    name: str,
+    repeat: int,
+    *,
+    profile: bool = False,
+    n_workers: int | None = None,
+    profile_dir: Path | None = None,
+) -> dict[str, Any]:
     """Run one case in a fresh interpreter and read its result.
 
     Args:
@@ -625,8 +837,21 @@ def run_isolated(name: str, repeat: int) -> dict[str, Any]:
     Raises:
         RuntimeError: if the child process fails or writes no result.
     """
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        name,
+        "--repeat",
+        str(repeat),
+    ]
+    if profile:
+        command.append("--profile")
+    if n_workers is not None:
+        command.extend(["--n-workers", str(n_workers)])
+    if profile_dir is not None:
+        command.extend(["--profile-dir", str(profile_dir.resolve())])
     completed = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), name, "--repeat", str(repeat)],
+        command,
         capture_output=True,
         text=True,
         check=False,
@@ -674,14 +899,18 @@ def engine_table(rows: list[dict[str, Any]]) -> str:
     Returns:
         The table.
     """
-    header = "| case | size | points | kernel ms | python ms | speedup | peak RSS MB |"
-    lines = [header, "|---|---|---|---|---|---|---|"]
+    header = (
+        "| case | size | points | kernel ms | IQR ms | python ms | IQR ms | "
+        "speedup | peak RSS MB |"
+    )
+    lines = [header, "|---|---|---|---|---|---|---|---|---|"]
     for row in rows:
         n_rows, n_time = ENGINE_SHAPES[row["case"]]
         points = f"{n_rows * n_time:,}".replace(",", " ")
         lines.append(
             f"| {row['case']} | {row['size']} | {points} | "
-            f"{1e3 * row['kernel_s']:.2f} | {1e3 * row['python_s']:.2f} | "
+            f"{1e3 * row['kernel_s']:.2f} | {1e3 * row['kernel_iqr_s']:.2f} | "
+            f"{1e3 * row['python_s']:.2f} | {1e3 * row['python_iqr_s']:.2f} | "
             f"{row['speedup']:.2f}x | {row['peak_rss_mb']:.0f} |"
         )
     return "\n".join(lines)
@@ -755,13 +984,13 @@ def summary_sentences(rows: list[dict[str, Any]]) -> str:
     crossed = crossover(ordered)
     if not below:
         sentences.append(
-            "Every shape of this run is at or above 1.00x, so the crossover "
-            "is below the smallest one measured."
+            "Every shape of this run is at or above 1.00x; no crossover "
+            "is observed among the measured shapes."
         )
     elif not above:
         sentences.append(
-            "Every shape of this run is below 1.00x, so the crossover is "
-            "above the largest one measured."
+            "Every shape of this run is below 1.00x; no crossover "
+            "is observed among the measured shapes."
         )
     elif crossed is None:
         changes = sign_changes(ordered)
@@ -880,9 +1109,8 @@ def shape_pair(
 
     A pair which straddles `pkpdutils.parallel.NCA_WORKER_THRESHOLD` is left
     out, and the threshold is read from the library rather than written here:
-    such a pair holds a batch both engines run in parallel against one both run
-    serially, which is a figure about the worker pools and no figure about the
-    shape of a batch.
+    such a pair changes the Python worker policy, which confounds the effect of
+    batch shape with that of worker selection. Rust uses its own shard policy.
 
     Args:
         ordered: the results of the engine cases, sorted by `engine_points`.
@@ -960,11 +1188,88 @@ def skeleton_rows() -> list[dict[str, Any]]:
             "size": engine_size(n_rows, n_time),
             "kernel_s": 0.0,
             "python_s": 0.0,
+            "kernel_iqr_s": 0.0,
+            "python_iqr_s": 0.0,
             "speedup": 0.0,
             "peak_rss_mb": 0.0,
+            "profile": {
+                half: {"mean_s": dict.fromkeys(("total", *PHASES), 0.0)}
+                for half in ("kernel", "python")
+            },
         }
         for name, (n_rows, n_time) in ENGINE_SHAPES.items()
     ]
+
+
+def machine_metadata() -> dict[str, Any]:
+    """Record the software, CPU, affinity and thread environment of a run."""
+    cpu = platform.processor()
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        cpu = next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in cpuinfo.read_text().splitlines()
+                if line.startswith("model name")
+            ),
+            cpu,
+        )
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PAGE_PATH.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {
+        "measured_at": datetime.now(UTC).isoformat(),
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "cpu": cpu or "unknown",
+        "logical_cpus": os.cpu_count(),
+        "affinity_cpus": len(os.sched_getaffinity(0))
+        if hasattr(os, "sched_getaffinity")
+        else None,
+        "versions": {
+            name: version(name)
+            for name in (
+                "pkpdutils",
+                "pkpdutils-core",
+                "numpy",
+                "scipy",
+                "pandas",
+                "xarray",
+            )
+        },
+        "revision": revision.stdout.strip() if revision.returncode == 0 else None,
+        "sources_sha256": {
+            str(path.relative_to(PAGE_PATH.parent.parent)): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in (
+                Path(__file__).resolve(),
+                *(
+                    PAGE_PATH.parent.parent / "src" / "pkpdutils" / "nca" / name
+                    for name in (
+                        "nca.py",
+                        "engine.py",
+                        "options.py",
+                        "terminal.py",
+                        "auc.py",
+                    )
+                ),
+            )
+        },
+        "thread_environment": {
+            name: os.environ.get(name)
+            for name in (
+                "OMP_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "RAYON_NUM_THREADS",
+            )
+        },
+    }
 
 
 def machine_line(repeat: int) -> str:
@@ -979,12 +1284,66 @@ def machine_line(repeat: int) -> str:
     # the wheel of `pkpdutils-core` carries no stub beside its compiled module,
     # so the one lookup of its version is suppressed by name
     kernel = pkpdutils_core.__version__  # ty: ignore[missing-attribute]
+    metadata = machine_metadata()
     return (
         f"Measured on {date.today().isoformat()}, python "
         f"{platform.python_version()} on {platform.system()} "
-        f"{platform.machine()} with {os.cpu_count()} cores, `pkpdutils` "
+        f"{platform.machine()}, {metadata['cpu']}, with {os.cpu_count()} logical CPUs, `pkpdutils` "
         f"{pkpdutils.__version__} with `pkpdutils-core` {kernel}, {repeat} "
-        "timed runs per engine and case after one warm-up run each."
+        "timed runs per engine and case after one warm-up run each, with automatic workers."
+    )
+
+
+def profile_table(rows: list[dict[str, Any]], *, representative: bool = False) -> str:
+    """Render additive mean phase timings for representative shapes, in milliseconds."""
+    lines = [
+        "| case | engine | total ms | input + dispatch ms | binding ms | output adaptation ms | Python compute ms | result ms | other ms |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        if representative and row["case"] not in PROFILE_CASES:
+            continue
+        for half in ("kernel", "python"):
+            phases = row["profile"][half]["mean_s"]
+            values = [
+                phases["total"],
+                phases["input"] + phases["dispatch"],
+                *(
+                    phases[name]
+                    for name in ("binding", "adaptation", "python", "result", "other")
+                ),
+            ]
+            cells = " | ".join(f"{1e3 * value:.3f}" for value in values)
+            lines.append(f"| {row['case']} | {half} | {cells} |")
+    return "\n".join(lines)
+
+
+def profile_summary_sentences(rows: list[dict[str, Any]]) -> str:
+    """Calculate the bottleneck shares and optimistic binding-only speedup bound."""
+    by_name = {row["case"]: row for row in rows}
+    small = by_name["engine-1x12"]["profile"]["kernel"]["mean_s"]
+    dense = by_name["engine-10000x200"]["profile"]["kernel"]["mean_s"]
+    wide = by_name["engine-100000x12"]["profile"]["kernel"]["mean_s"]
+    limit = dense["total"] / (dense["total"] - dense["binding"])
+    summary = (
+        f"For one curve, result assembly is {100 * small['result'] / small['total']:.1f} % "
+        f"of the profiled Rust path and the binding is {100 * small['binding'] / small['total']:.1f} %. "
+        f"For 10 000 curves x 200 points, the binding is {100 * dense['binding'] / dense['total']:.1f} % "
+        f"and result assembly is {100 * dense['result'] / dense['total']:.1f} %. "
+        f"Even eliminating the entire binding call would cap further speedup on that shape at "
+        f"{limit:.2f}x with the remaining costs unchanged. "
+        f"For 100 000 curves x 12 points, output adaptation is "
+        f"{100 * wide['adaptation'] / wide['total']:.1f} % and result assembly is "
+        f"{100 * wide['result'] / wide['total']:.1f} % of the profiled Rust path."
+    )
+    profile = by_name["engine-10000x200"]["profile"]["python"]["cprofile"]
+    hotspots = ", ".join(
+        f"`{row['function']}` ({1e3 * row['self_s']:.2f} ms self time)"
+        for row in profile["top_self"][:3]
+    )
+    return (
+        summary
+        + f" The independent serial Python function profile of the dense batch ranks {hotspots} highest."
     )
 
 
@@ -993,6 +1352,12 @@ NUMBER = re.compile(r"^\d+(\.\d+)?(e[-+]?\d+)?x?$")
 
 #: the region of `docs/benchmark.md` the comparison of the two engines is in
 TIMINGS_START, TIMINGS_END = "<!-- timings:start -->", "<!-- timings:end -->"
+
+#: The independently instrumented timings, never included in the speedup table.
+PROFILES_START, PROFILES_END = "<!-- profiles:start -->", "<!-- profiles:end -->"
+
+#: Controlled single-worker comparisons written with the default-worker sweep.
+SERIAL_START, SERIAL_END = "<!-- serial:start -->", "<!-- serial:end -->"
 
 #: the region of `docs/benchmark.md` the refusals of the kernel are in
 REFUSALS_START, REFUSALS_END = "<!-- refusals:start -->", "<!-- refusals:end -->"
@@ -1064,8 +1429,13 @@ def replace_region(page: str, start: str, end: str, body: str) -> str:
     return f"{page[: first + len(start)]}\n{inner}\n{page[last:]}"
 
 
-def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
-    """The page with the two generated tables of this run pasted into it.
+def render_page(
+    page: str,
+    rows: list[dict[str, Any]],
+    repeat: int,
+    serial_rows: list[dict[str, Any]],
+) -> str:
+    """The page with the speedup, serial, phase and refusal tables of this run.
 
     The timing region carries the machine, the table and the sentences of
     `summary_sentences`, which are the figures the prose of the page leans on,
@@ -1075,6 +1445,7 @@ def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
         page: the markdown of the page
         rows: the results of the engine cases
         repeat: number of timed runs per engine, named on the page.
+        serial_rows: the single-worker controls measured separately.
 
     Returns:
         The markdown of the page.
@@ -1083,6 +1454,9 @@ def render_page(page: str, rows: list[dict[str, Any]], repeat: int) -> str:
         f"{machine_line(repeat)}\n\n{engine_table(rows)}\n\n{summary_sentences(rows)}"
     )
     page = replace_region(page, TIMINGS_START, TIMINGS_END, timings)
+    page = replace_region(page, SERIAL_START, SERIAL_END, engine_table(serial_rows))
+    profiles = f"{profile_table(rows, representative=True)}\n\n{profile_summary_sentences(rows)}"
+    page = replace_region(page, PROFILES_START, PROFILES_END, profiles)
     return replace_region(page, REFUSALS_START, REFUSALS_END, refusal_table())
 
 
@@ -1109,6 +1483,23 @@ def page_complaints(page: str) -> list[str]:
         complaints.append(
             "the timing table of the page is not the table of the cases of "
             f"the script: {first_difference(expected, found)}"
+        )
+    found_profiles = table_structure(region(page, PROFILES_START, PROFILES_END))
+    expected_profiles = table_structure(
+        profile_table(skeleton_rows(), representative=True)
+    )
+    if found_profiles != expected_profiles:
+        complaints.append(
+            "the phase table of the page is not the table of the profiling cases: "
+            + first_difference(expected_profiles, found_profiles)
+        )
+    serial = [row for row in skeleton_rows() if row["case"] in SERIAL_CASES]
+    expected_serial = table_structure(engine_table(serial))
+    found_serial = table_structure(region(page, SERIAL_START, SERIAL_END))
+    if found_serial != expected_serial:
+        complaints.append(
+            "the serial control table does not match the cases: "
+            + first_difference(expected_serial, found_serial)
         )
     refusals = region(page, REFUSALS_START, REFUSALS_END).strip()
     if refusals != refusal_table():
@@ -1141,6 +1532,14 @@ def first_difference(expected: list[list[str]], found: list[list[str]]) -> str:
     return "nothing, the two agree"
 
 
+def positive_int(value: str) -> int:
+    """Parse strictly positive repeat and worker counts before starting a child."""
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
+
+
 def main() -> int:
     """Parse the arguments and run the requested cases.
 
@@ -1159,7 +1558,7 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--repeat", type=int, default=3, help="timed runs per case (default 3)"
+        "--repeat", type=positive_int, default=3, help="timed runs per case (default 3)"
     )
     parser.add_argument(
         "--write",
@@ -1171,7 +1570,32 @@ def main() -> int:
         action="store_true",
         help=f"exit 1 if {PAGE_PATH.name} no longer matches the cases",
     )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="measure exclusive wall-time phases in separate engine runs",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        help="also save separate cProfile .prof/.txt files; implies --profile",
+    )
+    parser.add_argument(
+        "--n-workers",
+        type=positive_int,
+        help="worker count for both engines (default automatic; 1 is serial)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="save JSON metadata, every timing sample, IQRs and requested profiles",
+    )
     args = parser.parse_args()
+    if args.write and args.n_workers is not None:
+        parser.error(
+            "--write uses automatic workers; use --output for controlled worker runs"
+        )
+    args.profile = args.profile or args.write or args.profile_dir is not None
 
     if args.check:
         complaints = page_complaints(PAGE_PATH.read_text(encoding="utf-8"))
@@ -1187,7 +1611,13 @@ def main() -> int:
         # one case in a fresh interpreter: report the row as json
         name = names[0]
         row = (
-            measure_engines(name, args.repeat)
+            measure_engines(
+                name,
+                args.repeat,
+                profile=args.profile,
+                n_workers=args.n_workers,
+                profile_dir=args.profile_dir,
+            )
             if name in ENGINE_CASES
             else measure(name, args.repeat)
         )
@@ -1195,7 +1625,22 @@ def main() -> int:
         return 0
 
     started = time.perf_counter()
-    rows = [run_isolated(name, args.repeat) for name in names]
+    metadata = machine_metadata()
+    rows = [
+        run_isolated(
+            name,
+            args.repeat,
+            profile=args.profile,
+            n_workers=args.n_workers,
+            profile_dir=args.profile_dir,
+        )
+        for name in names
+    ]
+    serial_rows = (
+        [run_isolated(name, args.repeat, n_workers=1) for name in SERIAL_CASES]
+        if args.write
+        else []
+    )
     hot = [row for row in rows if row["case"] in CASES]
     engines = [row for row in rows if row["case"] in ENGINE_CASES]
     if hot:
@@ -1204,12 +1649,43 @@ def main() -> int:
     if engines:
         print(engine_table(engines))
         print()
+        if args.profile:
+            print(profile_table(engines))
+            print()
+    if serial_rows:
+        print("Serial control (n_workers=1 for both engines):")
+        print(engine_table(serial_rows))
+        print()
+    outputs = ([DATA_PATH] if args.write else []) + (
+        [args.output] if args.output else []
+    )
+    if outputs:
+        report = {
+            "schema_version": 1,
+            "measured_at": datetime.now(UTC).isoformat(),
+            "metadata": metadata,
+            "repeat": args.repeat,
+            "warmup_runs_per_engine": 1,
+            "worker_policy": "automatic" if args.n_workers is None else args.n_workers,
+            "timing_statistic": "median; IQR = percentile(75) - percentile(25)",
+            "profile_statistic": "mean of exclusive wall times from separate runs",
+            "rows": rows,
+            "serial_rows": serial_rows,
+        }
+        for output in dict.fromkeys(outputs):
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+            )
+            print(f"wrote {output}")
     if args.write:
-        page = render_page(PAGE_PATH.read_text(encoding="utf-8"), engines, args.repeat)
+        page = render_page(
+            PAGE_PATH.read_text(encoding="utf-8"), engines, args.repeat, serial_rows
+        )
         PAGE_PATH.write_text(page, encoding="utf-8")
         print(f"wrote {PAGE_PATH}")
     print(
-        f"{len(names)} cases, {args.repeat} repeats, "
+        f"{len(names)} cases, {len(serial_rows)} serial controls, {args.repeat} repeats, "
         f"{time.perf_counter() - started:.1f} s total"
     )
     return 0

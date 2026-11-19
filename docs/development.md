@@ -179,13 +179,19 @@ The `engine-*` cases, collectively `engines`, are the second table: one single d
 
 ```bash
 uv run python scripts/benchmark.py engines                    # the comparison of the two engines
-uv run python scripts/benchmark.py --write --repeat 5         # rewrites docs/benchmark.md
+uv run python scripts/benchmark.py --write --repeat 15         # tables, phases and raw JSON
+uv run python scripts/benchmark.py --write --repeat 15 --profile-dir /tmp/nca-profiles
+uv run python scripts/benchmark.py engine-100000x12 --n-workers 1 --profile --output /tmp/nca-serial.json
 uv run python scripts/benchmark.py --check                    # exit 1 if that page is stale
 ```
 
 `--write` runs every engine case and pastes the table, the machine it ran on, the day and the sentences of `summary_sentences` into [Performance](benchmark.md), together with the table of the analyses the kernel does not carry, whose reasons are read from the dispatch and never written by hand. Those sentences carry the figures the prose of the page leans on (the largest and the smallest ratio, the two shapes the crossover lies between, what the kernel path costs below it and the first clear win above it), because a figure copied into a paragraph is the one staleness the check below cannot see; the prose around them is written to survive a rerun on another machine, and a `--write` which moves the table far enough to make one of its claims untrue is a reason to rewrite the paragraphs. `--check` compares the page against the cases of the script, not against the timings, which differ between machines and between runs: the cases, their size labels, the columns and that every measured cell is a number, plus the refusal table word for word. `tests/docs/test_benchmark.py` runs that check, so a case added, removed, renamed or reshaped fails the test suite until the page is rewritten; the timings themselves are only ever written by `--write`.
 
-The numbers are machine specific, they depend on the cores, the memory and the load of the machine they were measured on: use them to compare a change against the same table taken before it on the same machine, never as an absolute performance claim.
+The engine comparison also retains all uninstrumented samples and their interquartile ranges. Timed pairs alternate order, and warmed results are compared before measurement. `--write` adds a separate profiling pass and writes `docs/data/nca_benchmark.json` with samples, phase means and machine metadata. It also measures serial controls on the large short-profile and dense-profile batches, retaining them under `serial_rows` and generating their comparison table. `--profile` requests this pass without updating the page; `--output` saves a report, and `--n-workers` sets the same explicit worker count for both engines. The published page always uses automatic workers.
+
+Phase timers wrap the actual public analysis after each case's speed measurements, accounting for nested boundaries without double-counting them. Their arithmetic means are additive; independent phase medians would not be. Profiling never runs inside the speedup measurements. An independent `cProfile` pass sets `n_workers=1` for both engines to inspect Python numerical functions in one thread. Its highest self and cumulative times are retained in JSON; `--profile-dir` also saves `.prof` files and text reports. The Rust binding timer includes PyO3 conversion and native work, while the Python phase includes any worker wait. Python profiling cannot inspect native Rust code. See [Performance](benchmark.md#profiling-the-timings) for phase definitions, limitations and improvement candidates. The documentation check covers the phase table's schema as well as the speedup table.
+
+The numbers depend on CPU, memory and machine load. Compare changes against a run on the same machine and worker policy; do not treat a speedup as a promise about other workloads.
 
 ## Parallelism
 
