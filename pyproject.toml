@@ -52,7 +52,7 @@ dependencies = [
     # figures: the chart builder `sbmlsim_core.chart` and its renderer, which
     # draw every figure of `pkpdutils.plot` (0.34.0 carries the chart builder;
     # sbmlsim depends on pkpdutils, so the figures cannot use sbmlsim itself)
-    "sbmlsim-core>=0.34.0",
+    "sbmlsim-core>=0.37.0",
     # console output
     "rich>=14.0.0",
 ]
