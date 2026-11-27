@@ -20,7 +20,7 @@ All data structures are [xarray](https://xarray.dev) datasets with [pint](https:
 - **[Statistics](statistics.md)** - significance tests, geometric mean ratios, bioequivalence, drug-drug interaction classification and meta-analysis on the parameters of groups and studies.
 - **[Bioequivalence](bioequivalence.md)** - the average bioequivalence of two formulations, crossover and parallel designs, the ratio table and figure of the report.
 - **[Drug-drug interactions](ddi.md)** - exposure ratios with and without a perpetrator, the FDA and EMA classes, substrate sensitivity, the class figure.
-- **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as matplotlib figures, parameter distributions, ratio and forest plots.
+- **[Plotting](plotting.md)** - timecourses, NCA diagnostics and fits as charts of sbmlsim-core (SVG), parameter distributions, ratio and forest plots.
 - **[Units](units.md)** - every timecourse and result carries its units, parameters are derived in the units of the input.
 
 The methods behind the package are cited in [References](references.md).
@@ -56,10 +56,10 @@ table = summary_table(
     unit_style="short",
 )
 print_table(table, title="Pharmacokinetic parameters by dose group")
-plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
+plot_mean_timecourse(batch, by="dose").save("study_curves.svg")
 ```
 
-![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.svg)
 
 The table the snippet prints, the geometric mean with its coefficient of variation per dose group:
 

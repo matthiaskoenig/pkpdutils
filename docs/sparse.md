@@ -153,10 +153,10 @@ auc_last_df  8.904
 # not executed
 from pkpdutils.plot import plot_sparse
 
-plot_sparse(curve, result).savefig("sparse.png", dpi=120)
+plot_sparse(curve, result).save("sparse.svg")
 ```
 
-![The mean curve of a sparse design with the Bailer standard errors and the shaded area](images/sparse.png)
+![The mean curve of a sparse design with the Bailer standard errors and the shaded area](images/sparse.svg)
 
 The example is `examples/sparse.py`, the reference of the module is in [API: nca.sparse](api/nca.sparse.md). A group curve whose `sd` is known rather than a design of single samples is propagated differently, see [Uncertainty](uncertainty.md).
 

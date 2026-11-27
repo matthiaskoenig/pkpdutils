@@ -136,10 +136,10 @@ clr 2.096 l/h
 # not executed
 from pkpdutils.plot import plot_excretion
 
-plot_excretion(result, excretion).savefig("urine.png", dpi=120)
+plot_excretion(result, excretion).save("urine.svg")
 ```
 
-![The excretion rate curve with its terminal regression and the cumulative amount recovered](images/urine.png)
+![The excretion rate curve with its terminal regression and the cumulative amount recovered](images/urine.svg)
 
 The example is `examples/urine.py`, the reference of the module is in [API: nca.urine](api/nca.urine.md) and the sparse designs of a preclinical study are in [Sparse sampling](sparse.md).
 

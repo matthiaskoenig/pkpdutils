@@ -143,7 +143,7 @@ sigmoid_emax 43.834014   12.416013       0.002006
 
 The sigmoid model recovers the parameters the data was built from, but with eight concentrations the plain `Emax` wins the comparison by a wide margin: the Hill coefficient costs a parameter and an AICc penalty which this much data does not pay for, which is why the interval of \(\mathrm{EC}_{90}\) is so wide.
 
-![A sigmoid Emax curve fitted to a concentration-effect relationship on a logarithmic concentration axis](images/emax.png)
+![A sigmoid Emax curve fitted to a concentration-effect relationship on a logarithmic concentration axis](images/emax.svg)
 
 The example is `examples/emax.py`, the figures are described in [Plotting](plotting.md) and the reference of the models is in [API: fit.models](api/fit.models.md).
 

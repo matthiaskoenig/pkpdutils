@@ -12,12 +12,12 @@ flowchart LR
   SR --> REP["Report<br/>sections in order"]
   REP -->|add_text / add_table / add_figure| REP
   REP --> H["write_html -> one file"]
-  REP --> M["write_markdown -> md + png"]
+  REP --> M["write_markdown -> md + svg"]
 ```
 
-**What it is.** A `Report` is a title and a list of sections, nothing more: a paragraph (with an optional heading), a data frame with a caption, or a figure with a caption. Sections are added in the order they are read and every `add_*` returns the report, so the calls chain. A figure is rendered to PNG the moment it is added, which means the report does not keep a matplotlib figure alive, the caller may close it right away, and writing the report twice gives the same bytes.
+**What it is.** A `Report` is a title and a list of sections, nothing more: a paragraph (with an optional heading), a data frame with a caption, or a figure with a caption. Sections are added in the order they are read and every `add_*` returns the report, so the calls chain. A figure is rendered to SVG the moment it is added, which means the report does not keep the chart, and writing the report twice gives the same bytes.
 
-**Self-contained HTML.** `write_html` embeds the figures as base64 PNG and carries its own style sheet, so the page is one file which needs no directory beside it. `write_markdown` writes the figures as `<stem>_1.png`, `<stem>_2.png` next to the document and references them by name, which is the form a static site or a pandoc conversion wants.
+**Self-contained HTML.** `write_html` embeds the figures as base64 SVG and carries its own style sheet, so the page is one file which needs no directory beside it. `write_markdown` writes the figures as `<stem>_1.svg`, `<stem>_2.svg` next to the document and references them by name, which is the form a static site or a pandoc conversion wants.
 
 Both writers stream table rows to disk instead of building formatted copies of the entire document. Working memory for table export stays bounded as the number of rows grows; HTML still encodes one image at a time to embed it.
 
@@ -29,8 +29,8 @@ Both writers stream table rows to disk instead of building formatted copies of t
 
 | object | what it carries |
 | --- | --- |
-| `Report` | `title`, `subtitle`, `digits`, `sections`, `add_text(text, heading=, level=)`, `add_table(frame, caption, heading=, digits=)`, `add_figure(fig, caption, dpi=, heading=)`, `write_html(path)`, `write_markdown(path)` |
-| `Section` | `kind` (`"text"`, `"table"`, `"figure"`), `heading`, `text`, `frame`, `caption`, `image` (the rendered PNG), `digits`, `level` |
+| `Report` | `title`, `subtitle`, `digits`, `sections`, `add_text(text, heading=, level=)`, `add_table(frame, caption, heading=, digits=)`, `add_figure(chart, caption, heading=)`, `write_html(path)`, `write_markdown(path)` |
+| `Section` | `kind` (`"text"`, `"table"`, `"figure"`), `heading`, `text`, `frame`, `caption`, `image` (the rendered SVG), `digits`, `level` |
 | `study_report` | `(batch, result, *, dim, by=None, options=None, title=..., subtitle=...) -> Report` |
 
 ## API
@@ -114,8 +114,8 @@ extra.add_table(
     "Peak and time of the peak per arm.",
     heading="Peak",
 )
-figure = plot_mean_timecourse(study, by="arm")
-extra.add_figure(figure, "The mean curves of the two arms.")
+chart = plot_mean_timecourse(study, by="arm")
+extra.add_figure(chart, "The mean curves of the two arms.")
 print(
     extra.write_markdown("cmax/report.md").name,
     sorted(p.name for p in pathlib.Path("cmax").iterdir()),
@@ -123,12 +123,12 @@ print(
 ```
 
 ```text
-report.md ['report.md', 'report_1.png']
+report.md ['report.md', 'report_1.svg']
 ```
 
 The mean curve figure of the report is the one `examples/report.py` writes from the same simulation:
 
-![The mean curves of the two arms with their standard deviation, linear and semi-logarithmic](images/report.png)
+![The mean curves of the two arms with their standard deviation, linear and semi-logarithmic](images/report.svg)
 
 Anything else the study needs goes in before the file is written: the ratio table and the figure of a bioequivalence comparison ([Bioequivalence](bioequivalence.md)), the interaction table of a drug-drug interaction study ([Drug-drug interactions](ddi.md)), the flags of the analysis (`NCAResult.flag_table`) or the exclusions and their reasons ([Non-compartmental analysis](nca.md#acceptance-criteria-and-exclusions)).
 

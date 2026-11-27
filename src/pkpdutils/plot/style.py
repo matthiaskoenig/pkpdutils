@@ -14,22 +14,25 @@ class PlotStyle:
 
     Attributes:
         data_color: color of the data points and lines
-        data_marker: marker of the data points
+        data_marker: marker of the data points, one of
+            `sbmlsim_core.chart.MARKERS` or its code of matplotlib (`o`)
         fit_color: color of regression lines and fitted curves
         auc_color: fill color of the area to the last measurable point
         extrapolation_color: fill color of the extrapolated area
         partial_color: fill color of a named partial area
             (`NCAOptions.partial_aucs`), drawn over the area to the last
             measurable point by `pkpdutils.plot.draw_nca_panel`
-        terminal_marker: marker of the points of the terminal regression
+        terminal_marker: marker of the points of the terminal regression,
+            as `data_marker`
         alpha: transparency of filled areas
-        linewidth: width of lines
-        markersize: size of markers
+        linewidth: width of lines in points
+        markersize: size of markers in points
         marker_max_points: most points a curve may have and still be drawn
             with a marker per point; a longer curve (a simulation, a dense
             sampling) is drawn as a line alone, since its markers would merge
             into a band and hide the shape of the curve
-        cmap: colormap of the samples of a batch
+        cmap: colormap of the samples of a batch, a sequential or diverging
+            colormap of matplotlib by its name (`sbmlsim_core.COLOR_SCALES`)
         limit_color: color of acceptance limits and interaction thresholds
         pooled_color: color of pooled effects
         summary_color: color of means and intervals drawn over individual points
@@ -37,17 +40,17 @@ class PlotStyle:
         peak_color: color of the marker and the guide lines of the peak
             (`cmax`, `tmax`) in the NCA panel
         band_alpha: transparency of a confidence band
-        annotation_fontsize: font size of the annotations and the parameter
-            box of the NCA panel
+        annotation_fontsize: font size in points of the annotations and the
+            parameter table of the NCA panel, matplotlib's `x-small`
     """
 
     data_color: str = "#1f1f1f"
-    data_marker: str = "o"
+    data_marker: str = "circle"
     fit_color: str = "#d55e00"
     auc_color: str = "#56b4e9"
     extrapolation_color: str = "#e69f00"
     partial_color: str = "#cc79a7"
-    terminal_marker: str = "s"
+    terminal_marker: str = "square"
     alpha: float = 0.2
     linewidth: float = 1.5
     markersize: float = 5.0
@@ -59,7 +62,7 @@ class PlotStyle:
     dose_color: str = "gray"
     peak_color: str = "#009e73"
     band_alpha: float = 0.15
-    annotation_fontsize: str = "x-small"
+    annotation_fontsize: float = 6.94
 
 
 #: the default style

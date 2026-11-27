@@ -162,7 +162,7 @@ for tc in tcs:  # iteration over the samples
 
 The curve with the uncertainty of its group and the batch of three individuals, as `examples/timecourses.py` builds them:
 
-![One group curve with error bars next to a batch of three individual curves](images/timecourses.png)
+![One group curve with error bars next to a batch of three individual curves](images/timecourses.svg)
 
 ### Doses and coordinates of a batch
 

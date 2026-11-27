@@ -9,7 +9,7 @@ call is `Timecourses.from_xresult(xresult, "[Cve]", dose=..., substance=...)`, w
 takes the units from the result instead of the `unit` and `time_unit` arguments.
 
 Run from the root of the repository with `python -m examples.nca_from_sbmlsim`.
-Writes `nca_from_sbmlsim.png` into the working directory.
+Writes `nca_from_sbmlsim.svg` into the working directory.
 """
 
 import numpy as np
@@ -66,5 +66,5 @@ if __name__ == "__main__":
     )
 
     # the simulated curves of the scan, one color per scanned dose
-    plot_timecourse(batch, by="dose").savefig("nca_from_sbmlsim.png", dpi=120)
-    console.print("written: nca_from_sbmlsim.png")
+    plot_timecourse(batch, by="dose").save("nca_from_sbmlsim.svg")
+    console.print("written: nca_from_sbmlsim.svg")

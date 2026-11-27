@@ -1,6 +1,6 @@
 # Installation
 
-`pkpdutils` requires python >= 3.13 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils). It is tested on Linux, macOS and Windows and is itself pure python; its dependencies ship binary wheels for those platforms, the rust kernel of the non-compartmental analysis ([pkpdutils-core](https://pypi.org/project/pkpdutils-core/)) among them, so no compiler is needed.
+`pkpdutils` requires python >= 3.14 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils). It is tested on Linux, macOS and Windows and is itself pure python; its dependencies ship binary wheels for those platforms, the rust kernel of the non-compartmental analysis ([pkpdutils-core](https://pypi.org/project/pkpdutils-core/)) among them, so no compiler is needed.
 
 ## With uv
 
@@ -48,7 +48,7 @@ To work on the repository itself, with the test and documentation tooling, see [
 | [xarray](https://xarray.dev), [pandas](https://pandas.pydata.org) | timecourses and results as labeled arrays and tables |
 | [pint](https://pint.readthedocs.io) | units and unit conversions |
 | [pydantic](https://docs.pydantic.dev) | validated data structures and options |
-| [matplotlib](https://matplotlib.org) | figures |
+| [sbmlsim-core](https://pypi.org/project/sbmlsim-core/) | figures: the chart builder `sbmlsim_core.chart` and its renderer, which writes SVG and PNG without matplotlib |
 | [rich](https://rich.readthedocs.io) | console output of scripts and examples |
 
 ## Logging

@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # continuous integration tests python 3.14 on every platform, the older
-        # and newer versions are tested locally with `tox run-parallel`, see
+        # continuous integration tests python 3.14 on every platform, the newer
+        # version is tested locally with `tox run-parallel`, see
         # docs/development.md
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.14"]

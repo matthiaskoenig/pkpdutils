@@ -1,7 +1,7 @@
 """The study report of a single dose study: the tables and the figures in one HTML file.
 
 Run from the root of the repository with `python -m examples.report`.
-Writes `report.html`, `markdown/report.md` with its figures and `report.png`
+Writes `report.html`, `markdown/report.md` with its figures and `report.svg`
 into the working directory.
 """
 
@@ -68,5 +68,5 @@ if __name__ == "__main__":
     report.write_markdown("markdown/report.md")
 
     # the figure of the gallery is the mean curve of the report
-    plot_mean_timecourse(batch, by="arm").savefig("report.png", dpi=120)
-    console.print("written: report.html, markdown/report.md, report.png")
+    plot_mean_timecourse(batch, by="arm").save("report.svg")
+    console.print("written: report.html, markdown/report.md, report.svg")

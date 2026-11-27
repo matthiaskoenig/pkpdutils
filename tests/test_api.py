@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 import xarray as xr
-from matplotlib.axes import Axes
+from sbmlsim_core.chart import Chart, ChartPlot
 
 import pkpdutils
 from pkpdutils import (
@@ -23,7 +23,7 @@ from pkpdutils import (
     partial_auc,
 )
 from pkpdutils.nca import superposition
-from pkpdutils.plot import draw_nca_panel
+from pkpdutils.plot import draw_nca_panel, new_chart
 
 #: one dose of a decaying curve, the data of the signature tests
 T = np.array([0.5, 1.0, 2.0, 4.0, 8.0, 12.0])
@@ -113,18 +113,20 @@ def test_io_and_plot_are_reachable_after_importing_the_package() -> None:
         getattr(fresh, missing)
 
 
-def test_importing_the_package_does_not_import_matplotlib() -> None:
-    """`plot` is imported on first use, so a script which draws nothing skips matplotlib."""
+def test_importing_the_package_does_not_import_the_chart_builder() -> None:
+    """`plot` is imported on first use, so a script which draws nothing skips the charts."""
     script = (
         "import sys, pkpdutils;"
-        "print('matplotlib.pyplot' in sys.modules);"
+        "print('pkpdutils.plot' in sys.modules);"
+        "print('sbmlsim_core.chart' in sys.modules);"
         "print(pkpdutils.plot.plot_timecourse is not None);"
-        "print('matplotlib.pyplot' in sys.modules)"
+        "print('sbmlsim_core.chart' in sys.modules);"
+        "print('matplotlib' in sys.modules)"
     )
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=True
     )
-    assert out.stdout.split() == ["False", "True", "True"]
+    assert out.stdout.split() == ["False", "False", "True", "True", "False"]
 
 
 def test_the_stats_helpers_are_exported() -> None:
@@ -229,7 +231,7 @@ PLOT_DATA_ARGUMENTS = {
 
 @pytest.mark.parametrize("name", sorted(PLOT_DATA_ARGUMENTS))
 def test_every_figure_has_the_same_signature(name: str) -> None:
-    """`f(data, *, <options>, ax=None, style=DEFAULT_STYLE)`, `axes` for several panels."""
+    """`f(data, *, <options>, chart=None, row=0, column=0, style=DEFAULT_STYLE)`."""
     import pkpdutils.plot as plot
 
     function: Any = getattr(plot, name)
@@ -245,27 +247,30 @@ def test_every_figure_has_the_same_signature(name: str) -> None:
         p.name: p for p in parameters if p.kind is inspect.Parameter.KEYWORD_ONLY
     }
     assert "style" in keywords
-    assert "ax" in keywords or "axes" in keywords
+    assert keywords["chart"].default is None
+    assert keywords["row"].default == 0 and keywords["column"].default == 0
     assert "log" not in keywords
     assert all(
         not key.startswith("log") or key in {"log_x", "log_y", "log_ratio"}
         for key in keywords
     )
-    # `style` is the last keyword of every signature, `ax`/`axes` before it
+    # `style` is the last keyword of every signature, the cell of the chart
+    # before it
     named = [p.name for p in parameters if p.kind is inspect.Parameter.KEYWORD_ONLY]
-    assert named[-1] == "style"
-    assert named[-2] in {"ax", "axes"}
+    assert named[-4:] == ["chart", "row", "column", "style"]
+    assert not {"ax", "axes", "fig"} & set(named)
 
 
-def test_draw_nca_panel_returns_the_axes() -> None:
+def test_draw_nca_panel_returns_the_panel() -> None:
     tc = curve()
     result = nca_single(tc)
     values = {name: float(result[name]) for name in result.parameters}
-    ax = draw_nca_panel(tc, values, result.flags())
-    assert isinstance(ax, Axes)
-    fig = ax.get_figure()
-    assert fig is not None
-    assert draw_nca_panel(tc, values, [], ax=ax) is ax
+    panel = draw_nca_panel(tc, values, result.flags())
+    assert isinstance(panel, ChartPlot)
+    assert isinstance(panel.chart, Chart)
+    chart = new_chart(12, 4, columns=2)
+    second = draw_nca_panel(tc, values, [], chart=chart, column=1)
+    assert second.chart is chart and second.column == 1
 
 
 def test_the_batch_and_the_curve_convert_into_each_other() -> None:
@@ -275,10 +280,8 @@ def test_the_batch_and_the_curve_convert_into_each_other() -> None:
     assert batch.sel(subject="x") == tc.model_copy(update={"label": "x"})
 
 
-def test_every_figure_draws_into_the_axes_it_is_given() -> None:
-    """`ax` draws one panel, `axes` the panels of a multi-panel figure."""
-    import matplotlib.pyplot as plt
-
+def test_every_figure_draws_into_the_chart_it_is_given() -> None:
+    """`chart`, `row` and `column` place the panels of a figure into a given chart."""
     from pkpdutils import (
         ParameterSample,
         Power,
@@ -311,26 +314,38 @@ def test_every_figure_draws_into_the_axes_it_is_given() -> None:
         coords={"dose": doses},
     )
     power = fit_table(Power(), table, "dose", "auc", dim="dose")
-    fig, grid = plt.subplots(nrows=2, ncols=2)
-    assert plot_timecourse(tc, ax=grid[0][0]) is fig
-    assert plot_goodness_of_fit(power, ax=grid[0][1]) is fig
-    assert plot_bland_altman(power, ax=grid[1][0]) is fig
+    grid = new_chart(10, 8, rows=2, columns=2)
+    assert plot_timecourse(tc, chart=grid) is grid
+    assert plot_goodness_of_fit(power, chart=grid, column=1) is grid
+    assert plot_bland_altman(power, chart=grid, row=1) is grid
     assert (
         plot_dose_proportionality(
             power,
             test=proportionality_test(power, dose_range=(25.0, 200.0)),
-            ax=grid[1][1],
+            chart=grid,
+            row=1,
+            column=1,
         )
-        is fig
+        is grid
     )
-    assert grid[0][0].get_xlabel().startswith("time")
-    panels, panel_grid = plt.subplots(nrows=1, ncols=2)
-    assert plot_nca(tc, result, axes=panel_grid, individual="s1") is panels
-    assert plot_nca_grid(batch, result, ncols=1, axes=[panel_grid[0]]) is panels
-    assert plot_fit(power, axes=panel_grid) is panels
-    plt.close("all")
-    # `plot_intervals` draws into an axes as well
-    single, ax = plt.subplots()
+    spec = grid.spec()
+    assert [(p["row"], p["column"]) for p in spec["plots"]] == [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+    ]
+    assert spec["plots"][0]["x"]["label"].startswith("time")
+    panels = new_chart(11, 9, rows=2, columns=2)
+    assert plot_nca(tc, result, annotate=False, chart=panels, individual="s1") is panels
+    assert plot_nca_grid(batch, result, ncols=1, chart=panels, row=1) is panels
+    assert plot_fit(power, chart=panels, column=1) is panels
+    assert len(panels.spec()["plots"]) == 5
+    # a figure which does not fit into the grid of the chart is refused
+    with pytest.raises(ValueError, match="need a grid"):
+        plot_nca(tc, result, chart=panels, column=1, individual="s1")
+    # `plot_intervals` draws into a chart as well
+    single = new_chart(6, 4)
     protocol = pkpdutils.Dosing.regimen(
         Dose(amount=100, unit="mg", route=Route.IV_BOLUS), interval=6.0, n_doses=3
     )
@@ -343,8 +358,7 @@ def test_every_figure_draws_into_the_axes_it_is_given() -> None:
         dosing=protocol,
     )
     intervals = nca_single(multi)
-    assert plot_intervals(intervals, "interval_auc", ax=ax) is single
-    plt.close("all")
+    assert plot_intervals(intervals, "interval_auc", chart=single) is single
     # the figures of the parameters and of the statistics
     curves = [
         tc.model_copy(
@@ -370,16 +384,15 @@ def test_every_figure_draws_into_the_axes_it_is_given() -> None:
             for i in range(3)
         ]
     )
-    stats_figure, stats_grid = plt.subplots(nrows=1, ncols=3)
+    stats = new_chart(15, 4, columns=3)
     assert (
-        plot_parameters(
-            parameters, "auc_inf_obs", "individual", by="sex", ax=stats_grid[0]
-        )
-        is stats_figure
+        plot_parameters(parameters, "auc_inf_obs", "individual", by="sex", chart=stats)
+        is stats
     )
     assert (
-        plot_ratio({"auc": ratio(test_sample, reference_sample)}, ax=stats_grid[1])
-        is stats_figure
+        plot_ratio({"auc": ratio(test_sample, reference_sample)}, chart=stats, column=1)
+        is stats
     )
-    assert plot_forest(meta, ax=stats_grid[2]) is stats_figure
-    plt.close("all")
+    assert plot_forest(meta, chart=stats, column=2) is stats
+    assert [p["column"] for p in stats.spec()["plots"]] == [0, 1, 2]
+    stats.svg()

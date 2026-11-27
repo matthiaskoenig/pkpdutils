@@ -208,9 +208,9 @@ result = fit_timecourse(Bateman(), timecourse, options=FitOptions(n_starts=5, se
 result.to_quantities()["ka"]  # no indexer, the result is one sample
 ```
 
-![A Bateman curve fitted to an oral timecourse with its weighted residuals below](images/fitting_exponential.png)
+![A Bateman curve fitted to an oral timecourse with its weighted residuals below](images/fitting_exponential.svg)
 
-![Predicted against observed concentrations with the identity line](images/fitting_gof.png)
+![Predicted against observed concentrations with the identity line](images/fitting_gof.svg)
 
 A batch of timecourses is fitted over its sample dimensions, with the times taken relative to the dose and the units taken from the batch:
 
@@ -311,9 +311,9 @@ comparison.best  # name of the best model per sample
 
 The power model of the dose escalation above (`examples/dose_proportionality.py`) and the allometric model of a clearance against the body weight (`examples/covariate.py`):
 
-![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
+![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.svg)
 
-![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)
+![The allometric model of the clearance against the body weight on log-log axes](images/covariate.svg)
 
 The units of `fit_table` come from `attrs["units"]` of the `x` and `y` variables and fall back to `dimensionless`, so a coordinate without units (the `dose` of an `NCAResult`) is best given one before the fit. An `sd` variable with explicit compatible units is converted to the unit of `y` before weighting and stored in that unit; incompatible units raise `ValueError`. Without an explicit unit, `sd` is assumed to use the unit of `y`. Custom models need unique parameter and derived names and cannot use result names such as `cost`, `flags` or `parameter`, or reserved suffixes such as `_se`. A sample dimension must not share its name with a variable of the result (a dimension `k` with a model that has a rate constant `k` raises a `ValueError`), and the candidate models of `compare_models` need distinct names, which `Allometric(exponent=0.75)` gets as `allometric_0.75`.
 

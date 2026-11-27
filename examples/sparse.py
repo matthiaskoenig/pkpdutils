@@ -8,10 +8,9 @@ batch design pays for its extra samples with the covariance between the times an
 animal is shared by.
 
 Run from the root of the repository with `python -m examples.sparse`.
-Writes `sparse.png` into the working directory.
+Writes `sparse.svg` into the working directory.
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -102,8 +101,6 @@ if __name__ == "__main__":
         f"{batch.units('auc_last')}, df {float(batch['auc_last_df']):.1f}"
     )
 
-    fig = plot_sparse(curve, result)
-    fig.set_size_inches(7.0, 4.5)
-    fig.savefig("sparse.png", dpi=120)
-    plt.close(fig)
-    console.print("written: sparse.png")
+    chart = plot_sparse(curve, result)
+    chart.save("sparse.svg")
+    console.print("written: sparse.svg")

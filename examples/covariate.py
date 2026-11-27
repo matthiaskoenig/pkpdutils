@@ -1,7 +1,7 @@
 """Clearance against body weight: allometric scaling with a free and a fixed exponent.
 
 Run from the root of the repository with `python -m examples.covariate`.
-Writes `covariate.png` into the working directory.
+Writes `covariate.svg` into the working directory.
 """
 
 import numpy as np
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     console.print(comparison.table)
 
     # the allometric fit on log-log axes, where it is a straight line
-    plot_fit(free, log_x=True, log_y=True, title="allometric scaling").savefig(
-        "covariate.png", dpi=120
+    plot_fit(free, log_x=True, log_y=True, title="allometric scaling").save(
+        "covariate.svg"
     )
-    console.print("written: covariate.png")
+    console.print("written: covariate.svg")

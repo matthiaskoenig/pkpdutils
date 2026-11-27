@@ -1,7 +1,7 @@
 """Average bioequivalence of a test against a reference formulation in a 2x2 crossover.
 
 Run from the root of the repository with `python -m examples.bioequivalence`.
-Writes `bioequivalence.png` and `bioequivalence_parameters.png` into the working directory.
+Writes `bioequivalence.svg` and `bioequivalence_parameters.svg` into the working directory.
 """
 
 import numpy as np
@@ -90,8 +90,8 @@ if __name__ == "__main__":
         soft_wrap=True,
     )
     console.print("bioequivalent:", result.bioequivalent)
-    plot_ratio(result).savefig("bioequivalence.png", dpi=120)
-    plot_parameters(test, "cmax", "individual", by="sequence", log_y=True).savefig(
-        "bioequivalence_parameters.png", dpi=120
+    plot_ratio(result).save("bioequivalence.svg")
+    plot_parameters(test, "cmax", "individual", by="sequence", log_y=True).save(
+        "bioequivalence_parameters.svg"
     )
-    console.print("written: bioequivalence.png, bioequivalence_parameters.png")
+    console.print("written: bioequivalence.svg, bioequivalence_parameters.svg")

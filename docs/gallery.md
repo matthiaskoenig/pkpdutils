@@ -10,7 +10,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![A group curve with its standard deviation and a batch of three individuals](images/timecourses.png)](images/timecourses.png)
+    [![A group curve with its standard deviation and a batch of three individuals](images/timecourses.svg)](images/timecourses.svg)
 
     One curve with its dose, its units and the uncertainty of a group, and a batch of several curves over the sample dimensions.
 
@@ -34,9 +34,9 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.png)](images/nca_single.png)
+    [![The AUC, the extrapolated tail and the terminal regression of one curve](images/nca_single.svg)](images/nca_single.svg)
 
-    [![The curve with the chosen terminal window next to the adjusted R2 of every candidate window](images/nca_terminal_windows.png)](images/nca_terminal_windows.png)
+    [![The curve with the chosen terminal window next to the adjusted R2 of every candidate window](images/nca_terminal_windows.svg)](images/nca_terminal_windows.svg)
 
     The non-compartmental analysis of a single timecourse with its diagnostic figure: the trapezoidal area, the extrapolated tail, the terminal regression with its confidence band and the parameters with their intervals; and the diagnostic of the terminal phase, every candidate window with its adjusted \(R^2\) and the chosen one marked.
 
@@ -47,16 +47,14 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     result = nca_single(tc, options=NCAOptions(seed=1))  # a fixed bootstrap seed
     print(result.to_quantities()["auc_inf_obs"])
-    plot_nca(tc, result).savefig("nca_single.png", dpi=120)
+    plot_nca(tc, result).save("nca_single.svg")
 
     diagnostic = NCAOptions(
         terminal=TerminalPhase(keep_candidates=True),
         acceptance=Acceptance(r2_adj_min=0.98),
     )
     windows = nca_single(tc, options=diagnostic)
-    plot_terminal_windows(tc, windows, options=diagnostic).savefig(
-        "nca_terminal_windows.png", dpi=120
-    )
+    plot_terminal_windows(tc, windows, options=diagnostic).save("nca_terminal_windows.svg")
     ```
 
     [nca_single.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_single.py) &middot; [Non-compartmental analysis](nca.md)
@@ -65,9 +63,9 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The mean curve of every dose group with its standard deviation](images/nca_batch_curves.png)](images/nca_batch_curves.png)
+    [![The mean curve of every dose group with its standard deviation](images/nca_batch_curves.svg)](images/nca_batch_curves.svg)
 
-    [![The individual curves on the actual times and the mean curves per dose on the nominal times](images/nca_batch_study.png)](images/nca_batch_study.png)
+    [![The individual curves on the actual times and the mean curves per dose on the nominal times](images/nca_batch_study.svg)](images/nca_batch_study.svg)
 
     A `(dose, individual)` batch analysed at once: the parameters of every curve as a data frame, the mean curve per dose group, a diagnostic panel per sample and the four panels a study report shows, the individuals on their actual sampling times and the means on the nominal ones.
 
@@ -78,9 +76,9 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     result = nca(batch)
     print(result.to_dataframe()[["dose", "individual", "auc_inf_obs", "cmax"]])
-    plot_mean_timecourse(batch, by="dose").savefig("nca_batch_curves.png", dpi=120)
-    plot_nca_grid(batch, result, ncols=4).savefig("nca_batch.png", dpi=100)
-    plot_study_curves(study, by="dose").savefig("nca_batch_study.png", dpi=110)
+    plot_mean_timecourse(batch, by="dose").save("nca_batch_curves.svg")
+    plot_nca_grid(batch, result, ncols=4).save("nca_batch.svg")
+    plot_study_curves(study, by="dose").save("nca_batch_study.svg")
     ```
 
     [nca_batch.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_batch.py) &middot; [Non-compartmental analysis](nca.md)
@@ -89,7 +87,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.png)](images/group_uncertainty.png)
+    [![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.svg)](images/group_uncertainty.svg)
 
     The uncertainty of a published mean curve propagated to the parameters with the bootstrap or the delta method, and individual results summarized over the subjects.
 
@@ -108,9 +106,9 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The predicted curve of ten doses every twelve hours](images/steady_state.png)](images/steady_state.png)
+    [![The predicted curve of ten doses every twelve hours](images/steady_state.svg)](images/steady_state.svg)
 
-    [![The trough of every dosing interval, rising into the steady state plateau](images/steady_state_troughs.png)](images/steady_state_troughs.png)
+    [![The trough of every dosing interval, rising into the steady state plateau](images/steady_state_troughs.svg)](images/steady_state_troughs.svg)
 
     A single dose curve superposed into a regimen of ten doses, the parameters of every dosing interval and the steady state parameters of the last one, with the trough of every interval running into its plateau.
 
@@ -126,7 +124,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     predicted = superposition(single, protocol, options=options)
     result = nca_single(predicted, options=options)
     print(result.to_quantities()["auc_tau"])
-    plot_troughs(result, x="interval").savefig("steady_state_troughs.png", dpi=120)
+    plot_troughs(result, x="interval").save("steady_state_troughs.svg")
     ```
 
     [steady_state.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/steady_state.py) &middot; [Non-compartmental analysis](nca.md)
@@ -135,7 +133,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The trough concentration of every dosing interval of four subjects](images/formats.png)](images/formats.png)
+    [![The trough concentration of every dosing interval of four subjects](images/formats.svg)](images/formats.svg)
 
     A twice daily batch written as event records and read back, analysed interval by interval; `from_adnca` reads a CDISC ADaM extract the same way.
 
@@ -154,7 +152,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
         route=Route.ORAL,
     )
     result = nca(read_back, options=NCAOptions(auc_method=AUCMethod.LOG))
-    plot_intervals(result, "interval_ctrough").savefig("formats.png", dpi=120)
+    plot_intervals(result, "interval_ctrough").save("formats.svg")
     ```
 
     [formats.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/formats.py) &middot; [Data formats](formats.md)
@@ -163,7 +161,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![A Bateman curve fitted to an oral timecourse with its weighted residuals](images/fitting_exponential.png)](images/fitting_exponential.png)
+    [![A Bateman curve fitted to an oral timecourse with its weighted residuals](images/fitting_exponential.svg)](images/fitting_exponential.svg)
 
     A Bateman model fitted to an oral curve with `1/sd` weighting and a residual bootstrap, and the AICc comparison of the exponential models.
 
@@ -175,7 +173,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     options = FitOptions(weighting=Weighting.INV_SD, n_starts=5, bootstrap=200, seed=1)
     result = fit_timecourse(Bateman(), tc, options=options)
     print(result.to_dataframe().T)
-    plot_fit(result, log_y=True).savefig("fitting_exponential.png", dpi=120)
+    plot_fit(result, log_y=True).save("fitting_exponential.svg")
     ```
 
     [fitting_exponential.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/fitting_exponential.py) &middot; [Curve fitting](fitting.md)
@@ -184,7 +182,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![A sigmoid Emax curve fitted to a concentration-effect relationship](images/emax.png)](images/emax.png)
+    [![A sigmoid Emax curve fitted to a concentration-effect relationship](images/emax.svg)](images/emax.svg)
 
     The concentration-effect relationship as a sigmoid Emax model, with `ec50`, `ec90` and the comparison against the Emax and the linear model.
 
@@ -204,7 +202,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
         options=FitOptions(n_starts=10, seed=0),
     )
     print(result.to_quantities()["ec50"])
-    plot_fit(result, log_x=True).savefig("emax.png", dpi=120)
+    plot_fit(result, log_x=True).save("emax.svg")
     ```
 
     [emax.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/emax.py) &middot; [Pharmacodynamics](pd.md)
@@ -213,7 +211,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The power model of the exposure against the dose with its acceptance region](images/dose_proportionality.png)](images/dose_proportionality.png)
+    [![The power model of the exposure against the dose with its acceptance region](images/dose_proportionality.svg)](images/dose_proportionality.svg)
 
     The power model \(AUC = a \cdot dose^b\) over a dose escalation and the confidence interval criterion of the dose proportionality.
 
@@ -227,7 +225,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     power = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
     test = proportionality_test(power, dose_range=(25.0, 400.0))
     print(test.slope, test.ci_low, test.ci_high, test.proportional)
-    plot_dose_proportionality(power, test=test).savefig("dose_proportionality.png", dpi=120)
+    plot_dose_proportionality(power, test=test).save("dose_proportionality.svg")
     ```
 
     [dose_proportionality.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/dose_proportionality.py) &middot; [Curve fitting](fitting.md)
@@ -236,7 +234,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The allometric model of the clearance against the body weight on log-log axes](images/covariate.png)](images/covariate.png)
+    [![The allometric model of the clearance against the body weight on log-log axes](images/covariate.svg)](images/covariate.svg)
 
     The clearance against the body weight as an allometric model, with a free exponent and with the exponent fixed at 0.75.
 
@@ -247,7 +245,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     free = fit_table(Allometric(), ds, "weight", "cl", dim="individual")
     print(free.to_dataframe().T.loc[["a", "b", "b_ci_low", "b_ci_high"]])
-    plot_fit(free, log_x=True, log_y=True).savefig("covariate.png", dpi=120)
+    plot_fit(free, log_x=True, log_y=True).save("covariate.svg")
     ```
 
     [covariate.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/covariate.py) &middot; [Curve fitting](fitting.md)
@@ -256,7 +254,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The geometric mean ratios of a 2x2 crossover against the acceptance limits](images/bioequivalence.png)](images/bioequivalence.png)
+    [![The geometric mean ratios of a 2x2 crossover against the acceptance limits](images/bioequivalence.svg)](images/bioequivalence.svg)
 
     Average bioequivalence of a test against a reference formulation in a 2x2 crossover: the geometric mean ratios with their 90 % intervals against the 80-125 % limits.
 
@@ -269,7 +267,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     test = nca(batch(curves(0.93, 0.9, PERIOD_TEST), PERIOD_TEST))
     result = bioequivalence(test, reference, parameters=["auc_inf_obs", "auc_last", "cmax"])
     print(result.to_dataframe()[["parameter", "gmr", "ci_low", "ci_high"]])
-    plot_ratio(result).savefig("bioequivalence.png", dpi=120)
+    plot_ratio(result).save("bioequivalence.svg")
     ```
 
     [bioequivalence.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/bioequivalence.py) &middot; [Statistics](statistics.md)
@@ -278,7 +276,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)](images/ddi.png)
+    [![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.svg)](images/ddi.svg)
 
     The exposure with and without a perpetrator as a geometric mean ratio, classified against the FDA and EMA thresholds of an interaction.
 
@@ -294,7 +292,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
         control.sample("auc_inf_obs", "individual"),
     )
     print(ddi_classification(auc).to_dict())
-    plot_ratio({"auc_inf_obs": auc}, limits=None).savefig("ddi.png", dpi=120)
+    plot_ratio({"auc_inf_obs": auc}, limits=None).save("ddi.svg")
     ```
 
     [ddi.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/ddi.py) &middot; [Statistics](statistics.md)
@@ -303,7 +301,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The forest plot of five studies with the fixed and the random effect](images/meta_analysis.png)](images/meta_analysis.png)
+    [![The forest plot of five studies with the fixed and the random effect](images/meta_analysis.svg)](images/meta_analysis.svg)
 
     Published summary statistics of several studies pooled with the fixed effect and the random effects model, with the heterogeneity and a forest plot.
 
@@ -316,7 +314,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     result = meta_analysis(STUDIES, EffectKind.LOG_RATIO)
     print(result.to_dataframe())
     print(result.random.to_dict(), result.heterogeneity.i2)
-    plot_forest(result).savefig("meta_analysis.png", dpi=120)
+    plot_forest(result).save("meta_analysis.svg")
     ```
 
     [meta_analysis.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/meta_analysis.py) &middot; [Statistics](statistics.md)
@@ -325,7 +323,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The simulated curves of a dose scan, one color per dose](images/nca_from_sbmlsim.png)](images/nca_from_sbmlsim.png)
+    [![The simulated curves of a dose scan, one color per dose](images/nca_from_sbmlsim.svg)](images/nca_from_sbmlsim.svg)
 
     The result of a simulation scan read as a batch (`from_dataset`, `from_xresult` for an sbmlsim `XResult`) and analysed curve by curve.
 
@@ -344,7 +342,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     )
     result = nca(batch, options=NCAOptions())
     print(result.to_dataframe()[["dose", "auc_inf_obs", "cmax"]])
-    plot_timecourse(batch, by="dose").savefig("nca_from_sbmlsim.png", dpi=120)
+    plot_timecourse(batch, by="dose").save("nca_from_sbmlsim.svg")
     ```
 
     [nca_from_sbmlsim.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/nca_from_sbmlsim.py) &middot; [Non-compartmental analysis](nca.md)
@@ -353,7 +351,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The excretion rate curve with its terminal regression and the cumulative amount recovered](images/urine.png)](images/urine.png)
+    [![The excretion rate curve with its terminal regression and the cumulative amount recovered](images/urine.svg)](images/urine.svg)
 
     The excretion rate of every urine collection against the midpoint of its interval with the terminal regression, and the amount recovered rising to its plateau on a second axis.
 
@@ -365,7 +363,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     urine = excretion()
     result = nca_urine(urine, plasma=plasma())
     print(result.to_quantities()["clr"])
-    plot_excretion(result, urine).savefig("urine.png", dpi=120)
+    plot_excretion(result, urine).save("urine.svg")
     ```
 
     [urine.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/urine.py) &middot; [Urinary excretion](urine.md)
@@ -374,7 +372,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The mean curve of a sparse design with the Bailer standard errors and the shaded area](images/sparse.png)](images/sparse.png)
+    [![The mean curve of a sparse design with the Bailer standard errors and the shaded area](images/sparse.svg)](images/sparse.svg)
 
     The mean curve of a destructive design with the standard error of every time point, the area the trapezoid rule integrates and the Bailer standard error of that area.
 
@@ -386,7 +384,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
     values = serial_design()
     curve = sparse_mean(TIMES, values, time_unit="hr", unit="ng/ml")
     result = nca_sparse(TIMES, values, time_unit="hr", unit="ng/ml")
-    plot_sparse(curve, result).savefig("sparse.png", dpi=120)
+    plot_sparse(curve, result).save("sparse.svg")
     ```
 
     [sparse.py](https://github.com/matthiaskoenig/pkpdutils/blob/develop/examples/sparse.py) &middot; [Sparse sampling](sparse.md)
@@ -394,7 +392,7 @@ The snippet of a card is the core of its example. It runs from the root of a che
 
     ---
 
-    [![The mean curves of two arms with their standard deviation, linear and semi-logarithmic](images/report.png)](images/report.png)
+    [![The mean curves of two arms with their standard deviation, linear and semi-logarithmic](images/report.svg)](images/report.svg)
 
     The tables and the figures of a study assembled into one self-contained HTML document: the methods sentence, the summary statistics of ICH M13A, the acceptability of the extrapolation, the parameters of every subject and the two figures.
 

@@ -1,7 +1,7 @@
 """Multiple dosing: the parameters of every dosing interval and the steady state.
 
 Run from the root of the repository with `python -m examples.steady_state`.
-Writes `steady_state.png` and `steady_state_troughs.png` into the working
+Writes `steady_state.svg` and `steady_state_troughs.svg` into the working
 directory.
 """
 
@@ -78,11 +78,11 @@ if __name__ == "__main__":
         "predicted accumulation 1/(1-exp(-k tau)) =", 1 / (1 - np.exp(-k * tau))
     )
 
-    fig = plot_timecourse(predicted)
-    fig.savefig("steady_state.png", dpi=120)
-    console.print("written: steady_state.png")
+    chart = plot_timecourse(predicted)
+    chart.save("steady_state.svg")
+    console.print("written: steady_state.svg")
 
     # the trough of every dosing interval: steady state is where it stops rising
     troughs = plot_troughs(result, x="interval")
-    troughs.savefig("steady_state_troughs.png", dpi=120)
-    console.print("written: steady_state_troughs.png")
+    troughs.save("steady_state_troughs.svg")
+    console.print("written: steady_state_troughs.svg")

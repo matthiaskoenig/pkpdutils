@@ -1,7 +1,7 @@
 """Dose proportionality of the exposure from an NCA over a dose escalation.
 
 Run from the root of the repository with `python -m examples.dose_proportionality`.
-Writes `dose_proportionality.png` into the working directory.
+Writes `dose_proportionality.svg` into the working directory.
 """
 
 import numpy as np
@@ -59,7 +59,5 @@ if __name__ == "__main__":
         f"acceptance bounds [{test.bounds[0]:.3f}, {test.bounds[1]:.3f}]"
     )
     console.print("verdict:", verdict)
-    plot_dose_proportionality(power, test=test).savefig(
-        "dose_proportionality.png", dpi=120
-    )
-    console.print("written: dose_proportionality.png")
+    plot_dose_proportionality(power, test=test).save("dose_proportionality.svg")
+    console.print("written: dose_proportionality.svg")

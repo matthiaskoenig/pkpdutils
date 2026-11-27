@@ -50,10 +50,6 @@ RUNNER = """
 import json
 import sys
 
-import matplotlib
-
-matplotlib.use("Agg", force=True)
-
 with open("blocks.json", encoding="utf-8") as file:
     blocks = json.load(file)
 namespace = {"__name__": "__main__"}
@@ -108,7 +104,7 @@ def test_snippets(name: str, tmp_path: Path) -> None:
                 shutil.copytree(data, tmp_path / data.name)
             else:
                 shutil.copy(data, tmp_path / data.name)
-    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
+    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-W", "error", "run_page.py"],
         cwd=tmp_path,

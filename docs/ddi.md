@@ -156,7 +156,7 @@ plot_ratio(
     {"auc_inf_obs": auc_ratio, "cmax": cmax_ratio},
     limits=None,
     thresholds=DDIThresholds.fda(),
-).savefig("ddi.png", dpi=120)
+).save("ddi.svg")
 ```
 
 ```text
@@ -176,7 +176,7 @@ The exposure is raised almost threefold, a moderate inhibition, and the whole in
 
 `plot_ratio` draws the ratios on a logarithmic axis over the class bands, blues for the induction classes, oranges for the inhibition classes and gray for the range without an interaction, darker the stronger the class, with the boundaries as the ticks of the axis:
 
-![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
+![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.svg)
 
 The classification also works on numbers from a publication, with or without their interval:
 

@@ -1,7 +1,7 @@
 """Fitting exponential models to a concentration timecourse.
 
 Run from the root of the repository with `python -m examples.fitting_exponential`.
-Writes `fitting_exponential.png` and `fitting_gof.png` into the working directory.
+Writes `fitting_exponential.svg` and `fitting_gof.svg` into the working directory.
 """
 
 import numpy as np
@@ -45,7 +45,7 @@ if __name__ == "__main__":
         ),
     )
     console.print(result.to_dataframe().T)  # the last row holds the decoded flags
-    plot_fit(result, log_y=True).savefig("fitting_exponential.png", dpi=120)
+    plot_fit(result, log_y=True).save("fitting_exponential.svg")
 
     console.rule("Which model? AICc of mono-, bi-exponential and Bateman")
     comparison = compare_models(
@@ -58,7 +58,5 @@ if __name__ == "__main__":
     )
     console.print(comparison.table)
     console.print("best:", str(comparison.best.values))
-    plot_goodness_of_fit(comparison.results["bateman"]).savefig(
-        "fitting_gof.png", dpi=120
-    )
-    console.print("written: fitting_exponential.png, fitting_gof.png")
+    plot_goodness_of_fit(comparison.results["bateman"]).save("fitting_gof.svg")
+    console.print("written: fitting_exponential.svg, fitting_gof.svg")

@@ -1,7 +1,7 @@
 """Concentration-effect relationship with the Emax family.
 
 Run from the root of the repository with `python -m examples.emax`.
-Writes `emax.png` into the working directory.
+Writes `emax.svg` into the working directory.
 """
 
 import numpy as np
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     for name in ("e0", "emax", "ec50", "hill", "ec90"):
         console.print(f"{name:<6} {q[name]:.4g~P}  se {q[name + '_se']:.3g~P}")
     console.print("flags:", result.flags())
-    plot_fit(result, log_x=True).savefig("emax.png", dpi=120)
+    plot_fit(result, log_x=True).save("emax.svg")
 
     console.rule("Emax versus sigmoid Emax versus linear")
     comparison = compare_models(
@@ -46,4 +46,4 @@ if __name__ == "__main__":
         options=FitOptions(n_starts=10, seed=0),
     )
     console.print(comparison.table)
-    console.print("written: emax.png")
+    console.print("written: emax.svg")

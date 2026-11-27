@@ -4,21 +4,58 @@ import logging
 from typing import Any
 
 import numpy as np
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
+from sbmlsim_core.chart import Chart, ChartAxis
 
 from pkpdutils.plot._common import (
     axis_label,
-    figure_of,
-    legend_above_data,
-    log_scale,
+    chart_of,
+    data_limits,
+    legend_room,
+    log_axis,
+    marker,
     unit_label,
+    value_axis,
 )
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.result import ParameterResult
 from pkpdutils.stats.sample import ParameterSample, Scale, coerce, summarize
 
 logger = logging.getLogger(__name__)
+
+#: the size of a chart of its own, in inches
+_SIZE = (6.0, 4.0)
+
+#: the room of the axes around a panel of a chart of its own in pixels, the
+#: labels and ticks left and below and the margins: a panel of the chart is
+#: its size less these
+_AXES_ROOM = (70.0, 60.0)
+
+
+def box_stats(values: np.ndarray, whis: float = 1.5) -> dict[str, float]:
+    """The statistics of a box plot of values, as matplotlib's `boxplot` computes them.
+
+    The quartiles are the linearly interpolated percentiles, and a whisker
+    reaches the most extreme value within `whis` times the interquartile
+    range from its quartile (Tukey's rule).
+
+    Args:
+        values: the finite values, at least one.
+        whis: the reach of the whiskers in interquartile ranges.
+
+    Returns:
+        `low_whisker`, `q1`, `median`, `q3` and `high_whisker`.
+    """
+    q1, median, q3 = (float(v) for v in np.percentile(values, [25, 50, 75]))
+    iqr = q3 - q1
+    above = values[values <= q3 + whis * iqr]
+    below = values[values >= q1 - whis * iqr]
+    return {
+        "low_whisker": float(below.min()) if below.size else q1,
+        "q1": q1,
+        "median": median,
+        "q3": q3,
+        "high_whisker": float(above.max()) if above.size else q3,
+    }
 
 
 def plot_parameters(
@@ -30,19 +67,21 @@ def plot_parameters(
     log_y: bool = False,
     scale: Scale | str = Scale.LOG,
     ci_level: float = 0.95,
-    ax: Axes | None = None,
+    chart: Chart | None = None,
+    row: int = 0,
+    column: int = 0,
     style: PlotStyle = DEFAULT_STYLE,
     **indexers: Any,
-) -> Figure:
+) -> Chart:
     """Strip and box plot of a parameter over a sample dimension, with the mean and its interval per group.
 
-    Every individual is a jittered point, every group a box plot, and the
-    geometric mean (`scale=LOG`) or the arithmetic mean with the t interval
-    of `summarize` at `ci_level` a marker with an error bar. The statistic
-    is computed from every finite value of the group, whatever the axis: a
-    group with a non-positive value has no geometric mean and gets the
-    arithmetic mean instead, drawn with a marker of its own (logged at debug
-    level).
+    Every individual is a jittered point, every group a box plot (matplotlib's
+    boxplot without fliers, `box_stats`), and the geometric mean
+    (`scale=LOG`) or the arithmetic mean with the t interval of `summarize` at
+    `ci_level` a marker with an error bar. The statistic is computed from
+    every finite value of the group, whatever the axis: a group with a
+    non-positive value has no geometric mean and gets the arithmetic mean
+    instead, drawn with a marker of its own (logged at debug level).
 
     With `log_y=True` the non-positive values are left out of both the strip
     and the box, which are drawn from the same values, since a logarithmic
@@ -55,9 +94,8 @@ def plot_parameters(
     (`geometric mean [95 % CI]`, `mean [...]` with `scale=Scale.LINEAR` or
     for the groups which fall back to it); the groups themselves are the
     ticks of the x axis and stay out of it. It sits in the upper right corner
-    in room made above the data (`legend_above_data`), so it covers no point,
-    box or interval; the room is measured on the figure as laid out when the
-    function returns.
+    in room made above the data (`legend_room`), so it covers no point, box
+    or interval.
 
     Args:
         result: the result the parameter is taken from.
@@ -72,18 +110,18 @@ def plot_parameters(
         scale: scale of the mean and its interval, the member or its string
             (`Scale.LOG`, `"log"`).
         ci_level: level of the interval.
-        ax: axes to draw on, a new figure by default; a caller-supplied `ax`
-            keeps its figure's own layout engine, so long tick labels can
-            clip unless the caller sets one (`fig.set_layout_engine("constrained")`).
+        chart: the chart to draw into, a new one by default.
+        row: the row of the panel in `chart`.
+        column: the column of the panel in `chart`.
         style: colors and markers.
         **indexers: coordinate label per remaining sample dimension.
 
     Returns:
-        The figure.
+        The chart.
 
     Raises:
-        ValueError: if `by` is not a coordinate along `dim` or `scale` is not
-            a `Scale`.
+        ValueError: if `by` is not a coordinate along `dim`, if `scale` is not
+            a `Scale`, or if the cell is not in the grid of `chart`.
     """
     scale = coerce(scale, Scale)
     sample = result.sample(name, dim, **indexers)
@@ -100,12 +138,9 @@ def plot_parameters(
             str(key): sample.select(keys == key) for key in dict.fromkeys(keys.tolist())
         }
     finite = [group.finite_values for group in groups.values()]
-    log_axis = log_y and any(bool(np.any(v > 0)) for v in finite)
-    if log_y and not log_axis:
-        logger.debug("'%s' has no positive value, the y axis stays linear", name)
+    log = log_axis(log_y, "y", *finite)
     # the values the axis can show: the strip and the box draw the same ones
-    shown = [v[v > 0] if log_axis else v for v in finite]
-    fig, ax = figure_of(ax)
+    shown = [v[v > 0] if log else v for v in finite]
     rng = np.random.default_rng(0)
     level = f"{ci_level * 100:g} % CI"
     # the marker with the whiskers is the statistic, not another data point:
@@ -115,20 +150,10 @@ def plot_parameters(
         Scale.LOG: f"geometric mean [{level}]",
         Scale.LINEAR: f"mean [{level}]",
     }
-    handles: dict[Scale, Any] = {}
-    positions = np.arange(1, len(groups) + 1)
-    # a group with nothing to show has no box, rather than one of `NaN` lines
-    boxed = [i for i, v in enumerate(shown) if v.size]
-    if boxed:
-        ax.boxplot(
-            [shown[i] for i in boxed],
-            positions=positions[boxed],
-            widths=0.5,
-            showfliers=False,
-            zorder=1,
-        )
+    strips: list[tuple[np.ndarray, np.ndarray]] = []
+    means: list[tuple[float, float, float, float, Scale]] = []
     for pos, label, group, v, v_plot in zip(
-        positions, groups, groups.values(), finite, shown, strict=True
+        range(len(groups)), groups, groups.values(), finite, shown, strict=True
     ):
         if v_plot.size < v.size:
             logger.debug(
@@ -136,17 +161,7 @@ def plot_parameters(
                 label,
                 v.size - v_plot.size,
             )
-        ax.plot(
-            pos + rng.uniform(-0.15, 0.15, v_plot.size),
-            v_plot,
-            linestyle="none",
-            marker=style.data_marker,
-            color=style.data_color,
-            markersize=style.markersize,
-            alpha=0.6,
-            zorder=2,
-            label=label,
-        )
+        strips.append((pos + rng.uniform(-0.15, 0.15, v_plot.size), v_plot))
         if not v.size:
             continue
         effective_scale = scale
@@ -158,40 +173,85 @@ def plot_parameters(
             effective_scale = Scale.LINEAR
         s = summarize(group, scale=effective_scale, ci_level=ci_level)
         center = s.geomean if effective_scale is Scale.LOG else s.mean
-        if log_axis and not center > 0:
+        if log and not center > 0:
             logger.debug(
                 "group '%s': the mean %s cannot be shown on a logarithmic axis",
                 label,
                 center,
             )
             continue
-        err = (
-            np.array([[center - s.ci_low], [s.ci_high - center]])
-            if np.isfinite(s.ci_low)
-            else None
+        means.append((pos + 0.3, center, s.ci_low, s.ci_high, effective_scale))
+    # a group with nothing to show has no box, rather than one of `NaN` lines
+    boxed = [i for i, v in enumerate(shown) if v.size]
+    stats = [box_stats(shown[i]) for i in boxed]
+    limits = data_limits(
+        *shown,
+        *(list(s.values()) for s in stats),
+        *([m[1], m[2], m[3]] for m in means),
+        log=log,
+    )
+    # only the statistics are named: the groups are the ticks of the x axis
+    named = [
+        s for s in dict.fromkeys((scale, Scale.LINEAR)) if s in {m[4] for m in means}
+    ]
+    labels = [statistic_label[s] for s in named]
+    target = chart_of(chart, row, column, rows=1, columns=1, size=_SIZE)
+    panel = (
+        target.width / target.columns - _AXES_ROOM[0],
+        target.height / target.rows - _AXES_ROOM[1],
+    )
+    top, columns = legend_room(labels, limits, panel, log=log)
+    names = list(groups)
+    plot = target.plot(
+        row,
+        column,
+        x=ChartAxis(
+            label=by,
+            scale="category",
+            categories=names,
+            label_visible=by is not None,
+        ),
+        y=value_axis(
+            axis_label(name, unit_label(sample.unit)), log=log, limits=(limits[0], top)
+        ),
+        legend=bool(labels),
+        legend_loc="upper right",
+        legend_columns=columns,
+        legend_order=labels,
+    )
+    if boxed:
+        plot.box(
+            [float(i) for i in boxed],
+            stats,
+            box_width=0.5,
+            median_color="tab:orange",
+            width=1.0,
+            fill_opacity=0.0,
+            color="black",
         )
-        container = ax.errorbar(
-            [pos + 0.3],
+    for x, v in strips:
+        plot.curve(
+            x,
+            v,
+            line="none",
+            marker=marker(style.data_marker),
+            size=style.markersize,
+            color=style.data_color,
+            opacity=0.6,
+        )
+    for x, center, low, high, effective in means:
+        err = ([center - low], [high - center]) if np.isfinite(low) else None
+        label = statistic_label[effective]
+        plot.curve(
+            [x],
             [center],
             yerr=err,
-            marker="D" if effective_scale is scale else "s",
+            error_cap=3.0,
+            line="none",
+            marker="diamond" if effective is scale else "square",
+            size=6.0,
             color=style.summary_color,
-            capsize=3,
-            linestyle="none",
-            zorder=3,
-            label=None
-            if effective_scale in handles
-            else statistic_label[effective_scale],
+            label=label,
+            legend=label,
         )
-        handles.setdefault(effective_scale, container)
-    ax.set_xticks(positions, list(groups))
-    ax.set_ylabel(axis_label(name, unit_label(sample.unit)))
-    if by is not None:
-        ax.set_xlabel(by)
-    if log_axis:
-        log_scale(ax, "y")
-    # only the statistics are named: the groups are the ticks of the x axis
-    legend_above_data(
-        ax, [handles[s] for s in dict.fromkeys((scale, Scale.LINEAR)) if s in handles]
-    )
-    return fig
+    return target

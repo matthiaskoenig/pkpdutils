@@ -292,7 +292,7 @@ print(result.flags())
 []
 ```
 
-![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.png)
+![The AUC, the extrapolated tail and the terminal regression of one curve, linear and logarithmic](images/nca_single.svg)
 
 Options select the methods; the analysis of a batch returns the parameters over its sample dimensions. The batch below is the dose escalation of `examples/nca_batch.py`, four individuals at three dose levels:
 
@@ -372,7 +372,7 @@ print(
 
 `result.ds` is the `xarray.Dataset` behind it, one variable per parameter over `(dose, individual)`, and `result.flag_table()` is one boolean column per flag. `plot_nca_grid(batch, result, ncols=4)` draws the diagnostic panel of every sample of this batch:
 
-![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.png)
+![One diagnostic panel per sample of a batch of twelve curves, with one legend for the figure](images/nca_batch.svg)
 
 ### BLQ rules
 
@@ -738,7 +738,7 @@ cl_ss                  1.8750000285562125 l/h
 
 The intervals no longer change, which is what steady state means, and the predicted accumulation \(1/(1 - e^{-\lambda_z \tau})\) agrees with the observed one. The flag says that the sample at the end of an interval is the post-dose value of the next bolus, so the trough of those intervals was regressed rather than read, as "Multiple dosing" above describes. `plot_timecourse(predicted)` draws the curve with a dotted line at every dose time, the figure of `examples/steady_state.py`:
 
-![The predicted curve of ten doses every twelve hours with a dotted line at every dose time](images/steady_state.png)
+![The predicted curve of ten doses every twelve hours with a dotted line at every dose time](images/steady_state.svg)
 
 `accumulation_ratio` compares two analyses of the same dosing interval instead, the steady state study against a single dose study; with the `result` and the `single` curve of the snippet above:
 
@@ -796,7 +796,7 @@ estimate = time_to_steady_state(result, fraction=0.9)
 print(estimate.method, round(float(estimate.tss), 3), round(float(estimate.c_ss), 3))
 print(round(float(time_to_steady_state(result, method="stepwise").tss), 3))
 
-plot_troughs(result, x="time").savefig("troughs.png", dpi=120)
+plot_troughs(result, x="time").save("troughs.svg")
 ```
 
 ```text
@@ -806,7 +806,7 @@ monoexponential 15.351 1.584
 
 The predicted curve accumulates with the terminal rate constant of the single dose curve, \(\lambda_z = 0.15\,\mathrm{h}^{-1}\), so 90 % of the plateau is reached after \(\ln 10 / \lambda_z = 15.35\) h, in the second dosing interval, and the plateau is the trough the intervals converge to, 1.584 mg/l. The stepwise estimate is 0: the troughs of a noiseless prediction carry no significant linear trend at all, which is the answer "already at steady state in the first interval". On measured data the stepwise estimate is the conservative one, since it only asks that the troughs stop rising. `plot_troughs` draws the troughs against the end of their interval, the figure of `examples/steady_state.py`:
 
-![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
+![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.svg)
 
 ### Bioavailability
 

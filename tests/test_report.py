@@ -5,16 +5,23 @@ import re
 import tracemalloc
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+from sbmlsim_core.chart import Chart
 
 from pkpdutils import NCAOptions, Report, Route, Timecourses, nca, study_report
 from pkpdutils.report import format_cell
 
 N = 6
 TIME = np.array([0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 24.0])
+
+
+def line_chart(y: list[float]) -> Chart:
+    """A chart of one line."""
+    chart = Chart(300, 200)
+    chart.plot().curve([0, 1], y)
+    return chart
 
 
 def batch() -> Timecourses:
@@ -50,15 +57,13 @@ def batch() -> Timecourses:
 
 def test_a_report_writes_its_sections_as_html(tmp_path: Path) -> None:
     """A text, a table and a figure in one self-contained page."""
-    figure = plt.figure()
-    figure.add_subplot().plot([0, 1], [0, 1])
+    figure = line_chart([0, 1])
     report = Report(title="A study", subtitle="six subjects")
     report.add_text("The first paragraph.", heading="Methods").add_table(
         pd.DataFrame({"parameter": ["cmax"], "value": [1.23456], "ok": [True]}),
         "The table.",
         heading="Results",
     ).add_figure(figure, "The figure.")
-    plt.close(figure)
     path = report.write_html(tmp_path / "report.html")
     text = path.read_text(encoding="utf-8")
 
@@ -69,37 +74,36 @@ def test_a_report_writes_its_sections_as_html(tmp_path: Path) -> None:
     # the numbers are formatted like the cells of `summary_table`
     assert "<td>1.23</td>" in text and "<td>True</td>" in text
     assert text.count("<table>") == 1
-    embedded = re.search(r'src="data:image/png;base64,([^"]+)"', text)
+    embedded = re.search(r'src="data:image/svg\+xml;base64,([^"]+)"', text)
     assert embedded is not None
-    assert base64.b64decode(embedded.group(1)).startswith(b"\x89PNG")
+    assert base64.b64decode(embedded.group(1)).startswith(b"<svg")
 
 
 def test_a_report_writes_markdown_with_its_figures_next_to_it(tmp_path: Path) -> None:
-    """The markdown carries the tables and references the PNG files it wrote."""
-    figure = plt.figure()
-    figure.add_subplot().plot([0, 1], [1, 0])
+    """The markdown carries the tables and references the SVG files it wrote."""
+    figure = line_chart([1, 0])
     report = Report(title="A study")
     report.add_table(pd.DataFrame({"a": [1.0], "b": ["x"]}), "A caption")
     report.add_figure(figure, "A figure")
-    plt.close(figure)
     path = report.write_markdown(tmp_path / "study.md")
     text = path.read_text(encoding="utf-8")
 
     assert text.startswith("# A study")
     assert "| a | b |" in text
-    assert "![A figure](study_1.png)" in text
-    assert (tmp_path / "study_1.png").read_bytes().startswith(b"\x89PNG")
+    assert "![A figure](study_1.svg)" in text
+    assert (tmp_path / "study_1.svg").read_bytes().startswith(b"<svg")
 
 
-def test_the_figure_is_rendered_once_and_survives_closing(tmp_path: Path) -> None:
-    """`add_figure` keeps the PNG, not the figure, so the caller may close it."""
-    figure = plt.figure()
-    figure.add_subplot().plot([0, 1], [0, 1])
-    report = Report().add_figure(figure, "once", dpi=72)
-    plt.close(figure)
+def test_the_figure_is_rendered_once_and_survives_a_change(tmp_path: Path) -> None:
+    """`add_figure` keeps the SVG, not the chart, so the caller may change it."""
+    figure = line_chart([0, 1])
+    report = Report().add_figure(figure, "once", heading="A figure")
+    drawn = base64.b64encode(figure.svg().encode("utf-8")).decode("ascii")
+    figure.plot(0, 0).curve([0, 1], [1, 0])
     first = report.write_html(tmp_path / "a.html").read_text(encoding="utf-8")
     second = report.write_html(tmp_path / "b.html").read_text(encoding="utf-8")
     assert first == second.replace("b.html", "a.html")
+    assert drawn in first and "<h2>A figure</h2>" in first
 
 
 def test_the_escaping_keeps_the_markup_of_a_cell_out_of_the_page(
@@ -166,7 +170,7 @@ def test_the_study_report_assembles_the_m13a_package(tmp_path: Path) -> None:
 
     path = report.write_html(tmp_path / "study.html")
     text = path.read_text(encoding="utf-8")
-    assert text.count("data:image/png;base64,") == 2
+    assert text.count("data:image/svg+xml;base64,") == 2
     assert text.count("<table>") == 3
     assert text.rstrip().endswith("</html>")
 

@@ -1,13 +1,16 @@
-"""Figures of timecourses and analyses (matplotlib).
+"""Figures of timecourses and analyses, as charts of `sbmlsim_core.chart`.
 
 Every function takes its data first and every option as a keyword,
-`f(data, *, <options>, ax=None, style=DEFAULT_STYLE)`, returns the
-`matplotlib.figure.Figure` it drew on and never shows it; pass `ax` to draw
-into an existing axes and `axes` to a multi-panel figure (`plot_nca`,
-`plot_nca_grid`, `plot_fit`). A logarithmic axis is `log_x` or `log_y`, and
-every one of them carries plain tick labels (`10`, `100`) instead of powers
-of ten. `draw_nca_panel` draws one NCA panel and returns the
-`matplotlib.axes.Axes`, for a figure the caller lays out.
+`f(data, *, <options>, chart=None, row=0, column=0, style=DEFAULT_STYLE)`,
+and returns the `sbmlsim_core.chart.Chart` it drew on, which is saved by the
+suffix of its path (`chart.save("figure.svg")`, `save_figure`) and shows
+itself in a notebook. Without `chart` a function draws a chart of its own;
+with one it draws its panels into the cells of the grid of that chart from
+`(row, column)` on, so that several figures share one chart
+(`Chart(rows=..., columns=...)`). A logarithmic axis is `log_x` or `log_y`,
+and every one of them carries plain tick labels (`10`, `100`) instead of
+powers of ten. `draw_nca_panel` draws one NCA panel and returns the
+`sbmlsim_core.chart.ChartPlot`, for a figure the caller lays out.
 
 `plot_mean_timecourse` is the group figure of a study report (the mean of
 every group with its spread, the individuals faint behind it, on a linear and
@@ -24,6 +27,7 @@ excretion rate curve with its terminal regression and the amount recovered) and
 standard errors and the shaded area).
 """
 
+from pkpdutils.plot._common import new_chart
 from pkpdutils.plot.fit import (
     plot_bland_altman,
     plot_dose_proportionality,
@@ -55,6 +59,7 @@ __all__ = [
     "DEFAULT_STYLE",
     "PlotStyle",
     "draw_nca_panel",
+    "new_chart",
     "plot_bland_altman",
     "plot_dose_proportionality",
     "plot_excretion",

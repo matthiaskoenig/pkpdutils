@@ -9,8 +9,8 @@ holds the statistics on parameters (tests, ratios, bioequivalence,
 drug-drug interactions, meta-analysis). `pkpdutils.io` reads and writes the
 exchange formats of the field (event records, PKNCA tables, CDISC ADNCA) and
 `pkpdutils.plot` draws the figures; both are reachable after
-`import pkpdutils`, `plot` on first use (it imports matplotlib, which a
-script that draws nothing does not pay for).
+`import pkpdutils`, `plot` on first use (it imports the chart builder of
+`sbmlsim_core`, which a script that draws nothing does not pay for).
 
 The namespace carries what an analysis needs: the data model, the front ends
 of the analyses, the options with the enumerations which configure them, the
@@ -193,9 +193,10 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Import `pkpdutils.plot` on first use (PEP 562).
 
-    The figures need matplotlib, which is slow to import and useless to a
-    script that draws nothing, so the module is imported when the attribute
-    is first read and cached in the namespace afterwards.
+    The figures need the chart builder and the renderer of `sbmlsim_core`,
+    which are useless to a script that draws nothing, so the module is
+    imported when the attribute is first read and cached in the namespace
+    afterwards.
 
     Args:
         name: name of the attribute.
