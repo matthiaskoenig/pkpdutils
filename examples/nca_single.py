@@ -1,7 +1,7 @@
 """Non-compartmental analysis of one timecourse.
 
 Run from the root of the repository with `python -m examples.nca_single`.
-Writes `nca_single.png` and `nca_terminal_windows.png` into the working
+Writes `nca_single.svg` and `nca_terminal_windows.svg` into the working
 directory.
 """
 
@@ -76,10 +76,10 @@ if __name__ == "__main__":
         title="the candidate windows of the terminal regression",
     )
 
-    fig = plot_nca(tc, result)
-    fig.savefig("nca_single.png", dpi=120)
-    plot_terminal_windows(tc, windows, options=diagnostic).savefig(
-        "nca_terminal_windows.png", dpi=120
+    chart = plot_nca(tc, result)
+    chart.save("nca_single.svg")
+    plot_terminal_windows(tc, windows, options=diagnostic).save(
+        "nca_terminal_windows.svg"
     )
-    console.print("written: nca_single.png, nca_terminal_windows.png")
+    console.print("written: nca_single.svg, nca_terminal_windows.svg")
     console.print(np.round(result["auc_inf_obs"].values, 3))

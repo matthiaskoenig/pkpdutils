@@ -43,7 +43,7 @@ SCRIPTS: list[str] = [
 @pytest.mark.parametrize("module", SCRIPTS)
 def test_example_script(module: str, tmp_path: Path) -> None:
     """Every example runs without an error and writes into the working directory."""
-    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
+    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-m", module],
         cwd=tmp_path,

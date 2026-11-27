@@ -74,7 +74,7 @@ uv sync --extra dev
 
 The environment is resolved from `uv.lock`, which is committed, so local development, including `uv run ty check`, and the documentation build use the same versions. The tox environments, i.e. the test matrix and the `ty` check of continuous integration, resolve from `pyproject.toml` and do not use the lock; the lower bounds in `pyproject.toml` are what a user of the library installs against. After changing a dependency in `pyproject.toml` run `uv lock`: the `documentation` workflow syncs with `uv sync --locked`, which fails when `pyproject.toml` and the lock disagree. `uv lock --upgrade` moves the lock to the newest releases. Dependabot bumps the locked dependencies as one grouped monthly pull request, with `versioning-strategy: lockfile-only`, so the lower bounds in `pyproject.toml` are never raised by it and only ever changed by hand.
 
-The `dev` extra contains everything used below, i.e., pytest, ruff, ty, tox, pre-commit, zensical and bump-my-version, so nothing has to be installed separately. The python version is taken from `.python-version` (currently 3.14); to work against the oldest supported version instead use `uv sync --extra dev --python 3.13`, which replaces the environment.
+The `dev` extra contains everything used below, i.e., pytest, ruff, ty, tox, pre-commit, zensical and bump-my-version, so nothing has to be installed separately. The python version is taken from `.python-version` (3.14, the oldest supported version, which sbmlsim-core requires); to work against the newest one instead use `uv sync --extra dev --python 3.15`, which replaces the environment.
 
 The tools are then run either with `uv run <command>`, which uses the environment without activating it, or from the activated environment:
 
@@ -98,7 +98,7 @@ From now on every commit is checked with ruff (lint and format) and ty, i.e., th
 
 The tests are written with pytest, tox runs them against every supported python version.
 
-The tox environments are named after the interpreter (`py3.13` to `py3.15`, see `envlist` in `tox.ini`), a single one is run with
+The tox environments are named after the interpreter (`py3.14` and `py3.15`, see `envlist` in `tox.ini`), a single one is run with
 
 ```bash
 tox r -e py3.14
@@ -110,7 +110,7 @@ and the complete matrix, including the `ty` environment, in parallel with
 tox run-parallel
 ```
 
-This needs the interpreters to be available, which uv installs with `uv python install 3.13 3.14 3.15`. It is the complete test and is run before a pull request is opened: continuous integration runs only `py3.14`, on linux, macos and windows, as `uvx --with tox-uv tox -e py3.14 -- --durations=15`, which lists the slowest tests in the log. The snippets of the documentation and the example scripts (the markers `docs` and `examples`) start an interpreter each and dominate the time of the suite, so continuous integration runs them on linux only and deselects them on macos and windows with `-m "not docs and not examples"`; locally they always run.
+This needs the interpreters to be available, which uv installs with `uv python install 3.14 3.15`. It is the complete test and is run before a pull request is opened: continuous integration runs only `py3.14`, on linux, macos and windows, as `uvx --with tox-uv tox -e py3.14 -- --durations=15`, which lists the slowest tests in the log. The snippets of the documentation and the example scripts (the markers `docs` and `examples`) start an interpreter each and dominate the time of the suite, so continuous integration runs them on linux only and deselects them on macos and windows with `-m "not docs and not examples"`; locally they always run.
 
 To run the tests directly against the development environment use
 
@@ -123,7 +123,7 @@ pytest tests/test_units.py::test_parse_unit  # a single test
 
 The tests run in parallel, `addopts = "-n auto"` in `pyproject.toml` gives pytest-xdist one worker per core; `-n 0` on the command line runs everything in one process, which the debugger needs.
 
-The `conftest.py` at the root of the repository selects the non-interactive matplotlib backend for the session and puts the repository on `sys.path`, so that the tests can import the examples.
+The `conftest.py` at the root of the repository puts the repository on `sys.path`, so that the tests can import the examples.
 
 `tests/examples/test_examples.py` runs the examples as `python -m examples.<module>` in a temporary working directory, so a broken example fails the test suite.
 
@@ -248,14 +248,14 @@ Docstrings are therefore the place to document functions and classes, the markdo
 
 ### Rendering the example figures
 
-The figures of the documentation are the figures of the examples, and they are committed to `docs/images/`, so that the build of the site stays a plain `zensical build` and does not run any analysis. `scripts/render_examples.py` refreshes them: it runs every example of `tests/examples/test_examples.py` as a module in a temporary directory, with the `Agg` backend and warnings as errors, and copies every PNG the example wrote into `docs/images/` under its own name. It prints the files it wrote and fails when an example fails or writes no figure at all.
+The figures of the documentation are the figures of the examples, and they are committed to `docs/images/`, so that the build of the site stays a plain `zensical build` and does not run any analysis. `scripts/render_examples.py` refreshes them: it runs every example of `tests/examples/test_examples.py` as a module in a temporary directory with warnings as errors, and copies every SVG the example wrote into `docs/images/` under its own name. It prints the files it wrote and fails when an example fails or writes no figure at all.
 
 ```bash
 uv run python scripts/render_examples.py                  # every example
 uv run python scripts/render_examples.py nca_single emax  # a selection
 ```
 
-Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.png)`.
+Run it after an example changed, after a plot function changed, and commit the images it wrote with that change; a page shows a figure with `![description](images/<example>.svg)`.
 
 A page only embeds a figure an example writes, so the committed images and the pages cannot drift apart: a snippet of the documentation which draws the same figure as an example builds the same data, and a figure nothing produces is described in a sentence instead.
 

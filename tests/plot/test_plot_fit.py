@@ -1,10 +1,9 @@
-import warnings
+from typing import Any
 
-import matplotlib
-import matplotlib.pyplot
 import numpy as np
+import pytest
 import xarray as xr
-from matplotlib.figure import Figure
+from sbmlsim_core.chart import Chart
 
 from pkpdutils import Dose, Route, Timecourses
 from pkpdutils.fit import (
@@ -17,13 +16,13 @@ from pkpdutils.fit import (
 )
 from pkpdutils.fit.models import MonoExp, Power
 from pkpdutils.plot import (
+    new_chart,
     plot_bland_altman,
     plot_dose_proportionality,
     plot_fit,
     plot_goodness_of_fit,
 )
 
-matplotlib.use("Agg")
 T = np.array([0.25, 0.5, 1, 2, 4, 6, 8, 12, 24])
 
 
@@ -56,28 +55,62 @@ def monoexp_result(n: int = 1):
     )
 
 
+def plots(chart: Chart) -> list[dict[str, Any]]:
+    return chart.spec()["plots"]
+
+
+def labels(plot: dict[str, Any]) -> list[str]:
+    return [e["label"] for e in plot["elements"] if "label" in e]
+
+
+def element(plot: dict[str, Any], label: str) -> dict[str, Any]:
+    return next(e for e in plot["elements"] if e.get("label") == label)
+
+
 def test_plot_fit_single_and_batch() -> None:
-    fig = plot_fit(monoexp_result(), log_y=True)
-    assert isinstance(fig, Figure) and len(fig.axes) == 2
-    assert fig.axes[0].get_yscale() == "log"
-    assert "monoexp" in fig.axes[0].get_title() and "k" in fig.axes[0].get_title()
-    # the shared x axis is labelled once, on the residual panel
-    assert fig.axes[0].get_xlabel() == "" and fig.axes[1].get_xlabel() == "x [hr]"
-    assert fig.axes[0].get_ylabel() == "y [mg/l]"
-    labels = [line.get_label() for line in fig.axes[0].get_lines()]
-    assert "fit" in labels
-    fig2 = plot_fit(monoexp_result(3), individual="s1", title="s1")
-    assert "s1" in fig2.axes[0].get_title()
-    matplotlib.pyplot.close("all")
+    chart = plot_fit(monoexp_result(), log_y=True)
+    assert isinstance(chart, Chart)
+    fit_panel, residuals = plots(chart)
+    assert fit_panel["y"]["scale"] == "log"
+    assert "monoexp" in fit_panel["title"] and "k" in fit_panel["title"]
+    # the shared x axis is labelled once, on the residual panel, and the fit
+    # panel is three times as high
+    assert fit_panel["x"]["label_visible"] is False
+    assert residuals["x"]["label"] == "x [hr]"
+    assert (fit_panel["x"]["min"], fit_panel["x"]["max"]) == (
+        residuals["x"]["min"],
+        residuals["x"]["max"],
+    )
+    assert fit_panel["row_span"] == 3 and residuals["row"] == 3
+    assert fit_panel["y"]["label"] == "y [mg/l]"
+    assert "fit" in labels(fit_panel)
+    # the data carry their sd as error bars
+    assert "yerr" in element(fit_panel, "data")
+    second = plots(plot_fit(monoexp_result(3), individual="s1", title="s1"))[0]
+    assert "s1" in second["title"]
+
+
+def test_plot_fit_draws_into_two_cells_of_a_given_chart() -> None:
+    chart = new_chart(7, 6, rows=2, columns=2)
+    assert plot_fit(monoexp_result(), chart=chart, column=1) is chart
+    fit_panel, residuals = plots(chart)
+    assert (fit_panel["row"], fit_panel["column"]) == (0, 1)
+    assert (residuals["row"], residuals["column"]) == (1, 1)
+    with pytest.raises(ValueError):
+        plot_fit(monoexp_result(), chart=chart, row=1)
 
 
 def test_plot_goodness_of_fit() -> None:
-    fig = plot_goodness_of_fit(monoexp_result(3), log_x=True, log_y=True)
-    ax = fig.axes[0]
-    assert ax.get_xscale() == "log"
-    assert any("identity" in str(line.get_label()) for line in ax.get_lines())
-    assert len(ax.collections) >= 3 or len(ax.get_lines()) >= 4
-    matplotlib.pyplot.close(fig)
+    plot = plots(plot_goodness_of_fit(monoexp_result(3), log_x=True, log_y=True))[0]
+    assert plot["x"]["scale"] == "log" and plot["y"]["scale"] == "log"
+    assert "identity" in labels(plot)
+    points = [
+        e
+        for e in plot["elements"]
+        if e["kind"] == "curve" and e["style"]["marker"]["type"] == "circle"
+    ]
+    assert len(points) == 3
+    assert all("R² = " in e["label"] for e in points)
 
 
 def test_plot_fit_log_x_masks_a_zero_time_point() -> None:
@@ -93,23 +126,18 @@ def test_plot_fit_log_x_masks_a_zero_time_point() -> None:
         x_unit="hr",
         y_unit="mg/l",
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        fig = plot_fit(result, log_x=True)
-        fig.canvas.draw()
-    ax = fig.axes[0]
-    assert ax.get_xscale() == "log"
-    labels = [line.get_label() for line in ax.get_lines()]
-    assert "fit" in labels
-    fit_line = next(line for line in ax.get_lines() if line.get_label() == "fit")
-    assert np.all(np.asarray(fit_line.get_xdata()) > 0)
-    matplotlib.pyplot.close(fig)
+    chart = plot_fit(result, log_x=True)
+    chart.svg()
+    plot = plots(chart)[0]
+    assert plot["x"]["scale"] == "log"
+    assert "fit" in labels(plot)
+    assert np.all(np.asarray(element(plot, "fit")["x"], dtype=float) > 0)
+    assert np.all(np.asarray(element(plot, "data")["x"], dtype=float) > 0)
 
 
-def test_plot_goodness_of_fit_no_legend_warning_without_labels() -> None:
-    # B27: an all-NaN batch fit has no labelled artist (no identity line, no
-    # per-sample label above 8 samples), an unconditional ax.legend() used to
-    # raise "UserWarning: No artists with labels found to put in legend."
+def test_plot_goodness_of_fit_has_no_legend_entry_without_labels() -> None:
+    # B27: an all-NaN batch fit has no labelled element (no identity line, no
+    # per-sample label above 8 samples)
     t = np.array([0.25, 0.5, 1, 2, 4, 8, 12, 24])
     batch = Timecourses.from_arrays(
         t,
@@ -121,12 +149,9 @@ def test_plot_goodness_of_fit_no_legend_warning_without_labels() -> None:
         dose=Dose(amount=100, unit="mg", route=Route.ORAL),
     )
     result = fit_timecourses(MonoExp(), batch, options=FitOptions(n_starts=3, seed=0))
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        fig = plot_goodness_of_fit(result)
-        fig.canvas.draw()
-    assert fig.axes[0].get_legend() is None
-    matplotlib.pyplot.close(fig)
+    chart = plot_goodness_of_fit(result)
+    assert "sbmlsim-legend-entry" not in chart.svg()
+    assert labels(plots(chart)[0]) == []
 
 
 def test_plot_dose_proportionality() -> None:
@@ -138,26 +163,30 @@ def test_plot_dose_proportionality() -> None:
     )
     result = fit_table(Power(), ds, "dose", "auc", dim="dose")
     test = proportionality_test(result, dose_range=(25.0, 200.0))
-    fig = plot_dose_proportionality(result, test=test)
-    ax = fig.axes[0]
-    assert ax.get_xscale() == "log" and ax.get_yscale() == "log"
-    assert "b =" in ax.get_title()
-    assert len(ax.collections) >= 1  # the acceptance wedge
-    matplotlib.pyplot.close(fig)
+    plot = plots(plot_dose_proportionality(result, test=test))[0]
+    assert plot["x"]["scale"] == "log" and plot["y"]["scale"] == "log"
+    assert "b =" in plot["title"]
+    # the acceptance wedge
+    assert [e["kind"] for e in plot["elements"]].count("band") == 1
+    # the doses are the ticks of the x axis
+    assert plot["x"]["ticks"] == list(doses)
+    assert plot["x"]["tick_labels"] == ["25", "50", "100", "200"]
 
 
 def test_plot_bland_altman() -> None:
-    fig = plot_bland_altman(monoexp_result(3))
-    assert isinstance(fig, Figure)
-    ax = fig.axes[0]
-    assert ax.get_xlabel().startswith("mean") and ax.get_ylabel().startswith(
-        "difference"
-    )
+    chart = plot_bland_altman(monoexp_result(3))
+    assert isinstance(chart, Chart)
+    plot = plots(chart)[0]
+    assert plot["x"]["label"].startswith("mean")
+    assert plot["y"]["label"].startswith("difference")
     # the mean difference and the two limits of agreement
-    assert sum(1 for line in ax.get_lines() if line.get_linestyle() in ("--", ":")) >= 3
-    fig_log = plot_bland_altman(monoexp_result(), log_ratio=True)
-    assert fig_log.axes[0].get_ylabel().startswith("log ratio")
-    matplotlib.pyplot.close("all")
+    rules = [e for e in plot["elements"] if e["kind"] == "rule"]
+    assert (
+        sum(1 for e in rules if e["style"]["line"]["type"] in ("dashed", "dotted")) >= 3
+    )
+    log = plots(plot_bland_altman(monoexp_result(), log_ratio=True))[0]
+    assert log["y"]["label"].startswith("log ratio")
+    assert log["x"]["scale"] == "log"
 
 
 def test_plot_fit_labels_the_axes_from_the_names_of_the_front_end() -> None:
@@ -171,10 +200,9 @@ def test_plot_fit_labels_the_axes_from_the_names_of_the_front_end() -> None:
         substance="caffeine",
     )
     result = fit_timecourses(MonoExp(), batch)
-    fig = plot_fit(result, individual="s1")
-    assert fig.axes[0].get_ylabel() == "caffeine [mg/l]"
-    assert fig.axes[1].get_xlabel() == "time [hr]"
-    matplotlib.pyplot.close(fig)
+    fit_panel, residuals = plots(plot_fit(result, individual="s1"))
+    assert fit_panel["y"]["label"] == "caffeine [mg/l]"
+    assert residuals["x"]["label"] == "time [hr]"
 
 
 def test_plot_fit_labels_the_axes_with_the_names_given_to_fit() -> None:
@@ -192,19 +220,17 @@ def test_plot_fit_labels_the_axes_with_the_names_given_to_fit() -> None:
     )
     assert result.ds.attrs["x_name"] == "concentration"
     assert result.ds.attrs["y_name"] == "effect"
-    fig = plot_fit(result)
-    assert fig.axes[0].get_ylabel() == "effect [mg/l]"
-    assert fig.axes[1].get_xlabel() == "concentration [hr]"
-    matplotlib.pyplot.close(fig)
+    fit_panel, residuals = plots(plot_fit(result))
+    assert fit_panel["y"]["label"] == "effect [mg/l]"
+    assert residuals["x"]["label"] == "concentration [hr]"
 
 
 def test_plot_fit_falls_back_to_x_and_y_without_the_names() -> None:
     result = monoexp_result()
     assert "x_name" not in result.ds.attrs
-    fig = plot_fit(result)
-    assert fig.axes[0].get_ylabel().startswith("y [")
-    assert fig.axes[1].get_xlabel().startswith("x [")
-    matplotlib.pyplot.close(fig)
+    fit_panel, residuals = plots(plot_fit(result))
+    assert fit_panel["y"]["label"].startswith("y [")
+    assert residuals["x"]["label"].startswith("x [")
 
 
 def test_plot_dose_proportionality_labels_the_axes_from_the_table_columns() -> None:
@@ -215,11 +241,9 @@ def test_plot_dose_proportionality_labels_the_axes_from_the_table_columns() -> N
     )
     ds["dose"].attrs["units"] = "mg"
     result = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
-    fig = plot_dose_proportionality(result)
-    ax = fig.axes[0]
-    assert ax.get_xlabel() == "dose [mg]"
-    assert ax.get_ylabel().startswith("auc_inf_obs [")
-    matplotlib.pyplot.close(fig)
+    plot = plots(plot_dose_proportionality(result))[0]
+    assert plot["x"]["label"] == "dose [mg]"
+    assert plot["y"]["label"].startswith("auc_inf_obs [")
 
 
 def test_plot_fit_leaves_out_a_dimensionless_unit() -> None:
@@ -229,6 +253,4 @@ def test_plot_fit_leaves_out_a_dimensionless_unit() -> None:
         coords={"dose": doses},  # a coordinate without a unit
     )
     result = fit_table(Power(), ds, "dose", "auc", dim="dose")
-    fig = plot_dose_proportionality(result)
-    assert fig.axes[0].get_xlabel() == "dose"
-    matplotlib.pyplot.close(fig)
+    assert plots(plot_dose_proportionality(result))[0]["x"]["label"] == "dose"

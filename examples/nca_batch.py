@@ -1,7 +1,7 @@
 """Non-compartmental analysis of a batch: individuals of a dose escalation.
 
 Run from the root of the repository with `python -m examples.nca_batch`.
-Writes `nca_batch_curves.png`, `nca_batch.png`, `nca_batch_study.png` and
+Writes `nca_batch_curves.svg`, `nca_batch.svg`, `nca_batch_study.svg` and
 `nca_batch.tsv` into the working directory.
 """
 
@@ -78,10 +78,10 @@ if __name__ == "__main__":
     console.rule("Dose proportionality at a glance: AUC / dose")
     console.print(result["auc_inf_dn"].mean(dim="individual").values)
 
-    plot_mean_timecourse(batch, by="dose").savefig("nca_batch_curves.png", dpi=120)
-    plot_nca_grid(batch, result, ncols=4).savefig("nca_batch.png", dpi=100)
-    plot_study_curves(study, by="dose").savefig("nca_batch_study.png", dpi=110)
+    plot_mean_timecourse(batch, by="dose").save("nca_batch_curves.svg")
+    plot_nca_grid(batch, result, ncols=4).save("nca_batch.svg")
+    plot_study_curves(study, by="dose").save("nca_batch_study.svg")
     console.print(
-        "written: nca_batch.tsv, nca_batch_curves.png, nca_batch.png, "
-        "nca_batch_study.png"
+        "written: nca_batch.tsv, nca_batch_curves.svg, nca_batch.svg, "
+        "nca_batch_study.svg"
     )

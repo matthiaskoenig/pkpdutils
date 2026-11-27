@@ -2,17 +2,16 @@
 
 Run from the root of the repository with `python -m examples.timecourses`.
 The example prints the objects and writes `timecourses.tsv` and
-`timecourses.png` into the working directory.
+`timecourses.svg` into the working directory.
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from pkpdutils import Dose, Route, Timecourse, Timecourses
 from pkpdutils.console import console
-from pkpdutils.plot import plot_timecourse
+from pkpdutils.plot import new_chart, plot_timecourse
 
 
 def single_timecourse() -> Timecourse:
@@ -110,11 +109,10 @@ if __name__ == "__main__":
     tcs.to_dataframe().to_csv("timecourses.tsv", sep="\t", index=False)
 
     # the group curve with its standard deviation and the three individuals
-    fig, axes = plt.subplots(ncols=2, figsize=(11, 4))
-    fig.set_layout_engine("constrained")
-    plot_timecourse(tc, ax=axes[0])
-    axes[0].set_title("one group curve (mean and sd)")
-    plot_timecourse(tcs, ax=axes[1])
-    axes[1].set_title("a batch of three individuals")
-    fig.savefig("timecourses.png", dpi=120)
-    console.print("written: timecourses.tsv, timecourses.png")
+    chart = new_chart(11, 4, columns=2)
+    plot_timecourse(tc, chart=chart, row=0, column=0)
+    plot_timecourse(tcs, chart=chart, row=0, column=1)
+    chart.plots[0].title = "one group curve (mean and sd)"
+    chart.plots[1].title = "a batch of three individuals"
+    chart.save("timecourses.svg")
+    console.print("written: timecourses.tsv, timecourses.svg")

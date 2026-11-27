@@ -6,7 +6,7 @@ reads a small ADNCA extract with `from_adnca` and prints the recovered dosing
 protocols.
 
 Run from the root of the repository with `python -m examples.formats`.
-Writes `events.csv` and `formats.png` into the working directory.
+Writes `events.csv` and `formats.svg` into the working directory.
 """
 
 import numpy as np
@@ -119,8 +119,8 @@ if __name__ == "__main__":
         ]
     )
 
-    plot_intervals(result, "interval_ctrough").savefig("formats.png", dpi=120)
-    console.print("written: events.csv, formats.png")
+    plot_intervals(result, "interval_ctrough").save("formats.svg")
+    console.print("written: events.csv, formats.svg")
 
     console.rule("CDISC ADaM ADNCA: recovered dosing protocols")
     adnca_batch = Timecourses.from_adnca(ADNCA, analyte="XAN")

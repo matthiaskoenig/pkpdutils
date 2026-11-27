@@ -197,7 +197,7 @@ auc_inf_obs hour * milligram / liter 8 13.4 3.93 29.3 %    13.0 27.6 %   11.6 9.
 
 The two paths of `examples/group_uncertainty.py`: the reported group curve, whose spread the bootstrap and the delta method propagate, and the individual curves, whose parameters are summarized over the subjects.
 
-![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.png)
+![A group curve with its standard deviation next to the individual curves it summarizes](images/group_uncertainty.svg)
 
 `partial_auc(batch, t_start, t_end, *, options=...)` is the area between two times of every sample, as in the snippet above; the interval may start before the first sample of a curve but not before its dose.
 

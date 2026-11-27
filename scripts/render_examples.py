@@ -1,9 +1,9 @@
 """Render the figures of the examples into the documentation.
 
 Every example of `tests/examples/test_examples.py` is run as a module in a
-temporary working directory, with the `Agg` backend and warnings as errors, and
-the PNG files it writes are copied into `docs/images/` under the name the
-example gave them (`<example>.png`, `<example>_<suffix>.png`). The images are
+temporary working directory with warnings as errors, and the SVG files it
+writes are copied into `docs/images/` under the name the example gave them
+(`<example>.svg`, `<example>_<suffix>.svg`). The images are
 committed, so the documentation build stays a plain `zensical build`; run the
 script after an example or a plot function changed:
 
@@ -41,8 +41,8 @@ def example_modules() -> list[str]:
 
 
 def render(module: str, work_dir: Path) -> list[Path]:
-    """Run one example in `work_dir` and return the PNG files it wrote."""
-    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), MPLBACKEND="Agg", PYTHONUTF8="1")
+    """Run one example in `work_dir` and return the SVG files it wrote."""
+    env = dict(os.environ, PYTHONPATH=str(REPO_DIR), PYTHONUTF8="1")
     result = subprocess.run(
         [sys.executable, "-W", "error", "-m", module],
         cwd=work_dir,
@@ -56,7 +56,7 @@ def render(module: str, work_dir: Path) -> list[Path]:
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)
         raise RuntimeError(f"{module} failed with exit code {result.returncode}")
-    return sorted(work_dir.glob("*.png"))
+    return sorted(work_dir.glob("*.svg"))
 
 
 def main() -> int:
@@ -100,7 +100,7 @@ def main() -> int:
 
     print(f"\n{len(written)} figures of {len(selected)} examples")
     stale = sorted(
-        path.name for path in IMAGES_DIR.glob("*.png") if path.name not in written
+        path.name for path in IMAGES_DIR.glob("*.svg") if path.name not in written
     )
     if stale and len(selected) == len(modules):
         print(f"not written by any example: {', '.join(stale)}")

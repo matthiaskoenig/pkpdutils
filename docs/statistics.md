@@ -262,7 +262,7 @@ Meyer 2004    0.7634 0.1052  0.5571   0.9696         16           16        0.36
 
 The three studies agree on the direction and disagree on the size, which is what \(I^2 = 66.8\) % says: the random effects interval is wider than the fixed effect one would be, and the weights of the three studies are more even under it.
 
-![The forest plot of five studies with the fixed and the random effect as diamonds](images/meta_analysis.png)
+![The forest plot of five studies with the fixed and the random effect as diamonds](images/meta_analysis.svg)
 
 `effects_from_arrays` defaults to `EffectKind.HEDGES_G` like `effect_size` and `meta_analysis`, so the kind of an effect computed elsewhere is given explicitly. Every scalar result carries `to_dict` (`Summary`, `TestResult`, `RatioResult`, `BEParameter`, `BEResult`, `EffectSize`, `PooledEffect`, `Heterogeneity`, `Study`, `MetaResult`, `DDIResult`) and every collection a `to_dataframe` (`BEResult`, `MetaResult`).
 

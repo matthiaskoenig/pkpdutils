@@ -117,7 +117,7 @@ The one dose record of the table became a protocol of two doses, the weight beca
 
 `examples/formats.py` writes a twice daily batch as event records, reads it back and analyses every dosing interval of the round trip:
 
-![The trough concentration of every dosing interval of four subjects](images/formats.png)
+![The trough concentration of every dosing interval of four subjects](images/formats.svg)
 
 ## PKNCA tables
 

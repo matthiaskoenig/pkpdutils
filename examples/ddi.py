@@ -1,7 +1,7 @@
 """Classification of a drug-drug interaction from the exposure with and without a perpetrator.
 
 Run from the root of the repository with `python -m examples.ddi`.
-Writes `ddi.png` into the working directory.
+Writes `ddi.svg` into the working directory.
 """
 
 import numpy as np
@@ -81,5 +81,5 @@ if __name__ == "__main__":
         {"auc_inf_obs": auc_ratio, "cmax": cmax_ratio},
         limits=None,
         thresholds=DDIThresholds.fda(),
-    ).savefig("ddi.png", dpi=120)
-    console.print("written: ddi.png")
+    ).save("ddi.svg")
+    console.print("written: ddi.svg")

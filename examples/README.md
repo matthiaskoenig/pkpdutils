@@ -8,7 +8,7 @@ Every example is a module of the `examples` package, so it is run from the root 
 python -m examples.timecourses
 ```
 
-An example writes what it creates into the current working directory. No example opens a window: matplotlib figures are saved to a file, never shown, so that the examples also run on a machine without a display.
+An example writes what it creates into the current working directory. No example opens a window: the figures are charts saved as SVG files, never shown, so that the examples also run on a machine without a display.
 
 The [gallery](https://matthiaskoenig.github.io/pkpdutils/gallery/) shows the figure and the core snippet of every example; `uv run python scripts/render_examples.py` renders the figures of all examples into `docs/images/`.
 

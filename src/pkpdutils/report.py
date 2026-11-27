@@ -4,7 +4,7 @@ An analysis of `pkpdutils` ends in data frames and figures; a study report is
 those pieces in the order ICH M13A (2024, 2.2.2) asks for, in a file which can
 be sent around. `Report` collects the pieces - a paragraph, a table, a figure -
 and writes them as a self-contained HTML page (the figures embedded as base64
-PNG, so the file travels alone) or as markdown next to its figure files.
+SVG, so the file travels alone) or as markdown next to its figure files.
 `study_report` assembles the package of a bioequivalence or single dose study
 from a batch and its result: the sentence describing the methods, the summary
 statistics M13A names, the acceptability of the extrapolation, the parameters
@@ -18,7 +18,6 @@ before it is written.
 
 import base64
 import html
-import io
 import logging
 import re
 from collections.abc import Iterator
@@ -38,7 +37,7 @@ from pkpdutils.result import format_number, summary_table
 from pkpdutils.timecourse import Timecourses
 
 if TYPE_CHECKING:  # pragma: no cover - the annotation of `add_figure`
-    from matplotlib.figure import Figure
+    from sbmlsim_core.chart import Chart
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +72,7 @@ class Section:
         text: the paragraph of a text section
         frame: the table of a table section
         caption: the caption below a table or a figure
-        image: the rendered PNG of a figure section
+        image: the rendered SVG of a figure section
         digits: significant digits of the numbers of a table
         level: the level of the heading
     """
@@ -147,8 +146,8 @@ class Report:
 
     A report is built by adding sections in the order they are read; every
     `add_*` returns the report itself, so the calls chain. The figures are
-    rendered to PNG when they are added, so the report does not keep the
-    matplotlib figures alive and writing it twice gives the same bytes.
+    rendered to SVG when they are added, so the report does not keep the
+    charts and writing it twice gives the same bytes.
 
     Attributes:
         title: the title of the document
@@ -231,19 +230,17 @@ class Report:
 
     def add_figure(
         self,
-        fig: "Figure",
+        chart: "Chart",
         caption: str = "",
-        dpi: int = 150,
         *,
         heading: str | None = None,
     ) -> "Report":
-        """Add a figure with a caption, rendered to PNG right away.
+        """Add a figure with a caption, rendered to SVG right away.
 
         Args:
-            fig: the figure, as every plotting function of the package
-                returns it; it is not closed, the caller owns it.
+            chart: the figure, as every plotting function of the package
+                returns it.
             caption: the caption below the figure.
-            dpi: resolution of the rendered image.
 
         Keyword Args:
             heading: the heading above it, none by default.
@@ -251,14 +248,12 @@ class Report:
         Returns:
             The report, so that the calls chain.
         """
-        buffer = io.BytesIO()
-        fig.savefig(buffer, format="png", dpi=dpi)
         self.sections.append(
             Section(
                 kind="figure",
                 heading="" if heading is None else heading,
                 caption=caption,
-                image=buffer.getvalue(),
+                image=chart.svg().encode("utf-8"),
             )
         )
         return self
@@ -266,7 +261,7 @@ class Report:
     def write_html(self, path: str | Path) -> Path:
         """Write the report as one self-contained HTML file.
 
-        The figures are embedded as base64 PNG and the style sheet is part of
+        The figures are embedded as base64 SVG and the style sheet is part of
         the document, so the file carries everything it needs and can be
         mailed or archived on its own.
 
@@ -336,7 +331,7 @@ class Report:
             encoded = base64.b64encode(section.image).decode("ascii")
             yield "<figure>"
             yield (
-                f'<img src="data:image/png;base64,{encoded}" '
+                f'<img src="data:image/svg+xml;base64,{encoded}" '
                 f'alt="{html.escape(section.caption)}">'
             )
             if section.caption:
@@ -346,7 +341,7 @@ class Report:
     def write_markdown(self, path: str | Path) -> Path:
         """Write the report as markdown with its figures as files next to it.
 
-        A figure is written as `<stem>_<number>.png` in the directory of the
+        A figure is written as `<stem>_<number>.svg` in the directory of the
         markdown file and referenced by that name, so the document and its
         images move together.
 
@@ -400,7 +395,7 @@ class Report:
                     yield ""
             else:
                 number += 1
-                name = f"{target.stem}_{number}.png"
+                name = f"{target.stem}_{number}.svg"
                 (target.parent / name).write_bytes(section.image)
                 yield f"![{_markdown_text(section.caption)}]({quote(name)})"
                 yield ""
@@ -452,10 +447,8 @@ def study_report(
     Raises:
         ValueError: if `dim` is not a sample dimension of the result.
     """
-    # the figures are the only part which needs matplotlib, and a report of
-    # tables alone should not pay for the import
-    from matplotlib import pyplot as plt
-
+    # the figures are the only part which needs the chart builder, and a
+    # report of tables alone should not pay for the import
     from pkpdutils.plot import plot_mean_timecourse, plot_nca_grid
 
     if dim not in result.sample_dims:
@@ -516,8 +509,6 @@ def study_report(
         "and semi-logarithmic.",
         heading="Figures",
     )
-    plt.close(mean_figure)
     grid = plot_nca_grid(batch, result)
     report.add_figure(grid, "The analysis of every subject.")
-    plt.close(grid)
     return report

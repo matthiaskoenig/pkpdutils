@@ -1,18 +1,15 @@
-"""Helpers shared by the figures: axes and figure creation, ticks, labels and colors."""
+"""Helpers shared by the figures: charts and their cells, axes, ticks, labels and colors."""
 
 import logging
+import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
+import sbmlsim_core
 import xarray as xr
-from matplotlib.axes import Axes
-from matplotlib.axis import Axis
-from matplotlib.figure import Figure
-from matplotlib.font_manager import FontProperties
-from matplotlib.legend import Legend
-from matplotlib.ticker import LogFormatter
+from sbmlsim_core.chart import MARKERS, Chart, ChartAxis, ChartPlot
 
 from pkpdutils.plot.style import DEFAULT_STYLE, PlotStyle
 from pkpdutils.timecourse import Dosing
@@ -20,142 +17,425 @@ from pkpdutils.units import short_unit
 
 logger = logging.getLogger(__name__)
 
+#: pixels per inch of a chart: a chart of `w * INCH` by `h * INCH` pixels has
+#: the proportions and the font sizes of a matplotlib figure of `w` by `h`
+#: inches, a pixel of the chart being a point
+INCH: float = 72.0
 
-def figure_of(
-    ax: Axes | None, figsize: tuple[float, float] = (6, 4)
-) -> tuple[Figure, Axes]:
-    """The axes to draw on and its figure, a new figure without `ax`.
+#: the font sizes of matplotlib's names, relative to its default of 10 points
+FONT_SIZES: dict[str, float] = {
+    "xx-small": 5.79,
+    "x-small": 6.94,
+    "small": 8.33,
+    "medium": 10.0,
+    "large": 12.0,
+    "x-large": 14.4,
+}
 
-    A function drawing into a caller-supplied `ax` never touches its
-    figure's layout engine or size; only a figure created here gets the
-    constrained layout engine, so a caller-supplied `ax` keeps its figure's
-    own layout, meaning long tick labels can clip unless the caller sets one
-    (`fig.set_layout_engine("constrained")`). The figure of an `ax` inside a
-    subfigure is the figure holding the subfigure, the one a caller saves.
+#: the fonts of a chart of the package: the sizes and weights of matplotlib's
+#: defaults, titles of 12 points, labels and ticks of 10 and legends in its
+#: `small` (the size the figures of the package give their legends), no bold
+FONTS: dict[str, float | str] = {
+    "title": FONT_SIZES["large"],
+    "title_weight": "normal",
+    "plot_title": FONT_SIZES["large"],
+    "plot_title_weight": "normal",
+    "label": FONT_SIZES["medium"],
+    "tick": FONT_SIZES["medium"],
+    "legend": FONT_SIZES["small"],
+}
+
+#: the markers of the chart by their codes of matplotlib
+_MARKER_CODES: dict[str, str] = {
+    "o": "circle",
+    "s": "square",
+    "^": "triangle",
+    "D": "diamond",
+    "+": "plus",
+    "x": "x",
+    "v": "triangle_down",
+    "<": "triangle_left",
+    ">": "triangle_right",
+    "*": "star",
+    "X": "x_filled",
+    "P": "plus_filled",
+    "p": "pentagon",
+    "h": "hexagon",
+    "d": "thin_diamond",
+    "8": "octagon",
+    "1": "tri_down",
+    "2": "tri_up",
+    "3": "tri_left",
+    "4": "tri_right",
+    "": "none",
+}
+
+
+def marker(name: str) -> str:
+    """The marker of the chart for a marker of a style.
 
     Args:
-        ax: axes to draw on, `None` for a new figure.
-        figsize: size of a new figure; ignored when `ax` is given.
+        name: a marker of `sbmlsim_core.chart.MARKERS` (`circle`) or its code of
+            matplotlib (`o`).
 
     Returns:
-        The figure and the axes to draw on.
-    """
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-        fig.set_layout_engine("constrained")
-        return fig, ax
-    fig = ax.get_figure(root=True)
-    assert isinstance(fig, Figure)
-    return fig, ax
-
-
-def axes_of(
-    axes: Any | None,
-    nrows: int,
-    ncols: int,
-    figsize: tuple[float, float],
-    *,
-    width_ratios: Sequence[float] | None = None,
-) -> tuple[Figure, np.ndarray]:
-    """The grid of axes to draw on and its figure, a new figure without `axes`.
-
-    Mirrors `figure_of` for a multi-panel figure: a function drawing into
-    caller-supplied axes never touches their figure's layout engine, and the
-    figure of axes inside a subfigure is the figure holding the subfigure.
-
-    Args:
-        axes: existing axes to draw the grid into, `nrows * ncols` of them
-            (any shape, flattened in C order), `None` for a new figure.
-        nrows: number of rows of the grid.
-        ncols: number of columns of the grid.
-        figsize: size of a new figure; ignored when `axes` is given.
-        width_ratios: relative widths of the columns of a new figure, equal
-            by default; ignored when `axes` is given.
-
-    Returns:
-        The figure and the axes, always as an `(nrows, ncols)` array.
+        The name of the marker in the chart.
 
     Raises:
-        ValueError: if `axes` does not have `nrows * ncols` entries.
+        ValueError: for a marker which is neither.
     """
-    if axes is None:
-        fig, new_axes = plt.subplots(
-            nrows=nrows,
-            ncols=ncols,
-            figsize=figsize,
-            squeeze=False,
-            width_ratios=list(width_ratios) if width_ratios is not None else None,
-        )
-        fig.set_layout_engine("constrained")
-        return fig, new_axes
-    flat = np.asarray(axes).reshape(-1)
-    if flat.size != nrows * ncols:
-        raise ValueError(
-            f"{nrows * ncols} axes are needed for a {nrows}x{ncols} grid, got {flat.size}"
-        )
-    grid = flat.reshape(nrows, ncols)
-    fig = flat[0].get_figure(root=True)
-    assert isinstance(fig, Figure)
-    return fig, grid
-
-
-class _PlainLogFormatter(LogFormatter):
-    """A `LogFormatter` which writes the labels as plain numbers, not as `10^n`.
-
-    Only the rendering of a labelled tick is changed; which ticks carry a
-    label stays with `LogFormatter`, which drops the labels between the
-    decades once an axis spans more than a couple of them.
-    """
-
-    def _num_to_string(self, x: float, vmin: float, vmax: float) -> str:
-        """The label of a tick value.
-
-        Args:
-            x: the tick value.
-            vmin: lower bound of the view interval (unused).
-            vmax: upper bound of the view interval (unused).
-
-        Returns:
-            The value as a plain number.
-        """
-        return f"{x:g}"
-
-
-def plain_log_ticks(axis: Axis) -> None:
-    """Format the major and minor ticks of a logarithmic axis as plain numbers.
-
-    Args:
-        axis: the axis (`ax.xaxis` or `ax.yaxis`) to format.
-    """
-    axis.set_major_formatter(_PlainLogFormatter())
-    axis.set_minor_formatter(
-        _PlainLogFormatter(labelOnlyBase=False, minor_thresholds=(2, 0.5))
+    if name in MARKERS:
+        return name
+    if name in _MARKER_CODES:
+        return _MARKER_CODES[name]
+    raise ValueError(
+        f"unknown marker {name!r}, a marker is one of {', '.join(MARKERS)} "
+        "or its code of matplotlib"
     )
 
 
-def log_scale(ax: Axes, which: Literal["x", "y"]) -> None:
-    """Set a logarithmic scale on one axis of `ax`, with plain tick labels.
-
-    The axis is scaled from the extent of the data already drawn on `ax`
-    (`ax.dataLim`), so this must run after the data is plotted. Without a
-    positive value the axis stays linear and the fallback is logged at debug
-    level, instead of the scale raising `UserWarning: Data has no positive
-    values, and therefore cannot be log-scaled` at draw or save time.
+def new_chart(
+    width: float,
+    height: float,
+    *,
+    rows: int = 1,
+    columns: int = 1,
+    title: str | None = None,
+    fonts: Mapping[str, float | str] | None = None,
+    **kwargs: Any,
+) -> Chart:
+    """A chart in the size of a matplotlib figure, with the fonts of the package.
 
     Args:
-        ax: axes already carrying the data.
-        which: `"x"` or `"y"`, the axis to scale.
+        width: the width in inches, `INCH` pixels each.
+        height: the height in inches.
+
+    Keyword Args:
+        rows: the rows of the grid.
+        columns: the columns of the grid.
+        title: the title of the chart.
+        fonts: fonts which replace those of `FONTS`.
+        **kwargs: passed on to `Chart` (`wspace`, `legends`, ...).
+
+    Returns:
+        The chart.
     """
-    interval = ax.dataLim.intervalx if which == "x" else ax.dataLim.intervaly
-    if not np.isfinite(interval).any() or float(np.nanmax(interval)) <= 0.0:
-        logger.debug("the %s axis has no positive value, staying linear", which)
-        return
-    if which == "x":
-        ax.set_xscale("log")
-        plain_log_ticks(ax.xaxis)
+    return Chart(
+        width * INCH,
+        height * INCH,
+        rows=rows,
+        columns=columns,
+        title=title,
+        fonts={**FONTS, **(fonts or {})},
+        **kwargs,
+    )
+
+
+def chart_of(
+    chart: Chart | None,
+    row: int,
+    column: int,
+    *,
+    rows: int,
+    columns: int,
+    size: tuple[float, float],
+    title: str | None = None,
+    fonts: Mapping[str, float | str] | None = None,
+    **kwargs: Any,
+) -> Chart:
+    """The chart a figure draws its panels into, a new one without `chart`.
+
+    A figure of `rows` by `columns` panels is drawn into the cells of the grid
+    of `chart` from `(row, column)` on, so that a caller lays out several
+    figures in one chart (`Chart(rows=..., columns=...)`); without a chart the
+    figure gets a chart of its own, of `size` and with `title`, and its panels
+    start at the first cell.
+
+    Args:
+        chart: the chart to draw into, `None` for a new one.
+        row: the row of the first panel in `chart`.
+        column: the column of the first panel in `chart`.
+
+    Keyword Args:
+        rows: the rows of panels the figure draws.
+        columns: the columns of panels the figure draws.
+        size: the width and the height of a new chart in inches.
+        title: the title of a new chart; a chart of the caller keeps its own.
+        fonts: fonts of a new chart which replace those of `FONTS`.
+        **kwargs: passed on to `Chart` for a new chart.
+
+    Returns:
+        The chart.
+
+    Raises:
+        ValueError: for a cell without `chart`, a cell before the first one,
+            or panels which do not fit into the grid of `chart`.
+    """
+    if row < 0 or column < 0:
+        raise ValueError(f"the first cell is (0, 0), got ({row}, {column})")
+    if chart is None:
+        if row or column:
+            raise ValueError(
+                "'row' and 'column' place the panels into the grid of a given "
+                "'chart'; a new chart starts at its first cell"
+            )
+        return new_chart(
+            *size, rows=rows, columns=columns, title=title, fonts=fonts, **kwargs
+        )
+    if row + rows > chart.rows or column + columns > chart.columns:
+        raise ValueError(
+            f"{rows}x{columns} panels from the cell ({row}, {column}) need a grid "
+            f"of at least {row + rows}x{column + columns}, the chart has "
+            f"{chart.rows}x{chart.columns}"
+        )
+    return chart
+
+
+def finite(*arrays: Any) -> np.ndarray:
+    """The finite values of arrays, flattened into one.
+
+    Args:
+        *arrays: arrays, sequences or numbers; `None` is skipped.
+
+    Returns:
+        The finite values.
+    """
+    parts = [
+        np.asarray(a, dtype=float).ravel()
+        for a in arrays
+        if a is not None and np.size(a)
+    ]
+    if not parts:
+        return np.empty(0)
+    values = np.concatenate(parts)
+    return values[np.isfinite(values)]
+
+
+def log_axis(log: bool, which: str, *arrays: Any) -> bool:
+    """Whether an axis is logarithmic: asked for, with a positive value to show.
+
+    Without a positive value a logarithmic axis cannot be drawn: it stays
+    linear and the fallback is logged at debug level.
+
+    Args:
+        log: whether the axis is asked to be logarithmic.
+        which: the name of the axis, for the message.
+        *arrays: the values drawn on the axis.
+
+    Returns:
+        Whether the axis is logarithmic.
+    """
+    if not log:
+        return False
+    if bool(np.any(finite(*arrays) > 0.0)):
+        return True
+    logger.debug("the %s axis has no positive value, staying linear", which)
+    return False
+
+
+#: the share of the data range matplotlib adds at either end of an axis
+MARGIN: float = 0.05
+
+
+def data_limits(
+    *arrays: Any,
+    log: bool = False,
+    low: float | None = None,
+    high: float | None = None,
+    margin: float = MARGIN,
+) -> tuple[float, float]:
+    """The limits of an axis over its values, with matplotlib's margins.
+
+    The range of the finite values (the positive ones of a logarithmic axis)
+    widened by `margin` of it at either end, in the decades of a logarithmic
+    axis, as matplotlib autoscales an axis; a fixed end (`low`, `high`) takes
+    the place of the widened one, as `set_ylim(bottom=0)` after autoscaling.
+
+    Args:
+        *arrays: the values drawn on the axis.
+
+    Keyword Args:
+        log: whether the axis is logarithmic.
+        low: a fixed lower end, `None` for the widened one.
+        high: a fixed upper end, `None` for the widened one.
+        margin: the share added at either end.
+
+    Returns:
+        The lower and the upper end.
+    """
+    data = finite(*arrays)
+    if log:
+        data = data[data > 0.0]
+    if not data.size:
+        lo, hi = (1.0, 10.0) if log else (0.0, 1.0)
     else:
-        ax.set_yscale("log")
-        plain_log_ticks(ax.yaxis)
+        lo, hi = float(data.min()), float(data.max())
+    if log:
+        a, b = math.log10(lo), math.log10(hi)
+        span = b - a or 1.0
+        lo, hi = 10.0 ** (a - margin * span), 10.0 ** (b + margin * span)
+    else:
+        span = hi - lo or (abs(hi) or 1.0)
+        lo, hi = lo - margin * span, hi + margin * span
+    return (lo if low is None else low), (hi if high is None else high)
+
+
+def plain_log_ticks(low: float, high: float) -> tuple[list[float], list[str]]:
+    """The ticks of a logarithmic axis with plain labels, `0.01` and `100` instead of powers of ten.
+
+    The decades of the range are labelled, every other one over more than
+    eight decades; a range of two decades or less labels 2, 3, 4 and 6 of
+    every decade as well and a range of half a decade or less every integer
+    multiple, as matplotlib's `LogFormatter` labels its minor ticks.
+
+    Args:
+        low: the lower end of the axis, positive.
+        high: the upper end of the axis.
+
+    Returns:
+        The values of the ticks and their labels.
+    """
+    lo, hi = math.log10(low), math.log10(high)
+    span = hi - lo
+    first, last = math.floor(lo), math.ceil(hi)
+    multiples: tuple[int, ...] = (1,)
+    if span <= 0.5:
+        multiples = tuple(range(1, 10))
+    elif span <= 2.0:
+        multiples = (1, 2, 3, 4, 6)
+    step = 2 if multiples == (1,) and last - first > 8 else 1
+    ticks: list[float] = []
+    for decade in range(first, last + 1, step):
+        for m in multiples:
+            value = float(f"{m * 10.0**decade:.12g}")
+            if low * (1 - 1e-9) <= value <= high * (1 + 1e-9):
+                ticks.append(value)
+    return ticks, [f"{v:g}" for v in ticks]
+
+
+def value_axis(
+    label: str,
+    *,
+    log: bool = False,
+    limits: tuple[float, float] | None = None,
+    **kwargs: Any,
+) -> ChartAxis:
+    """A numeric axis, a logarithmic one with the plain ticks of `plain_log_ticks`.
+
+    Args:
+        label: the label of the axis with its unit, `name [unit]`.
+
+    Keyword Args:
+        log: whether the axis is logarithmic.
+        limits: the ends of the axis, `None` for the limits of the renderer;
+            a logarithmic axis needs them for its plain ticks.
+        **kwargs: passed on to `ChartAxis`.
+
+    Returns:
+        The axis.
+    """
+    low, high = limits if limits is not None else (None, None)
+    if log and limits is not None and "ticks" not in kwargs:
+        ticks, labels = plain_log_ticks(*limits)
+        if ticks:
+            kwargs.update(ticks=ticks, tick_labels=labels)
+    return ChartAxis(
+        label=label,
+        scale="log" if log else "linear",
+        min=low,
+        max=high,
+        **kwargs,
+    )
+
+
+@dataclass(frozen=True)
+class Frame:
+    """The panel of a plot as the renderer lays it out: its pixels and the ends of its axes.
+
+    It converts an offset in points from a point of the data (matplotlib's
+    `textcoords="offset points"`) and a position in fractions of the panel
+    into values of the axes, so that a text is placed a fixed distance from
+    the point it explains whatever the range of the data.
+
+    Attributes:
+        width: the width of the panel in pixels, a point each.
+        height: the height of the panel in pixels.
+        x: the ends of the x axis.
+        y: the ends of the y axis.
+        log_x: whether the x axis is logarithmic.
+        log_y: whether the y axis is logarithmic.
+    """
+
+    width: float
+    height: float
+    x: tuple[float, float]
+    y: tuple[float, float]
+    log_x: bool
+    log_y: bool
+
+    @classmethod
+    def of(cls, plot: ChartPlot) -> "Frame":
+        """The frame of a plot with the elements it has, from the geometry of the renderer.
+
+        Args:
+            plot: the plot.
+
+        Returns:
+            The frame.
+        """
+        geometry = sbmlsim_core.figure_geometry(plot.chart.to_json())
+        entry = next(p for p in geometry["plots"] if p["id"] == plot.id)
+        rect, x, y = entry["rect"], entry["x"], entry["y"]
+        return cls(
+            width=float(rect["width"]),
+            height=float(rect["height"]),
+            x=(float(x["low"]), float(x["high"])),
+            y=(float(y["low"]), float(y["high"])),
+            log_x=x["kind"] == "log",
+            log_y=y["kind"] == "log",
+        )
+
+    @staticmethod
+    def _move(
+        value: float, ends: tuple[float, float], share: float, log: bool
+    ) -> float:
+        """A value moved along an axis by a share of the axis."""
+        low, high = ends
+        if log:
+            return value * (high / low) ** share
+        return value + share * (high - low)
+
+    def offset(self, x: float, y: float, dx: float, dy: float) -> tuple[float, float]:
+        """The point `dx` points right of and `dy` points above a point of the data.
+
+        Args:
+            x: the x value of the point.
+            y: the y value of the point.
+            dx: the offset to the right in points.
+            dy: the offset upwards in points.
+
+        Returns:
+            The x and the y value of the moved point.
+        """
+        return (
+            self._move(x, self.x, dx / max(self.width, 1.0), self.log_x),
+            self._move(y, self.y, dy / max(self.height, 1.0), self.log_y),
+        )
+
+    def at(self, fx: float, fy: float) -> tuple[float, float]:
+        """The values of the axes at fractions of the panel from its lower left corner.
+
+        Args:
+            fx: the share of the width.
+            fy: the share of the height.
+
+        Returns:
+            The x and the y value.
+        """
+        return (
+            self._move(self.x[0], self.x, fx, self.log_x),
+            self._move(self.y[0], self.y, fy, self.log_y),
+        )
 
 
 def sample_labels(
@@ -332,31 +612,24 @@ def estimate_text(
     return text
 
 
-#: the share of the x range added to the right of the data as room for the
-#: annotations of a row figure (`plot_ratio`, `plot_forest`)
-ANNOTATION_ROOM = 0.45
+#: font size of the annotations of a row figure (`plot_ratio`, `plot_forest`)
+ANNOTATION_FONTSIZE: float = FONT_SIZES["x-small"]
 
-#: font size of the annotations of a row figure
-ANNOTATION_FONTSIZE = "x-small"
-
-#: width of a character of the annotations as a share of the font size; the
-#: figures are drawn in the default proportional font, whose digits, spaces
-#: and brackets average close to this
-_CHARACTER_WIDTH = 0.62
+#: the gap between the data and the column of annotations, in points
+ANNOTATION_GAP: float = 4.0
 
 
-def annotation_room(ax: Axes, texts: Sequence[str]) -> float:
+def annotation_room(texts: Sequence[str], panel_width: float) -> float:
     """The share of the x range a column of annotations needs.
 
-    The width of the column is estimated from the longest text and the font
-    size. The width of the axes is measured on the drawn figure, since the
-    layout engine gives an axes with long tick labels (the study names of a
-    forest plot) much less of the figure than the default position says; the
-    figure is drawn once here for that.
+    The width of the column is the width of the longest text at
+    `ANNOTATION_FONTSIZE` as the renderer measures it
+    (`sbmlsim_core.text_width`) with a gap on either side, and the share is
+    that width over the width the data keeps in the panel.
 
     Args:
-        ax: the axes the column is written on.
         texts: the annotations.
+        panel_width: the width of the panel in pixels.
 
     Returns:
         The share of the current x range to add to the right, `0` without
@@ -364,192 +637,272 @@ def annotation_room(ax: Axes, texts: Sequence[str]) -> float:
     """
     if not texts:
         return 0.0
-    size = FontProperties(size=ANNOTATION_FONTSIZE).get_size_in_points()
-    needed = max(len(text) for text in texts) * _CHARACTER_WIDTH * size
-    figure = ax.get_figure(root=True)
-    assert isinstance(figure, Figure)
-    figure.canvas.draw()
-    available = ax.get_window_extent().width * 72.0 / figure.dpi
-    if available <= needed:
+    needed = (
+        max(sbmlsim_core.text_width(text, ANNOTATION_FONTSIZE) for text in texts)
+        + 2.0 * ANNOTATION_GAP
+    )
+    if panel_width <= needed:
         return 1.5
-    return min(max(needed / (available - needed), 0.15), 1.5)
+    return min(max(needed / (panel_width - needed), 0.15), 1.5)
 
 
-def make_room_right(ax: Axes, share: float = ANNOTATION_ROOM) -> float:
-    """Widen the x axis to the right, for annotations written beside the data.
+def make_room_right(
+    low: float, high: float, share: float, *, log: bool = False
+) -> float:
+    """The upper end of an axis widened to the right, for annotations beside the data.
 
     The annotations of a row figure (`estimate [low, high]`) are written in
     one column to the right of the data, where they neither cover the
-    intervals nor run out of the axes, in which the layout engine does not
-    see them and the figure edge cuts them off. The room is a share of the
-    range the data spans, in the units of the axis: a logarithmic axis is
-    widened by the same share of its decades. Call it once the scale and the
-    ticks of the axis are final, since setting a scale autoscales the view
-    again.
+    intervals nor run out of the panel. The room is a share of the range the
+    data spans: a logarithmic axis is widened by the same share of its
+    decades.
 
     Args:
-        ax: the axes, with its data already drawn.
-        share: the share of the current range to add.
-
-    Returns:
-        The position of the column, as the fraction of the widened axes at
-        which the data ended.
-    """
-    low, high = ax.get_xlim()
-    if ax.get_xscale() == "log" and low > 0.0:
-        ax.set_xlim(low, high * (high / low) ** share)
-    else:
-        ax.set_xlim(low, high + share * (high - low))
-    return 1.0 / (1.0 + share)
-
-
-#: the gap between the data and a legend drawn above it (`legend_above_data`),
-#: as a share of the font size of the legend
-LEGEND_GAP = 0.8
-
-#: the largest share of the height of an axes `legend_above_data` gives to the
-#: legend, so that the data keeps at least the rest of it
-LEGEND_MAX_SHARE = 0.5
-
-
-def legend_above_data(
-    ax: Axes, handles: Sequence[Any], *, fontsize: str | float = "small"
-) -> Legend | None:
-    """Draw a legend in the upper right corner of `ax`, in room made above the data.
-
-    The automatic placement of matplotlib (`loc="best"`) avoids points and
-    lines but not error bars, so a legend inside the axes can cover what it
-    explains. This legend is one row when that fits the width of the axes and
-    one column otherwise, and the top of the y axis is raised until the data
-    ends a gap (`LEGEND_GAP`) below it, on a logarithmic axis by the same
-    share of its decades. The heights are measured on the drawn figure, as in
-    `annotation_room`, so call it once the figure is laid out: a title or a
-    panel added afterwards takes height from the axes and can bring the data
-    back under the legend, unless the caller sets the limits.
-
-    Args:
-        ax: the axes, with its data, scale and labels already drawn.
-        handles: the entries of the legend, artists or containers carrying
-            their labels.
+        low: the lower end of the axis.
+        high: the upper end of the axis, where the column starts.
+        share: the share of the range to add.
 
     Keyword Args:
-        fontsize: font size of the legend.
+        log: whether the axis is logarithmic.
 
     Returns:
-        The legend, `None` without handles.
+        The widened upper end.
     """
-    if not handles:
-        return None
-    figure = ax.get_figure(root=True)
-    assert isinstance(figure, Figure)
-    legend = ax.legend(
-        handles=list(handles), loc="upper right", ncols=len(handles), fontsize=fontsize
-    )
-    figure.draw_without_rendering()
-    size = legend.prop.get_size_in_points() * figure.dpi / 72.0
-    if (
-        legend.get_window_extent().width + 2.0 * legend.borderaxespad * size
-        > ax.bbox.width
-    ):
-        legend = ax.legend(handles=list(handles), loc="upper right", fontsize=fontsize)
-        figure.draw_without_rendering()
-    needed = ax.bbox.y1 - legend.get_window_extent().y0 + LEGEND_GAP * size
-    share = min(needed / max(ax.bbox.height, 1.0), LEGEND_MAX_SHARE)
-    low, high = ax.get_ylim()
-    stretch = 1.0 / (1.0 - share)
-    if ax.get_yscale() == "log" and low > 0.0:
-        ax.set_ylim(low, low * (high / low) ** stretch)
-    else:
-        ax.set_ylim(low, low + (high - low) * stretch)
-    return legend
+    if log and low > 0.0:
+        return high * (high / low) ** share
+    return high + share * (high - low)
 
 
-def annotate_column(
-    ax: Axes, rows: Sequence[tuple[float, str]], fraction: float
-) -> None:
-    """Write one annotation per row in a column at `fraction` of the axes.
+def row_axis(labels: Sequence[str]) -> ChartAxis:
+    """The y axis of a row figure, one row per label from the top down.
+
+    The rows are at the positions 0, 1, ... with their labels as ticks, the
+    first one at the top, and the axis reaches 0.6 beyond the first and the
+    last row, as matplotlib's `set_yticks` with `invert_yaxis` of
+    `plot_ratio` and `plot_forest`.
 
     Args:
-        ax: the axes; its x limits are final (`make_room_right`).
-        rows: the position of every row on the y axis, in the units of the
-            data, with the text to write there.
-        fraction: the x position of the column, as a fraction of the axes.
+        labels: the labels of the rows.
+
+    Returns:
+        The axis.
     """
-    for y, text in rows:
-        ax.annotate(
+    n = len(labels)
+    return ChartAxis(
+        min=-0.6,
+        max=n - 0.4,
+        reverse=True,
+        ticks=[float(k) for k in range(n)],
+        tick_labels=list(labels),
+        tick_marks_visible=True,
+    )
+
+
+#: the width of the tick marks, the padding of the tick labels and the margin
+#: right of a panel in pixels, which `row_panel_width` leaves out
+_ROW_PANEL_PADDING = 36.0
+
+
+def row_panel_width(chart: Chart, labels: Sequence[str]) -> float:
+    """The width of the panel of a row figure in a chart of one column.
+
+    The chart less the widest tick label of the rows, which the renderer
+    measures with `sbmlsim_core.text_width`, and the padding around it.
+
+    Args:
+        chart: the chart.
+        labels: the tick labels of the rows.
+
+    Returns:
+        The width in pixels.
+    """
+    size = float(
+        chart.fonts.get("tick", FONTS["tick"]) if chart.fonts else FONTS["tick"]
+    )
+    widest = max(
+        (sbmlsim_core.text_width(label, size) for label in labels), default=0.0
+    )
+    return chart.width / chart.columns - widest - _ROW_PANEL_PADDING
+
+
+def annotate_column(plot: ChartPlot, texts: Sequence[str], start: float) -> None:
+    """Write one annotation per row in a column right of the data.
+
+    The texts are in the order of the rows of `row_axis`, left aligned
+    `ANNOTATION_GAP` points right of `start`, where the data end and the room
+    of `make_room_right` begins.
+
+    Args:
+        plot: the plot, its x axis widened by `make_room_right`.
+        texts: the text of every row, from the top down.
+        start: the x value where the data end.
+    """
+    if not texts:
+        return
+    frame = Frame.of(plot)
+    for y, text in enumerate(texts):
+        x, _ = frame.offset(start, float(y), ANNOTATION_GAP, 0.0)
+        plot.text(
+            x,
+            float(y),
             text,
-            (fraction, y),
-            xycoords=ax.get_yaxis_transform(),
-            xytext=(4, 0),
-            textcoords="offset points",
-            va="center",
-            ha="left",
-            fontsize=ANNOTATION_FONTSIZE,
+            size=ANNOTATION_FONTSIZE,
+            baseline="center",
+            color="black",
         )
 
 
+#: the gap between the data and a legend drawn above it (`legend_room`), as a
+#: share of the font size of the legend
+LEGEND_GAP: float = 0.8
+
+#: the largest share of the height of a panel `legend_room` gives to the
+#: legend, so that the data keeps at least the rest of it
+LEGEND_MAX_SHARE: float = 0.5
+
+
+def legend_room(
+    labels: Sequence[str],
+    limits: tuple[float, float],
+    panel: tuple[float, float],
+    *,
+    log: bool = False,
+    fontsize: float = FONT_SIZES["small"],
+) -> tuple[float, int]:
+    """Raise the top of a y axis so that a legend in the upper right corner sits above the data.
+
+    The automatic placement of a legend (`best`) avoids points and lines but
+    not error bars, so a legend inside the panel can cover what it explains.
+    The legend of `labels` is one row when that fits the width of the panel
+    and one column otherwise, and the top of the axis is raised until the
+    data ends a gap (`LEGEND_GAP`) below it, on a logarithmic axis by the
+    same share of its decades. The legend is measured as the renderer lays
+    it out: a swatch of two font sizes, the labels in
+    `sbmlsim_core.text_width`, entries 1.33 font sizes high in a frame.
+
+    Args:
+        labels: the entries of the legend.
+        limits: the ends of the y axis over the data.
+        panel: the width and the height of the panel in pixels.
+
+    Keyword Args:
+        log: whether the y axis is logarithmic.
+        fontsize: the font size of the legend.
+
+    Returns:
+        The raised upper end of the axis and the columns of the legend, one
+        per entry in one row or 1.
+    """
+    if not labels:
+        return limits[1], 1
+    width, height = panel
+    entries = [
+        2.8 * fontsize + sbmlsim_core.text_width(label, fontsize) for label in labels
+    ]
+    columns = len(labels)
+    if sum(entries) + 2.0 * fontsize * len(labels) > width:
+        columns = 1
+    rows = math.ceil(len(labels) / columns)
+    needed = rows * 1.33 * fontsize + 1.6 * fontsize + 6.0 + LEGEND_GAP * fontsize
+    share = min(needed / max(height, 1.0), LEGEND_MAX_SHARE)
+    low, high = limits
+    stretch = 1.0 / (1.0 - share)
+    if log and low > 0.0:
+        return low * (high / low) ** stretch, columns
+    return low + (high - low) * stretch, columns
+
+
 def dose_markers(
-    ax: Axes,
+    plot: ChartPlot,
     dosing: Dosing | None,
     *,
+    y_limits: tuple[float, float],
     style: PlotStyle = DEFAULT_STYLE,
     min_doses: int = 2,
     time_unit: str | None = None,
+    taken: set[str] | None = None,
 ) -> None:
-    """Mark the doses of a protocol on the time axis of `ax`.
+    """Mark the doses of a protocol on the time axis of a plot.
 
     An infusion is a window: the span from the dose time to the dose time
-    plus the duration of the dose is shaded, so that the figure shows how
-    long the drug went in. Every other route is an instant and gets a thin
-    dotted line, drawn only for a protocol of at least `min_doses` doses,
-    since the single line at the dose time of a single dose curve carries no
-    information.
+    plus the duration of the dose is shaded over the height of the panel
+    (`y_limits`, the ends of its y axis), so that the figure shows how long
+    the drug went in. Every other route is an instant and gets a thin dotted
+    line, drawn only for a protocol of at least `min_doses` doses, since the
+    single line at the dose time of a single dose curve carries no
+    information. The windows go behind the data: call this before the other
+    elements of the plot are added.
 
     The first window is labelled `infusion (1 hr)` with its duration when
     `time_unit` is given and `infusion` without it, so that a legend of the
-    axes explains the shading; the lines are not labelled. A label already
-    taken by an artist of the axes (a curve whose own label is `infusion`) is
-    left out, since two identical legend rows explain nothing.
+    plot explains the shading; the lines are not labelled. A label already
+    taken (`taken`, the labels of the plot) is left out, since two identical
+    legend rows explain nothing; the label of the window is added to
+    `taken`.
 
     Args:
-        ax: axes to draw on, its x axis carrying the times of the protocol.
+        plot: the plot, its x axis carrying the times of the protocol.
         dosing: the protocol, `None` for a curve without one.
 
     Keyword Args:
+        y_limits: the ends of the y axis, the height of a window.
         style: colors and markers (`dose_color`, `alpha`).
         min_doses: fewest doses a protocol needs for the dose lines.
         time_unit: unit of the times of the protocol, for the label of the
             window.
+        taken: the labels the plot carries, extended by the label of the
+            window.
     """
     if dosing is None:
         return
+    taken = set() if taken is None else taken
     durations = dosing.durations
-    taken = set(ax.get_legend_handles_labels()[1])
     labelled = False
+    low, high = y_limits
     for i, dose_time in enumerate(dosing.times):
         duration = float(durations[i]) if durations is not None else np.nan
         if np.isfinite(duration) and duration > 0.0:
-            label = "infusion"
+            label: str | None = "infusion"
             if time_unit is not None:
                 label = f"infusion ({duration:g} {time_unit})"
             if labelled or label in taken:
-                label = ""
+                label = None
             labelled = True
-            ax.axvspan(
-                float(dose_time),
-                float(dose_time) + duration,
+            if label is not None:
+                taken.add(label)
+            start = float(dose_time)
+            plot.area(
+                [start, start + duration],
+                [low, low],
+                [high, high],
                 color=style.dose_color,
-                alpha=style.alpha,
-                linewidth=0.0,
-                # behind every other artist, the shaded areas of the NCA panel
-                # included, so that the window never hides the data
-                zorder=0.0,
-                label=label or None,
+                fill_opacity=style.alpha,
+                label=label,
+                legend=label,
             )
         elif dosing.n_doses >= min_doses:
-            ax.axvline(
-                float(dose_time), color=style.dose_color, linestyle=":", linewidth=1
+            plot.rule(
+                float(dose_time),
+                orientation="vertical",
+                color=style.dose_color,
+                line="dotted",
+                width=1.0,
             )
+
+
+def has_infusion(dosing: Dosing | None) -> bool:
+    """Whether a protocol has a dose of a duration, which `dose_markers` shades.
+
+    Args:
+        dosing: the protocol, `None` for none.
+
+    Returns:
+        `True` for a dose of a positive duration.
+    """
+    if dosing is None or dosing.durations is None:
+        return False
+    durations = np.asarray(dosing.durations, dtype=float)
+    return bool(np.any(np.isfinite(durations) & (durations > 0.0)))
 
 
 def unit_label(unit: str) -> str:
@@ -604,19 +957,21 @@ def group_order(ds: xr.Dataset, sample_dims: Sequence[str], by: str) -> list[str
     return order
 
 
-def sample_colors(n: int, cmap: str) -> list[Any]:
+def sample_colors(n: int, cmap: str) -> list[str]:
     """One color per sample from a colormap, evenly spaced across `n` samples.
 
     Args:
         n: number of samples; colors are evenly spaced from the start to the
-            end of the colormap (`cmap(0.0)` for `n <= 1`).
-        cmap: name of the colormap.
+            end of the colormap (its start for `n <= 1`).
+        cmap: name of the colormap, one of `sbmlsim_core.COLOR_SCALES`.
 
     Returns:
-        One RGBA color per sample, `n` entries.
+        One color `#rrggbb` per sample, `n` entries.
     """
-    palette = plt.get_cmap(cmap)
-    return [palette(i / max(n - 1, 1)) for i in range(n)]
+    if n <= 0:
+        return []
+    positions = [i / max(n - 1, 1) for i in range(n)]
+    return list(sbmlsim_core.color_scale(cmap, 0.0, 1.0, positions))
 
 
 #: the last position of the colormap a group color is taken from; the very end
@@ -625,7 +980,7 @@ def sample_colors(n: int, cmap: str) -> list[Any]:
 GROUP_COLOR_END = 0.85
 
 
-def group_colors(n: int, cmap: str) -> list[Any]:
+def group_colors(n: int, cmap: str) -> list[str]:
     """One color per group of a grouped figure, evenly spaced across `n` groups.
 
     Like `sample_colors`, but the colors stop at `GROUP_COLOR_END` of the
@@ -636,10 +991,12 @@ def group_colors(n: int, cmap: str) -> list[Any]:
 
     Args:
         n: number of groups.
-        cmap: name of the colormap.
+        cmap: name of the colormap, one of `sbmlsim_core.COLOR_SCALES`.
 
     Returns:
-        One RGBA color per group, `n` entries.
+        One color `#rrggbb` per group, `n` entries.
     """
-    palette = plt.get_cmap(cmap)
-    return [palette(GROUP_COLOR_END * i / max(n - 1, 1)) for i in range(n)]
+    if n <= 0:
+        return []
+    positions = [GROUP_COLOR_END * i / max(n - 1, 1) for i in range(n)]
+    return list(sbmlsim_core.color_scale(cmap, 0.0, 1.0, positions))

@@ -189,9 +189,9 @@ print(f"cv_intra {peak.cv_intra * 100:.2f} %, TOST p = {peak.p_value:.3f}")
 print(f"p_period {peak.p_period:.3f}, p_sequence {peak.p_sequence:.3f}")
 print("bioequivalent:", be.bioequivalent)
 
-plot_ratio(be).savefig("bioequivalence.png", dpi=120)
-plot_parameters(test, "cmax", "individual", by="sequence", log_y=True).savefig(
-    "bioequivalence_parameters.png", dpi=120
+plot_ratio(be).save("bioequivalence.svg")
+plot_parameters(test, "cmax", "individual", by="sequence", log_y=True).save(
+    "bioequivalence_parameters.svg"
 )
 ```
 
@@ -214,9 +214,9 @@ The exposure of the two formulations is equivalent, the peak is not: the slower 
 
 The figure of the report puts the three ratios on a logarithmic axis against the acceptance limits, with the numbers in a column beside them, and the individual values behind the peak ratio show where the failure comes from (both figures are the ones `examples/bioequivalence.py` writes from the same data):
 
-![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
+![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.svg)
 
-![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.png)
+![The individual cmax of both sequences as jittered points with a box plot](images/bioequivalence_parameters.svg)
 
 `tost` runs the same decision on two samples directly, and `design=` reads the same data under another design. The comparison shows what the crossover buys: the ratio is the same number, the interval of the parallel analysis is more than five times as wide, because it carries the between-subject variability the crossover removed.
 

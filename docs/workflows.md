@@ -84,7 +84,7 @@ print(
 )
 
 result.to_dataframe().to_csv("study_parameters.csv", index=False)
-plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
+plot_mean_timecourse(batch, by="dose").save("study_curves.svg")
 ```
 
 The table this snippet builds is shipped with the documentation as [study.csv](data/study.csv), the file the Quickstart of the [home page](index.md) reads. Its first rows:
@@ -115,9 +115,9 @@ and the parameter table, one row per parameter and dose group:
 | thalf | hour | 200 | 4 | 2.89 | 25.9 % |
 | cl_f | liter / hour | 200 | 4 | 9.68 | 25.9 % |
 
-The exposure triples with the dose while the clearance and the half-life stay where they are, which is what a linear dose range looks like; `tmax` in the same table would leave the two geometric columns empty, since a time read from the sampling grid carries no geometric statistics. `study_curves.png` is the concentration-time figure of the report, the mean of every dose group with the band of its standard deviation and the individual curves faint behind it, linear and semi-logarithmic:
+The exposure triples with the dose while the clearance and the half-life stay where they are, which is what a linear dose range looks like; `tmax` in the same table would leave the two geometric columns empty, since a time read from the sampling grid carries no geometric statistics. `study_curves.svg` is the concentration-time figure of the report, the mean of every dose group with the band of its standard deviation and the individual curves faint behind it, linear and semi-logarithmic:
 
-![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.png)
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](images/nca_batch_curves.svg)
 
 Continue with [Non-compartmental analysis](nca.md) for the parameters and the options, [Data formats](formats.md) for the readers and [Plotting](plotting.md) for the figures.
 
@@ -185,7 +185,7 @@ be = bioequivalence(test, reference, parameters=["auc_inf_obs", "auc_last", "cma
 print(ratio_table(be).to_string(index=False))
 print("design:", be["cmax"].design, "| bioequivalent:", be.bioequivalent)
 
-plot_ratio(be).savefig("bioequivalence.png", dpi=120)
+plot_ratio(be).save("bioequivalence.svg")
 ```
 
 | parameter | unit | n_test | n_reference | gmr | ci_low | ci_high | ci_level | cv_intra | limits | bioequivalent |
@@ -196,7 +196,7 @@ plot_ratio(be).savefig("bioequivalence.png", dpi=120)
 
 `design: crossover | bioequivalent: False`: the exposure of the two formulations is equivalent, the peak is not, and a study is bioequivalent only when every parameter is. The figure puts the three ratios against the acceptance limits:
 
-![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.png)
+![The geometric mean ratios of a 2x2 crossover against the 80-125 % limits](images/bioequivalence.svg)
 
 Continue with [Bioequivalence](bioequivalence.md) for the designs, the two one-sided tests, the within-subject CV and the table of the report, and with [Statistics](statistics.md) for the samples and the intervals behind them.
 
@@ -265,7 +265,7 @@ plot_ratio(
     {"auc_inf_obs": auc_ratio, "cmax": cmax_ratio},
     limits=None,
     thresholds=DDIThresholds.fda(),
-).savefig("ddi.png", dpi=120)
+).save("ddi.svg")
 ```
 
 `moderate inhibitor, uncertain: False`, and the table of both parameters:
@@ -277,7 +277,7 @@ plot_ratio(
 
 The exposure is raised almost threefold, a moderate inhibition; the peak of a bolus is not affected, and its interval spans the boundary at 1.25, which is what `uncertain` marks. The figure draws both ratios against the class boundaries:
 
-![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.png)
+![The exposure ratios of an interaction study against the FDA thresholds](images/ddi.svg)
 
 Continue with [Drug-drug interactions](ddi.md) for the thresholds, the substrate sensitivity and the conservative reading of an interval, and with [Statistics](statistics.md) for the ratios behind them.
 
@@ -363,8 +363,8 @@ ratios = accumulation_ratio(result, single)
 print(ratios["accumulation_ratio"].values.round(3))
 print(ratios["stationarity_ratio"].values.round(3))
 
-plot_troughs(result, x="interval").savefig("troughs.png", dpi=120)
-plot_intervals(result, "interval_ctrough").savefig("intervals.png", dpi=120)
+plot_troughs(result, x="interval").save("troughs.svg")
+plot_intervals(result, "interval_ctrough").save("intervals.svg")
 ```
 
 The first two subjects of the per-interval table:
@@ -391,13 +391,13 @@ and the steady state parameters of the last interval over the four subjects:
 | ctrough | milligram / liter | 4 | 1.28 | 0.339 | 26.6 % |
 | fluctuation | dimensionless | 4 | 1.15 | 0.197 | 17.2 % |
 
-The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here as its `accumulation_ratio`, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. Its second variable is the stationarity ratio \(\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss} / \mathrm{AUC}_{0\text{-}\infty}^\mathrm{single}\), `[1. 1.003 1.017 1.001]` here: the exposure over one interval at steady state is the total exposure of a single dose, which says that the clearance did not change over the study. `troughs.png` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. The same figure over a longer regimen, the ten doses of `examples/steady_state.py`, is the plateau itself:
+The area of the interval of the first subject grows from 28.6 to 39.4 over the four doses and levels off; over the four subjects the last interval carries `[1.379 1.344 1.225 1.237]` times the exposure of the first one, the observed accumulation `accumulation_ratio_obs`. `accumulation_ratio(result, single)` prints the same four numbers here as its `accumulation_ratio`, because the single dose analysis it compares against is the first interval of the same curves; with a separate single dose study it is the accumulation of that study against this one. Its second variable is the stationarity ratio \(\mathrm{AUC}_{0\text{-}\tau}^\mathrm{ss} / \mathrm{AUC}_{0\text{-}\infty}^\mathrm{single}\), `[1. 1.003 1.017 1.001]` here: the exposure over one interval at steady state is the total exposure of a single dose, which says that the clearance did not change over the study. `troughs.svg` shows the mean trough of every dosing interval with its standard deviation over the subjects, 1.05, 1.24, 1.31 and 1.28 mg/l: the trough stops rising after the third interval, which is where steady state is reached. The same figure over a longer regimen, the ten doses of `examples/steady_state.py`, is the plateau itself:
 
-![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.png)
+![The trough of every dosing interval of a ten dose regimen, rising into the steady state plateau](images/steady_state_troughs.svg)
 
 `plot_intervals` of the same result draws one line per subject instead, the figure `examples/formats.py` writes for the same batch read back from its event records:
 
-![The trough concentration of every dosing interval of four subjects](images/formats.png)
+![The trough concentration of every dosing interval of four subjects](images/formats.svg)
 
 Continue with [Non-compartmental analysis](nca.md) for the interval parameters, the reference dose rule and `superposition`.
 
@@ -441,7 +441,7 @@ power = fit_table(Power(), ds, "dose", "auc_inf_obs", dim="dose")
 test = proportionality_test(power, dose_range=(25.0, 400.0))
 print(proportionality_table(test).to_string(index=False))
 
-plot_dose_proportionality(power, test=test).savefig("dose_proportionality.png", dpi=120)
+plot_dose_proportionality(power, test=test).save("dose_proportionality.svg")
 ```
 
 | slope | ci_low | ci_high | bound_low | bound_high | dose_low | dose_high | verdict |
@@ -450,6 +450,6 @@ plot_dose_proportionality(power, test=test).savefig("dose_proportionality.png", 
 
 The exponent is 1.16 with a narrow interval, the acceptance bounds of a sixteenfold dose range are 0.920 to 1.08, and the interval lies above them: the exposure grows faster than the dose. The figure draws the data, the fit and the acceptance wedge on log-log axes:
 
-![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.png)
+![The power model of the exposure against the dose with the acceptance wedge of the criterion](images/dose_proportionality.svg)
 
 Continue with [Curve fitting](fitting.md) for the models, the weighting and the model comparison.

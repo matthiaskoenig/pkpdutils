@@ -56,10 +56,10 @@ table = summary_table(
     unit_style="short",
 )
 print_table(table, title="Pharmacokinetic parameters by dose group")
-plot_mean_timecourse(batch, by="dose").savefig("study_curves.png", dpi=120)
+plot_mean_timecourse(batch, by="dose").save("study_curves.svg")
 ```
 
-![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/images/nca_batch_curves.png)
+![The mean curve of every dose group with its standard deviation, linear and semi-logarithmic](https://raw.githubusercontent.com/matthiaskoenig/pkpdutils/develop/docs/images/nca_batch_curves.svg)
 
 The table the snippet prints, the geometric mean with its coefficient of variation per dose group:
 
@@ -93,7 +93,7 @@ If you use `pkpdutils` please cite the archived software on [Zenodo](https://doi
 
 ## Installation
 
-`pkpdutils` requires python >= 3.13 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils):
+`pkpdutils` requires python >= 3.14 and is available from [pypi](https://pypi.python.org/pypi/pkpdutils):
 
 ```bash
 uv add pkpdutils

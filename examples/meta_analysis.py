@@ -1,7 +1,7 @@
 """Meta-analysis of the effect of smoking on the clearance of caffeine over published studies.
 
 Run from the root of the repository with `python -m examples.meta_analysis`.
-Writes `meta_analysis.png` into the working directory.
+Writes `meta_analysis.svg` into the working directory.
 """
 
 from pkpdutils import ParameterSample, meta_analysis
@@ -55,7 +55,5 @@ if __name__ == "__main__":
         console.print(
             f"Q = {het.q:.2f}, df = {het.df}, p = {het.p_value:.2g}, I2 = {het.i2:.1f} %, tau2 = {het.tau2:.3g}"
         )
-    plot_forest(meta_analysis(STUDIES, EffectKind.LOG_RATIO)).savefig(
-        "meta_analysis.png", dpi=120
-    )
-    console.print("written: meta_analysis.png")
+    plot_forest(meta_analysis(STUDIES, EffectKind.LOG_RATIO)).save("meta_analysis.svg")
+    console.print("written: meta_analysis.svg")

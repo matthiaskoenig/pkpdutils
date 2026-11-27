@@ -7,10 +7,9 @@ rate curve, how much was recovered and the renal clearance over the collection
 span.
 
 Run from the root of the repository with `python -m examples.urine`.
-Writes `urine.png` into the working directory.
+Writes `urine.svg` into the working directory.
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -103,8 +102,6 @@ if __name__ == "__main__":
         f"CLr = {FE * K * VD:.3f} l/hr"
     )
 
-    fig = plot_excretion(result, urine)
-    fig.set_size_inches(7.0, 4.5)
-    fig.savefig("urine.png", dpi=120)
-    plt.close(fig)
-    console.print("written: urine.png")
+    chart = plot_excretion(result, urine)
+    chart.save("urine.svg")
+    console.print("written: urine.svg")
