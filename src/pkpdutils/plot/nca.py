@@ -899,12 +899,11 @@ def _nca_panel(
                 )
             )
     dosing = None if tc.dosing is None else Dosing.single(tc.dosing.last)
-    infusion_label = None
-    if has_infusion(dosing):
+    infusion_label = _infusion_label(tc)
+    if infusion_label is not None:
         assert dosing is not None and dosing.durations is not None
         start = float(dosing.times[0])
         duration = float(dosing.durations[0])
-        infusion_label = f"infusion ({duration:g} {tc.time_unit})"
         panel.hold([start, start + duration], [np.nan, np.nan])
     shaded: tuple[np.ndarray, np.ndarray] | None = None
     if partial is not None and partial_range is not None:
@@ -1422,6 +1421,62 @@ def plot_terminal_windows(
     return target
 
 
+def _infusion_label(tc: Timecourse) -> str | None:
+    """The legend label of the infusion window of an NCA panel, `infusion (1 hr)`.
+
+    Args:
+        tc: the curve, relative to the dose the panel analyses.
+
+    Returns:
+        The label, `None` when the analysed dose is no infusion.
+    """
+    dosing = None if tc.dosing is None else Dosing.single(tc.dosing.last)
+    if not has_infusion(dosing):
+        return None
+    assert dosing is not None and dosing.durations is not None
+    return f"infusion ({float(dosing.durations[0]):g} {tc.time_unit})"
+
+
+def _grid_legend_groups(
+    curves: Sequence[Timecourse],
+    ci_level: float,
+    partial: str | None,
+    spread: Literal["sd", "se"] | None,
+) -> list[str]:
+    """The legend groups an NCA panel of a grid may draw, in the order of its legend.
+
+    Args:
+        curves: the curves of the panels.
+        ci_level: the level of the band of the regression.
+        partial: the name of the partial area, `None` for none.
+        spread: the error bars of the data.
+
+    Returns:
+        The groups, every infusion of the curves once.
+    """
+    infusions = dict.fromkeys(
+        label
+        for label in (
+            _infusion_label(tc.relative_to_dose(which="last")) for tc in curves
+        )
+        if label is not None
+    )
+    return [
+        "AUC(0-tlast)",
+        "AUC(0-tau)",
+        "extrapolated",
+        f"{100.0 * ci_level:g} % band of the regression",
+        TERMINAL_LABEL,
+        "regression points",
+        "Cmax at tmax",
+        "C0",
+        "data",
+        *infusions,
+        *([partial] if partial else []),
+        f"data ± {spread}",
+    ]
+
+
 def plot_nca_grid(
     timecourses: Timecourses,
     result: NCAResult,
@@ -1443,7 +1498,7 @@ def plot_nca_grid(
     `dose = 50 mg, individual = s1`, with the unit of a coordinate which
     carries one; the `dose` coordinate of a batch takes the dose unit of the
     batch. The panels all draw the same elements, so the legend is drawn
-    once: for the figure, below the grid, when this function creates the
+    once: for the figure, above the grid, when this function creates the
     chart, and into the first panel when the caller supplies the chart,
     which keeps its own legends.
 
@@ -1488,10 +1543,16 @@ def plot_nca_grid(
         columns=ncols,
         size=(4.5 * ncols, 3.5 * nrows),
         fonts=_FONTS,
-        # the panels draw the same elements: one legend of their union for
-        # the figure, matplotlib's `fig.legend(ncols=6)`
-        legend_position="bottom",
-        legend_columns=6,
+        # the panels draw the same elements: one legend of their union above
+        # the grid, matplotlib's `fig.legend(loc="outside upper center",
+        # ncols=6)`; a group no panel draws has no entry
+        legends=[
+            {
+                "groups": _grid_legend_groups(curves, ci_level, partial, spread),
+                "position": "top",
+                "columns": 6,
+            }
+        ],
     )
     indices = list(np.ndindex(*timecourses.sample_shape))
     units = {"dose": timecourses.dose_unit} if "dose" in timecourses.ds.coords else {}
@@ -1514,8 +1575,8 @@ def plot_nca_grid(
             flags,
             log_y=log_y,
             title=title or None,
-            # the legend below the grid of a chart of its own takes the entries
-            # of every plot with a legend
+            # a chart of its own has the legend of the figure, which takes the
+            # entries of every plot with a legend
             legend=own or k == 0,
             annotate=annotate,
             spread=spread,

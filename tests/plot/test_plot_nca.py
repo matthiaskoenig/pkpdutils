@@ -345,8 +345,10 @@ def test_plot_nca_grid_titles_name_the_coordinates_with_units() -> None:
 def test_plot_nca_grid_draws_one_legend_for_the_figure() -> None:
     batch = Timecourses.from_timecourses([oral(k, str(k)) for k in (1.0, 2.0)])
     chart = plot_nca_grid(batch, nca(batch, options=NCAOptions()), ncols=2)
-    # one legend below the grid of the entries of every panel
-    assert spec(chart)["legend"]["position"] == "bottom"
+    # one legend above the grid of the entries of every panel, matplotlib's
+    # `fig.legend(loc="outside upper center", ncols=6)`
+    (legend,) = spec(chart)["legends"]
+    assert legend["position"] == "top" and legend["columns"] == 6
     svg = chart.svg()
     assert svg.count('data-figure="legend"') == 1
     entries = svg.count("sbmlsim-legend-entry")
