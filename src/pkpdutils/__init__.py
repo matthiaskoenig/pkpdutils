@@ -109,7 +109,7 @@ if TYPE_CHECKING:
     # the lazy `plot` of `__getattr__` as a name a type checker resolves
     from pkpdutils import plot as plot
 
-__version__ = "2.0.0"
+__version__ = "2.0.1.dev0"
 
 __all__ = [
     "Q_",

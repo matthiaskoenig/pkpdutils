@@ -4,7 +4,7 @@ import pkpdutils
 
 
 def test_version() -> None:
-    assert pkpdutils.__version__ == "2.0.0"
+    assert pkpdutils.__version__ == "2.0.1.dev0"
 
 
 def test_exports() -> None:
